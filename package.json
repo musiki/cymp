@@ -30,5 +30,8 @@
     "@astrojs/mdx": "^4.3.6",
     "rehype-katex": "^7.0.1",
     "remark-math": "^6.0.0"
+  },
+  "engines": {
+    "node": "22.x"
   }
 }

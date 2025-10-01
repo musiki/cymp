@@ -1,6 +1,6 @@
 ---
 import { Image } from 'astro:assets';
-import { getCollection } from 'astro:content';
+
 import BaseHead from '../../components/BaseHead.astro';
 import Footer from '../../components/Footer.astro';
 import FormattedDate from '../../components/FormattedDate.astro';
@@ -12,7 +12,22 @@ import path from 'node:path';
 
 const ROOT = path.resolve('src/content');
 
-function walk(dir){ /* igual que antes */ }
+function walk(dir) {
+  let files = [];
+  try {
+    const items = fs.readdirSync(dir, { withFileTypes: true });
+    for (const item of items) {
+      if (item.isDirectory()) {
+        files = [...files, ...walk(path.join(dir, item.name))];
+      } else {
+        files.push(path.join(dir, item.name));
+      }
+    }
+  } catch (e) {
+    // ignore errors
+  }
+  return files;
+}
 const files = walk(ROOT);
 
 function toSlug(abs) {
@@ -23,9 +38,7 @@ function toSlug(abs) {
 function toHref(slug) {
   return '/blog/' + slug.split('/').map(encodeURIComponent).join('/');
 }
-const posts = (await getCollection('blog')).sort(
-	(a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf(),
-);
+
 
 
 ---
