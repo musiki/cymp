@@ -4,7 +4,6 @@
 import BaseHead from '../../components/BaseHead.astro';
 import Footer from '../../components/Footer.astro';
 import Header from '../../components/Header.astro';
-import ThemeToggle from '../../components/ThemeToggle.astro';
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -266,18 +265,7 @@ const html = String(file);
       .dvjs-block{position:relative;}
       .wikilink-missing{color:#b00;cursor:help;}
     </style>
-    <script>
-      // Tema
-      (function(){
-        try{
-          const k='theme';
-          const v=localStorage.getItem(k);
-          const prefersDark=window.matchMedia('(prefers-color-scheme: dark)').matches;
-          const theme=v||(prefersDark?'dark':'light');
-          document.documentElement.classList.toggle('dark', theme==='dark');
-        }catch{}
-      })();
-    </script>
+   
     <script>
       // ACTIVADOR: convierte <script type="application/dvjs"> en ejecutables
       document.addEventListener('DOMContentLoaded', () => {
@@ -292,7 +280,6 @@ const html = String(file);
   </head>
   <body>
     <Header>
-      <div class="wrap" style="margin-left:auto"><ThemeToggle /></div>
     </Header>
 
     {banner ? <img class="banner" src={banner} alt={title} /> : null}
