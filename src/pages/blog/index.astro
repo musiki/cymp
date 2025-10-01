@@ -7,9 +7,27 @@ import FormattedDate from '../../components/FormattedDate.astro';
 import Header from '../../components/Header.astro';
 import { SITE_DESCRIPTION, SITE_TITLE } from '../../consts';
 
+import fs from 'node:fs';
+import path from 'node:path';
+
+const ROOT = path.resolve('src/content');
+
+function walk(dir){ /* igual que antes */ }
+const files = walk(ROOT);
+
+function toSlug(abs) {
+  const rel = abs.replace(ROOT + path.sep, '');
+  const posix = rel.split(path.sep).join('/');
+  return posix.replace(/\.(md|mdx)$/i, '');
+}
+function toHref(slug) {
+  return '/blog/' + slug.split('/').map(encodeURIComponent).join('/');
+}
 const posts = (await getCollection('blog')).sort(
 	(a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf(),
 );
+
+
 ---
 
 <!doctype html>
@@ -88,27 +106,12 @@ const posts = (await getCollection('blog')).sort(
 	</head>
 	<body>
 		<Header />
-		<main>
-			<section>
-				<ul>
-					{
-						posts.map((post) => (
-							<li>
-								<a href={`/blog/${post.id}/`}>
-									{post.data.heroImage && (
-										<Image width={720} height={360} src={post.data.heroImage} alt="" />
-									)}
-									<h4 class="title">{post.data.title}</h4>
-									<p class="date">
-										<FormattedDate date={post.data.pubDate} />
-									</p>
-								</a>
-							</li>
-						))
-					}
-				</ul>
-			</section>
-		</main>
+	<ul class="list">
+  {files.map((f) => {
+    const slug = toSlug(f);
+    return <li><a href={toHref(slug)}>{slug}</a></li>;
+  })}
+</ul>
 		<Footer />
 	</body>
 </html>

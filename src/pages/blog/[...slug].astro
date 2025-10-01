@@ -1,20 +1,312 @@
 ---
-import { type CollectionEntry, getCollection, render } from 'astro:content';
-import BlogPost from '../../layouts/BlogPost.astro';
+// src/pages/blog/[...slug].astro
 
-export async function getStaticPaths() {
-	const posts = await getCollection('blog');
-	return posts.map((post) => ({
-		params: { slug: post.id },
-		props: post,
-	}));
+import BaseHead from '../../components/BaseHead.astro';
+import Footer from '../../components/Footer.astro';
+import Header from '../../components/Header.astro';
+import ThemeToggle from '../../components/ThemeToggle.astro';
+
+import fs from 'node:fs';
+import path from 'node:path';
+import matter from 'gray-matter';
+
+import { unified } from 'unified';
+import remarkParse from 'remark-parse';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import remarkRehype from 'remark-rehype';
+import rehypeRaw from 'rehype-raw';
+import rehypeKatex from 'rehype-katex';
+import rehypeStringify from 'rehype-stringify';
+import rehypeHighlight from 'rehype-highlight';
+import { visit } from 'unist-util-visit';
+
+// ---------- Utils ----------
+function norm(s) {
+  return s
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quita acentos
+    .replace(/\\/g, '/')                              // backslash -> slash
+    .replace(/\s+/g, ' ')                             // colapsa espacios
+    .trim();
 }
-type Props = CollectionEntry<'blog'>;
+function encodePath(p) {
+  return encodeURI(p); // conserva / y #
+}
 
-const post = Astro.props;
-const { Content } = await render(post);
+// ---------- build index de slugs (una sola vez) ----------
+let SLUGS_CACHE = null;
+function buildSlugIndex() {
+  if (SLUGS_CACHE) return SLUGS_CACHE;
+  const ROOT = path.resolve(process.cwd(), 'src/content');
+  const files = [];
+  (function walk(dir) {
+    if (!fs.existsSync(dir)) return;
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(md|mdx)$/i.test(e.name)) files.push(p);
+    }
+  })(ROOT);
+
+  const byFull = new Map(); // key=norm(path sin ext, con subcarpetas) -> slug posix
+  const byBase = new Map(); // key=norm(basename sin ext) -> primer match
+  const allSlugs = [];
+
+  for (const abs of files) {
+    const rel = abs.slice(ROOT.length + 1);
+    const posix = rel.split(path.sep).join('/');
+    const slug = posix.replace(/\.(md|mdx)$/i, '');
+    const fullKey = norm(slug);
+    byFull.set(fullKey, slug);
+
+    const base = slug.split('/').pop() || slug;
+    const baseKey = norm(base);
+    if (!byBase.has(baseKey)) byBase.set(baseKey, slug);
+
+    allSlugs.push(slug);
+  }
+  SLUGS_CACHE = { byFull, byBase, allSlugs };
+  return SLUGS_CACHE;
+}
+
+// ---------- Plugin: Wikilinks -> links o html missing ----------
+function remarkWikilinks({ slugIndex }) {
+  return (tree) => {
+    const toProcess = [];
+    visit(tree, 'text', (node, index, parent) => {
+      if (!parent || typeof index !== 'number') return;
+      toProcess.push({ node, index, parent, value: node.value });
+    });
+
+    for (let i = toProcess.length - 1; i >= 0; i--) {
+      const { node, index, parent, value } = toProcess[i];
+      const regex = /\[\[([^\]]+)\]\]/g;
+      let match;
+      let parts = [];
+      let last = 0;
+      while ((match = regex.exec(value)) !== null) {
+        if (match.index > last) {
+          parts.push({ type: 'text', value: value.substring(last, match.index) });
+        }
+        let inner = match[1].trim();
+        let target = inner;
+        let alias = '';
+        const barIndex = inner.indexOf('|');
+        if (barIndex > -1) {
+          alias = inner.substring(barIndex + 1).trim();
+          target = inner.substring(0, barIndex).trim();
+        }
+        let section = '';
+        const hashIndex = target.indexOf('#');
+        if (hashIndex > -1) {
+          section = target.substring(hashIndex + 1).trim();
+          target = target.substring(0, hashIndex).trim();
+        }
+        const key = norm(target);
+        const hit = slugIndex.byFull.get(key) || slugIndex.byBase.get(key);
+        const textLabel = alias || target + (section ? `#${section}` : '');
+        if (hit) {
+          const href = '/blog/' + encodePath(hit) + (section ? '#' + encodeURIComponent(section) : '');
+          parts.push({
+            type: 'link',
+            title: null,
+            url: href,
+            children: [{ type: 'text', value: textLabel }]
+          });
+        } else {
+          parts.push({
+            type: 'html',
+            value: `<span class="wikilink-missing" title="Enlace no encontrado: ${target}">${textLabel}</span>`
+          });
+        }
+        last = regex.lastIndex;
+      }
+      if (last < value.length) {
+        parts.push({ type: 'text', value: value.substring(last) });
+      }
+      if (parts.length > 1 || (parts.length === 1 && parts[0].type !== 'text' || parts[0].value !== value)) {
+        parent.children.splice(index, 1, ...parts);
+      }
+    }
+  };
+}
+
+// ---------- Plugin: DataviewJS -> <div + script type="application/dvjs"> ----------
+function remarkDataviewjs() {
+  return (tree) => {
+    let counter = 0;
+    visit(tree, 'code', (node, index, parent) => {
+      if (!parent || node.lang !== 'dataviewjs') return;
+      const id = `dvjs-${counter++}`;
+      const userJS = String(node.value).replace(/<\/script>/gi, '<\\/script>');
+
+      const dvPolyfill = `
+        const __warn=(name)=>()=>{console.warn('dv.'+name+'() no implementado en web; devuelve [].');return[];};
+        const dv={
+          container:root,
+          el(tag,text='',attrs={}){
+            const el=document.createElement(tag);
+            if(text!=null)el.textContent=String(text);
+            if(attrs&&typeof attrs==='object'){
+              if('cls' in attrs){el.className=attrs.cls;delete attrs.cls;}
+              for(const[k,v] of Object.entries(attrs)) el.setAttribute(k,String(v));
+            }
+            root.appendChild(el); return el;
+          },
+          current(){return{file:{path:location.pathname,name:document.title}};},
+          page:__warn('page'), pages:__warn('pages'), table:__warn('table'),
+          list:__warn('list'), span:__warn('span'), header:__warn('header'),
+        };
+      `;
+
+      const html = [
+        `<div class="dvjs-block" id="${id}"></div>`,
+        `<script type="application/dvjs" data-dvjs="1">`,
+        `(function(){`,
+        `  const root=document.getElementById('${id}');`,
+        `  const ctx={container:root};`,
+        dvPolyfill,
+        `  const __run=async function(){`,
+        userJS,
+        `  };`,
+        `  try{ __run.call(ctx); }`,
+        `  catch(e){`,
+        `    console.error('DataviewJS error ${id}:',e);`,
+        `    if(root){root.innerHTML='<pre style="color:red">DataviewJS error: '+(e&&e.message?e.message:String(e))+'</pre>';}`,
+        `  }`,
+        `})();`,
+        `</script>`
+      ].join('\n');
+
+      parent.children[index] = { type: 'html', value: html };
+    });
+  };
+}
+
+// ---------- rutas estáticas ----------
+export async function getStaticPaths() {
+  const ROOT = path.resolve(process.cwd(), 'src/content');
+  const files = [];
+  (function walk(dir) {
+    if (!fs.existsSync(dir)) return;
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(md|mdx)$/i.test(e.name)) files.push(p);
+    }
+  })(ROOT);
+
+  return files.map((abs) => {
+    const rel = abs.slice(ROOT.length + 1);
+    const posix = rel.split(path.sep).join('/');
+    const slug = posix.replace(/\.(md|mdx)$/i, '');
+    const raw = fs.readFileSync(abs, 'utf8');
+    return { params: { slug }, props: { raw, slug } };
+  });
+}
+
+// ---------- props ----------
+const { raw, slug } = Astro.props;
+
+// ---------- frontmatter ----------
+const fm = matter(raw);
+const data = fm.data ?? {};
+const originalBody = fm.content ?? '';
+
+// ---------- index de slugs ----------
+const slugIndex = buildSlugIndex();
+
+// meta
+const banner = data.img || data.coverUrl || data.image || data.photo || '';
+const tags = Array.isArray(data.tags) ? data.tags
+  : (typeof data.tags === 'string' ? data.tags.split(',').map(s=>s.trim()).filter(Boolean) : []);
+const year = (typeof data.year === 'number' || typeof data.year === 'string') ? String(data.year) : '';
+const person = (typeof data.person === 'string') ? data.person : '';
+const title = (typeof data.title === 'string' && data.title.trim())
+  ? data.title.trim()
+  : (slug.split('/').pop() ?? slug);
+
+// ---------- pipeline MD ----------
+const processor = unified()
+  .use(remarkParse)
+  .use(remarkGfm)
+  .use(remarkWikilinks, { slugIndex })
+  .use(remarkDataviewjs)
+  .use(remarkMath)
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(rehypeRaw)
+  .use(rehypeHighlight)
+  .use(rehypeKatex)
+  .use(rehypeStringify, { allowDangerousHtml: true });
+
+const file = await processor.process(originalBody);
+const html = String(file);
 ---
 
-<BlogPost {...post.data}>
-	<Content />
-</BlogPost>
+<html lang="es">
+  <head>
+    <BaseHead title={title} description={title} />
+    <meta charset="utf-8" />
+    <!-- Si querés un theme global, creá /public/styles/theme.css y descomentá: -->
+    <!-- <link rel="stylesheet" href="/styles/theme.css" /> -->
+    <!-- KaTeX CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex/dist/katex.min.css" />
+    <!-- Highlight.js CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css" />
+    <style>
+      .banner{width:100%;max-height:40vh;object-fit:cover;display:block;border-bottom:1px solid var(--c-border);}
+      .wrap{max-width:1000px;margin:0 auto;padding:1rem;}
+      .page-title{margin:1rem 0 .5rem;}
+      .meta{color:var(--c-subtle);margin:0 0 .75rem;}
+      .tags{display:flex;gap:.4rem;flex-wrap:wrap;margin:.5rem 0 1.25rem;}
+      .tag{font-size:.85rem;padding:.15rem .55rem;border:1px solid var(--c-border);border-radius:999px;color:var(--c-subtle);background:var(--c-bg);}
+      .content :where(img){max-width:100%;height:auto;}
+      .slugpath{font-size:.9rem;color:var(--c-subtle);margin:0 0 1rem;word-break:break-word;}
+      .dvjs-block{position:relative;}
+      .wikilink-missing{color:#b00;cursor:help;}
+    </style>
+    <script>
+      // Tema
+      (function(){
+        try{
+          const k='theme';
+          const v=localStorage.getItem(k);
+          const prefersDark=window.matchMedia('(prefers-color-scheme: dark)').matches;
+          const theme=v||(prefersDark?'dark':'light');
+          document.documentElement.classList.toggle('dark', theme==='dark');
+        }catch{}
+      })();
+    </script>
+    <script>
+      // ACTIVADOR: convierte <script type="application/dvjs"> en ejecutables
+      document.addEventListener('DOMContentLoaded', () => {
+        const inertScripts = document.querySelectorAll('script[type="application/dvjs"][data-dvjs]');
+        inertScripts.forEach((s) => {
+          const real = document.createElement('script');
+          real.text = s.textContent || '';
+          s.replaceWith(real);
+        });
+      });
+    </script>
+  </head>
+  <body>
+    <Header>
+      <div class="wrap" style="margin-left:auto"><ThemeToggle /></div>
+    </Header>
+
+    {banner ? <img class="banner" src={banner} alt={title} /> : null}
+
+    <main class="wrap">
+      <p><a href="/">← índice</a></p>
+      <h1 class="page-title">{title}</h1>
+      {(year || person) ? <p class="meta">{year}{(year && person) ? ' · ' : ''}{person}</p> : null}
+      {tags.length ? <div class="tags">{tags.map(t => <span class="tag">#{t}</span>)}</div> : null}
+
+      <p class="slugpath">{slug}</p>
+      <article class="content" set:html={html} />
+    </main>
+
+    <Footer />
+  </body>
+</html>
