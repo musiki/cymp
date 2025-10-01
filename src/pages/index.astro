@@ -2,7 +2,7 @@
 import BaseHead from '../components/BaseHead.astro';
 import Footer from '../components/Footer.astro';
 import Header from '../components/Header.astro';
-import ThemeToggle from '../components/ThemeToggle.astro';
+
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -81,7 +81,7 @@ const subs = Array.from(new Set(entries.map(e => e.sub).filter(Boolean))).sort()
   </head>
   <body>
     <Header>
-      <div style="margin-left:auto"><ThemeToggle /></div>
+      
     </Header>
 
     <main class="wrap">
