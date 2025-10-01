@@ -1,0 +1,50 @@
+filters:
+  and:
+    - type == "person"
+    - '!file.name.startsWith("t-")'
+views:
+  - type: cards
+    name: all
+    order:
+      - file.name
+      - year
+      - tags
+    sort:
+      - property: year
+        direction: ASC
+    image: note.img
+    imageFit: ""
+    imageAspectRatio: 0.85
+    cardSize: 140
+  - type: cards
+    name: pioneros
+    filters:
+      and:
+        - file.tags.contains("pioneer")
+    order:
+      - file.name
+      - year
+      - file.tags
+    image: note.img
+  - type: cards
+    name: argentinxs
+    filters:
+      and:
+        - file.tags.contains("argentina")
+    image: note.img
+  - type: cards
+    name: artistcoders
+    filters:
+      and:
+        - file.tags.contains("artistcoders")
+    order:
+      - file.name
+      - year
+      - tags
+    sort:
+      - property: year
+        direction: ASC
+    image: note.img
+    imageFit: ""
+    imageAspectRatio: 0.85
+    cardSize: 140
