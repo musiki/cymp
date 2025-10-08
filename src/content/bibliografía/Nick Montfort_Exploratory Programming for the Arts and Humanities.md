@@ -1,6 +1,5 @@
 ---
 tags:
-  - libro
 title: Exploratory Programming for the Arts and Humanities
 subtitle: ""
 author: Nick Montfort

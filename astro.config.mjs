@@ -3,20 +3,30 @@ import { defineConfig } from 'astro/config'
 import mdx from '@astrojs/mdx'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
+import remarkGfm from 'remark-gfm'
+import rehypeRaw from 'rehype-raw'
 
-// importamos el plugin que traduce los delimitadores personalizados
 import slugMathRemark from './src/plugins/slug-math-remark.js'
+import remarkObsidianCallouts from './src/plugins/remark-obsidian-callouts.mjs'
+import remarkMermaid from './src/plugins/remark-mermaid.mjs'
+import remarkRefsApa from './src/plugins/remark-refs-apa.mjs';
+
 
 export default defineConfig({
   site: 'https://musiki.github.io/cymp/',
-  output: 'static',                   // build estático integrado
+  output: 'static',
   integrations: [mdx()],
   markdown: {
     remarkPlugins: [
-      slugMathRemark, // primero traducimos $< >$ a $ $
-      remarkMath
+      remarkGfm,
+      slugMathRemark,         // primero traducís $<
+      remarkMath,
+      remarkMermaid,          // luego procesá mermaid si aparece dentro
     ],
-    rehypePlugins: [rehypeKatex]
+    rehypePlugins: [
+      rehypeRaw,              // permite inyectar HTML desde remark
+      remarkObsidianCallouts, // detecta y transforma callouts
+      rehypeKatex,
+    ]
   }
 })
-

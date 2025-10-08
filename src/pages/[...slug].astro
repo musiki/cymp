@@ -1,9 +1,9 @@
 ---
-// src/pages/blog/[...slug].astro
+// src/pages/[...slug].astro
 
-import BaseHead from '../../components/BaseHead.astro';
-import Footer from '../../components/Footer.astro';
-import Header from '../../components/Header.astro';
+import BaseHead from '../components/BaseHead.astro';
+import Footer from '../components/Footer.astro';
+import Header from '../components/Header.astro';
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,17 +20,26 @@ import rehypeStringify from 'rehype-stringify';
 import rehypeHighlight from 'rehype-highlight';
 import { visit } from 'unist-util-visit';
 
+// 👇 CUSTOM PLUGINS
+import remarkMermaid from '../plugins/remark-mermaid.mjs';
+import remarkObsidianCallouts from '../plugins/remark-obsidian-callouts.mjs';
+import remarkRefsApa from '../plugins/remark-refs-apa.mjs';
+import remarkDataviewLite from '../plugins/remark-dataview-lite.mjs'; 
+
+
+
+
 // ---------- Utils ----------
 function norm(s) {
   return s
     .toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quita acentos
-    .replace(/\\/g, '/')                              // backslash -> slash
-    .replace(/\s+/g, ' ')                             // colapsa espacios
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/\\/g, '/')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 function encodePath(p) {
-  return encodeURI(p); // conserva / y #
+  return encodeURI(p);
 }
 
 // ---------- build index de slugs (una sola vez) ----------
@@ -48,8 +57,8 @@ function buildSlugIndex() {
     }
   })(ROOT);
 
-  const byFull = new Map(); // key=norm(path sin ext, con subcarpetas) -> slug posix
-  const byBase = new Map(); // key=norm(basename sin ext) -> primer match
+  const byFull = new Map();
+  const byBase = new Map();
   const allSlugs = [];
 
   for (const abs of files) {
@@ -106,7 +115,7 @@ function remarkWikilinks({ slugIndex }) {
         const hit = slugIndex.byFull.get(key) || slugIndex.byBase.get(key);
         const textLabel = alias || target + (section ? `#${section}` : '');
         if (hit) {
-          const href = '/blog/' + encodePath(hit) + (section ? '#' + encodeURIComponent(section) : '');
+          const href = '/' + encodePath(hit) + (section ? '#' + encodeURIComponent(section) : '');
           parts.push({
             type: 'link',
             title: null,
@@ -121,12 +130,8 @@ function remarkWikilinks({ slugIndex }) {
         }
         last = regex.lastIndex;
       }
-      if (last < value.length) {
-        parts.push({ type: 'text', value: value.substring(last) });
-      }
-      if (parts.length > 1 || (parts.length === 1 && parts[0].type !== 'text' || parts[0].value !== value)) {
-        parent.children.splice(index, 1, ...parts);
-      }
+      if (last < value.length) parts.push({ type: 'text', value: value.substring(last) });
+      if (parts.length) parent.children.splice(index, 1, ...parts);
     }
   };
 }
@@ -183,6 +188,23 @@ function remarkDataviewjs() {
   };
 }
 
+// ---------- Plugin: Remove Advanced Slides notes ----------
+function remarkRemoveNotes() {
+  return (tree) => {
+    visit(tree, 'paragraph', (node) => {
+      if (!node.children || node.children.length === 0) return;
+
+      const firstChild = node.children[0];
+      if (firstChild.type === 'text') {
+        const new_value = firstChild.value.replace(/^note:\s*/i, '');
+        if (new_value !== firstChild.value) {
+            firstChild.value = new_value;
+        }
+      }
+    });
+  };
+}
+
 // ---------- rutas estáticas ----------
 export async function getStaticPaths() {
   const ROOT = path.resolve(process.cwd(), 'src/content');
@@ -226,15 +248,35 @@ const title = (typeof data.title === 'string' && data.title.trim())
   ? data.title.trim()
   : (slug.split('/').pop() ?? slug);
 
+const metaProcessor = unified()
+  .use(remarkParse)
+  .use(remarkWikilinks, { slugIndex })
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(rehypeRaw)
+  .use(rehypeStringify, { allowDangerousHtml: true });
+
+let processedPerson = '';
+if (person) {
+    const vfile = await metaProcessor.process(person);
+    processedPerson = String(vfile).replace(/^<p>|<\/p>$/g, '');
+}
+
 // ---------- pipeline MD ----------
 const processor = unified()
   .use(remarkParse)
   .use(remarkGfm)
   .use(remarkWikilinks, { slugIndex })
+  .use(remarkMermaid)
+  // 👇 AÑADE MERMAID ANTES DE pasar a HAST
   .use(remarkDataviewjs)
   .use(remarkMath)
+  .use(remarkRefsApa, {
+    headingText: 'Referencias',
+    removeBibtexBlocks: false, // oculta el bloque ```bibtex``` original
+  })
   .use(remarkRehype, { allowDangerousHtml: true })
   .use(rehypeRaw)
+  .use(remarkObsidianCallouts)
   .use(rehypeHighlight)
   .use(rehypeKatex)
   .use(rehypeStringify, { allowDangerousHtml: true });
@@ -247,27 +289,42 @@ const html = String(file);
   <head>
     <BaseHead title={title} description={title} />
     <meta charset="utf-8" />
-    <!-- Si querés un theme global, creá /public/styles/theme.css y descomentá: -->
-    <!-- <link rel="stylesheet" href="/styles/theme.css" /> -->
+
     <!-- KaTeX CSS -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex/dist/katex.min.css" />
     <!-- Highlight.js CSS -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css" />
+
+    <!-- Mermaid -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js" defer></script>
+    <script is:inline>
+      const initMermaid = () => {
+        if (window.mermaid?.run) {
+          window.mermaid.initialize({ startOnLoad: false, theme: 'default' });
+          window.mermaid.run({ querySelector: '.mermaid' });
+        }
+      };
+      document.addEventListener('DOMContentLoaded', initMermaid);
+      document.addEventListener('astro:page-load', initMermaid);
+    </script>
+
     <style>
       .banner{width:100%;max-height:40vh;object-fit:cover;display:block;border-bottom:1px solid var(--c-border);}
       .wrap{max-width:1000px;margin:0 auto;padding:1rem;}
       .page-title{margin:1rem 0 .5rem;}
       .meta{color:var(--c-subtle);margin:0 0 .75rem;}
+      .meta a {color: var(--c-link);}
       .tags{display:flex;gap:.4rem;flex-wrap:wrap;margin:.5rem 0 1.25rem;}
       .tag{font-size:.85rem;padding:.15rem .55rem;border:1px solid var(--c-border);border-radius:999px;color:var(--c-subtle);background:var(--c-bg);}
       .content :where(img){max-width:100%;height:auto;}
       .slugpath{font-size:.9rem;color:var(--c-subtle);margin:0 0 1rem;word-break:break-word;}
       .dvjs-block{position:relative;}
       .wikilink-missing{color:#b00;cursor:help;}
+      .mermaid svg { background: transparent !important; } /* wireframe */
     </style>
-   
+
     <script>
-      // ACTIVADOR: convierte <script type="application/dvjs"> en ejecutables
+      // ACTIVADOR: ejecuta los scripts "inertes" de dataviewjs
       document.addEventListener('DOMContentLoaded', () => {
         const inertScripts = document.querySelectorAll('script[type="application/dvjs"][data-dvjs]');
         inertScripts.forEach((s) => {
@@ -279,21 +336,22 @@ const html = String(file);
     </script>
   </head>
   <body>
-    <Header>
-    </Header>
+    <Header />
 
     {banner ? <img class="banner" src={banner} alt={title} /> : null}
 
     <main class="wrap">
       <p><a href="/">← índice</a></p>
       <h1 class="page-title">{title}</h1>
-      {(year || person) ? <p class="meta">{year}{(year && person) ? ' · ' : ''}{person}</p> : null}
-      {tags.length ? <div class="tags">{tags.map(t => <span class="tag">#{t}</span>)}</div> : null}
+      {(year || person) ? <p class="meta" set:html={year + ((year && person) ? ' · ' : '') + processedPerson} /> : null}
+      {tags.length ? <div class="tags">{tags.map(t => <span class="tag">{t}</span>)}</div> : null}
 
       <p class="slugpath">{slug}</p>
       <article class="content" set:html={html} />
     </main>
 
     <Footer />
+  </body>
+</html>
   </body>
 </html>

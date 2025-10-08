@@ -133,10 +133,9 @@ Vamos por partes, porque tus dos preguntas abren dos planos distintos: biológic
 
 2. La fruta como líquido amniótico comunicativo
 
-Tu analogía es precisa:
 - La fruta cumple un rol similar al de una placenta/bag amniótica, pero externalizada.
 - Diferencia fundamental: en vez de retener al embrión, la fruta está pensada para desprenderse, viajar y finalmente depositar la semilla en otro sustrato.
-- Tu imagen de humanos que cargan su bolsa amniótica afuera y la entierran como semilla es un espejo especulativo potente: traduce lo que en plantas es regla a lo que en animales sería ciencia ficción.
+
 
 3. Lenguaje como procreación
 
@@ -172,9 +171,6 @@ Relación con lo que planteabas
 - En clave semiótica: la papa es lenguaje y es placenta; es soporte de un proceso comunicativo, un cuerpo vegetal que se vuelve medio técnico.
 - Grippo abre un paradigma donde la biología y la técnica se funden: la papa como batería natural, pero también como símbolo de la vida cotidiana, lo popular y lo ancestral.
 
-Conexión a tu hipótesis
-
-Si decías que la fruta es “líquido amniótico comunicativo”, Grippo lleva esto a una materialización: convierte el tubérculo en interfaz energética. No es metáfora: literalmente transmite, conecta, comunica.
 
 ---
 

@@ -24,7 +24,7 @@ activación - difusión
 inhibición -  consumo 
 gradientes de concentración 
 
-Robert Munafo compiló muchos patrones de crecimiento en su  sitio sobre [[sistemas paramétricos de Gray-Scott]] 
+Robert Munafo compiló muchos patrones de crecimiento en su  sitio sobre [[agregación difusión de Gray-Scott]] 
 
 
 [[pt1]]

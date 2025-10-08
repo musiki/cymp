@@ -4,7 +4,7 @@
   "version": "0.0.1",
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build",
+    "build": "node src/scripts/create-search-index.mjs && astro build",
     "preview": "astro preview",
     "astro": "astro"
   },
@@ -12,8 +12,12 @@
     "@astrojs/rss": "^4.0.12",
     "@astrojs/sitemap": "^3.6.0",
     "astro": "^5.14.1",
+    "fuse.js": "^7.1.0",
+    "glob": "^11.0.3",
     "gray-matter": "^4.0.3",
+    "hast-util-to-html": "^9.0.5",
     "marked": "^16.3.0",
+    "mdast-util-to-hast": "^13.2.0",
     "rehype-highlight": "^7.0.2",
     "rehype-mathjax": "^7.1.0",
     "rehype-raw": "^7.0.0",
@@ -32,6 +36,6 @@
     "remark-math": "^6.0.0"
   },
   "engines": {
-    "node": "22.x"
+    "node": ">=20 <24"
   }
 }

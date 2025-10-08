@@ -12,12 +12,32 @@ const { title, description, pubDate, updatedDate, heroImage } = Astro.props;
 <html lang="en">
   <head>
     <BaseHead title={title} description={description} />
-    <!-- CSS de KaTeX para renderizado matemático -->
+
+    <!-- KaTeX CSS (render matemático) -->
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css"
-    >
+    />
+
+    <!-- Mermaid -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js" defer></script>
+    <script is:inline>
+      // Inicializa Mermaid cuando el HTML ya está en el DOM
+      const initMermaid = () => {
+        if (window.mermaid?.run) {
+          // Cambiá 'default' por 'dark' si usás tema oscuro
+          window.mermaid.initialize({ startOnLoad: false, theme: 'default' });
+          window.mermaid.run({ querySelector: '.mermaid' });
+        }
+      };
+      // Astro puede hacer navegación sin recargar toda la página
+      document.addEventListener('DOMContentLoaded', initMermaid);
+      document.addEventListener('astro:page-load', initMermaid);
+    </script>
     <style>
+      /* Wireframe: sin fondo para los SVG de Mermaid */
+      .mermaid svg { background: transparent !important; }
+
       main { width: calc(100% - 2em); max-width: 100%; margin: 0; }
       .hero-image { width: 100%; }
       .hero-image img { display:block; margin:0 auto; border-radius:12px; box-shadow: var(--box-shadow); }

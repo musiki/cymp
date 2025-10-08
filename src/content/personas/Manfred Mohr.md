@@ -13,8 +13,11 @@ connect:
 url: https://www.emohr.com/
 died in city: Chesapeake Bay
 ---
+# mohr1
+<iframe title="The Art of Generative Thinking | Manfred Mohr in Conversation" src="https://www.youtube.com/embed/lfdMnFvXBwc?feature=oembed" height="113" width="200" allowfullscreen="" allow="fullscreen" style="aspect-ratio: 1.76991 / 1; width: 100%; height: 100%;"></iframe>
 
-https://www.youtube.com/watch?v=lfdMnFvXBwc
+---
+
 
 Con Manfred Mohr (1938, Pforzheim) ha aceptado la invitación un artista que a finales de los años sesenta abandonó la pintura tradicional para investigar la esencia del proceso creativo mediante el ordenador y llegar así a nuevas y complejas formas.
 

@@ -3,62 +3,220 @@ import BaseHead from '../components/BaseHead.astro';
 import Footer from '../components/Footer.astro';
 import Header from '../components/Header.astro';
 
-
 import fs from 'node:fs';
 import path from 'node:path';
 import matter from 'gray-matter';
+
+import { unified } from 'unified';
+import remarkParse from 'remark-parse';
+import remarkRehype from 'remark-rehype';
+import rehypeRaw from 'rehype-raw';
+import rehypeStringify from 'rehype-stringify';
+import { visit } from 'unist-util-visit';
+
 import '../styles/theme.css';
 
-const ROOT = path.resolve('src/content');
-const files: string[] = [];
+// ---------- Utils ----------
+function norm(s) {
+  return String(s)
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quita acentos
+    .replace(/\\/g, '/')                              // backslash -> slash
+    .replace(/\s+/g, ' ')                             // colapsa espacios
+    .trim();
+}
+function encodePath(p) {
+  return encodeURI(p);
+}
 
-function walk(dir: string) {
+// ---------- build index de slugs (una sola vez) ----------
+let SLUGS_CACHE = null;
+function buildSlugIndex() {
+  if (SLUGS_CACHE) return SLUGS_CACHE;
+  const ROOT = path.resolve(process.cwd(), 'src/content');
+  const files = [];
+  (function walk(dir) {
+    if (!fs.existsSync(dir)) return;
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(md|mdx)$/i.test(e.name)) files.push(p);
+    }
+  })(ROOT);
+
+  const byFull = new Map();
+  const byBase = new Map();
+  const allSlugs = [];
+
+  for (const abs of files) {
+    const rel = abs.slice(ROOT.length + 1);
+    const posix = rel.split(path.sep).join('/');
+    const slug = posix.replace(/\.(md|mdx)$/i, '');
+    const fullKey = norm(slug);
+    byFull.set(fullKey, slug);
+
+    const base = slug.split('/').pop() || slug;
+    const baseKey = norm(base);
+    if (!byBase.has(baseKey)) byBase.set(baseKey, slug);
+
+    allSlugs.push(slug);
+  }
+  SLUGS_CACHE = { byFull, byBase, allSlugs };
+  return SLUGS_CACHE;
+}
+
+// ---------- Plugin: Wikilinks -> links o html missing ----------
+function remarkWikilinks({ slugIndex }) {
+  return (tree) => {
+    const toProcess = [];
+    visit(tree, 'text', (node, index, parent) => {
+      if (!parent || typeof index !== 'number') return;
+      toProcess.push({ node, index, parent, value: node.value });
+    });
+
+    for (let i = toProcess.length - 1; i >= 0; i--) {
+      const { index, parent, value } = toProcess[i];
+      const regex = /\[\[([^\]]+)\]\]/g;
+      let match;
+      const parts = [];
+      let last = 0;
+
+      while ((match = regex.exec(value)) !== null) {
+        if (match.index > last) {
+          parts.push({ type: 'text', value: value.substring(last, match.index) });
+        }
+        let inner = match[1].trim();
+        let target = inner;
+        let alias = '';
+
+        const barIndex = inner.indexOf('|');
+        if (barIndex > -1) {
+          alias = inner.substring(barIndex + 1).trim();
+          target = inner.substring(0, barIndex).trim();
+        }
+
+        let section = '';
+        const hashIndex = target.indexOf('#');
+        if (hashIndex > -1) {
+          section = target.substring(hashIndex + 1).trim();
+          target = target.substring(0, hashIndex).trim();
+        }
+
+        const key = norm(target);
+        const hit = slugIndex.byFull.get(key) || slugIndex.byBase.get(key);
+        const textLabel = alias || target + (section ? `#${section}` : '');
+
+        if (hit) {
+          // NOTE: if your pages live under /blog/[...slug].astro, prefix with /blog/
+          const href = '/blog/' + encodePath(hit) + (section ? '#' + encodeURIComponent(section) : '');
+          parts.push({
+            type: 'link',
+            title: null,
+            url: href,
+            children: [{ type: 'text', value: textLabel }]
+          });
+        } else {
+          parts.push({
+            type: 'html',
+            value: `<span class="wikilink-missing" title="Enlace no encontrado: ${target}">${textLabel}</span>`
+          });
+        }
+        last = regex.lastIndex;
+      }
+
+      if (last < value.length) parts.push({ type: 'text', value: value.substring(last) });
+      if (parts.length) parent.children.splice(index, 1, ...parts);
+    }
+  };
+}
+
+// ---------- Scan content ----------
+const ROOT = path.resolve('src/content');
+const files = [];
+(function walk(dir) {
   if (!fs.existsSync(dir)) return;
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) walk(p);
     else if (/\.(md|mdx)$/i.test(e.name)) files.push(p);
   }
-}
-walk(ROOT);
+})(ROOT);
 
-// recolectamos metadata de cada archivo
-const entries = files.map((abs) => {
-  const rel = abs.slice(ROOT.length + 1);
-  const posix = rel.split(path.sep).join('/');
-  const slug = posix.replace(/\.(md|mdx)$/i, '');
-  const segs = slug.split('/');
+const slugIndex = buildSlugIndex();
 
-  const raw = fs.readFileSync(abs, 'utf8');
-  const fm = matter(raw);
+const metaProcessor = unified()
+  .use(remarkParse)
+  .use(remarkWikilinks, { slugIndex })
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(rehypeRaw)
+  .use(rehypeStringify, { allowDangerousHtml: true });
 
-  return {
-    slug,
-    root: segs[0],               // carpeta raíz
-    sub: segs.length > 2 ? `${segs[0]}/${segs[1]}` : (segs[1] || ''), // subcarpeta inmediata
-    title: fm.data.title || segs[segs.length - 1],
-    year: fm.data.year || '',
-    person: fm.data.person || '',
-    img: fm.data.img || fm.data.coverUrl || fm.data.image || fm.data.photo || '',
-    tags: Array.isArray(fm.data.tags)
-      ? fm.data.tags
-      : (fm.data.tags ? String(fm.data.tags).split(',').map((s) => s.trim()) : []),
-  };
-});
+// Recolectar metadata de cada archivo
+// Recolectar metadata de cada archivo
+const entries = await Promise.all(
+  files.map(async (abs) => {
+    const rel = abs.slice(ROOT.length + 1);
+    const posix = rel.split(path.sep).join('/');
+    const slug = posix.replace(/\.(md|mdx)$/i, '');
+    const segs = slug.split('/');
 
-// grupos jerárquicos
-const roots = Array.from(new Set(entries.map(e => e.root))).sort();
-const subs = Array.from(new Set(entries.map(e => e.sub).filter(Boolean))).sort();
+    // 👇 saltar si es home.md en raíz
+    if (slug.toLowerCase() === 'home') return null;
+
+    const raw = fs.readFileSync(abs, 'utf8');
+    const fm = matter(raw);
+
+    const personRaw = Array.isArray(fm.data.person)
+      ? fm.data.person.join(', ')
+      : (fm.data.person || '');
+
+    let processedPerson = '';
+    if (personRaw) {
+      try {
+        const vfile = await metaProcessor.process(String(personRaw));
+        processedPerson = String(vfile).replace(/^<p>|<\/p>$/g, '');
+      } catch {
+        processedPerson = String(personRaw);
+      }
+    }
+
+    return {
+      slug,
+      root: segs[0],
+      title: fm.data.title || segs[segs.length - 1],
+      year: fm.data.year || '',
+      person: processedPerson,
+      img: fm.data.img || fm.data.coverUrl || fm.data.image || fm.data.photo || '',
+      tags: Array.isArray(fm.data.tags)
+        ? fm.data.tags
+        : (fm.data.tags ? String(fm.data.tags).split(',').map((s) => s.trim()) : []),
+    };
+  })
+);
+
+// filtrar nulos (home.md)
+const validEntries = entries.filter(Boolean);
+
+// Agrupar por carpeta raíz
+const groupedEntries = validEntries.reduce((acc, entry) => {
+  const { root } = entry;
+  (acc[root] ||= []).push(entry);
+  return acc;
+}, {});
 ---
 
 <html lang="es">
   <head>
     <BaseHead title="contenidos públicos" description="Repositorio de contenidos" />
     <meta charset="utf-8" />
-    
     <style>
-      .filters { margin: 1rem 0; display: flex; gap: 1rem; }
-      select { padding: 0.3rem; }
+      .wrap { max-width: 1000px; margin: 0 auto; padding: 1rem; }
+      .group-title {
+        margin-top: 3rem;
+        margin-bottom: 1rem;
+        border-bottom: 1px solid var(--c-border);
+        padding-bottom: 0.5rem;
+      }
       .gallery {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -71,71 +229,49 @@ const subs = Array.from(new Set(entries.map(e => e.sub).filter(Boolean))).sort()
         background: var(--c-bg);
         display: flex;
         flex-direction: column;
+        text-decoration: none;
+        color: var(--c-fg);
       }
+      .card:hover { border-color: var(--c-link); }
       .card img { width: 100%; height: 140px; object-fit: cover; }
       .card-body { padding: 0.5rem 0.75rem; flex:1; display:flex; flex-direction:column; }
       .title { margin:0; font-size: 1rem; font-weight:600; }
       .meta { font-size: .8rem; color: var(--c-subtle); margin:.25rem 0; }
+      .meta a { color: var(--c-link); }
       .tags { display:flex; gap:.25rem; flex-wrap:wrap; margin-top:auto; }
       .tag { font-size: .7rem; padding: .1rem .4rem; border:1px solid var(--c-border); border-radius:6px; }
+      .wikilink-missing { color: #b00; }
     </style>
   </head>
   <body>
-    <Header>
-      
-    </Header>
-
+    <Header />
     <main class="wrap">
       <h1>contenidos públicos</h1>
 
-      <div class="filters">
-        <label>
-          Carpeta raíz:
-          <select id="rootFilter">
-            <option value="">Todas</option>
-            {roots.map(r => <option value={r}>{r}</option>)}
-          </select>
-        </label>
-        <label>
-          Subcarpeta:
-          <select id="subFilter">
-            <option value="">Todas</option>
-            {subs.map(s => <option value={s}>{s}</option>)}
-          </select>
-        </label>
-      </div>
-
-      <div id="gallery" class="gallery">
-        {entries.map(e => (
-          <a href={`/blog/${e.slug}`} class="card" data-root={e.root} data-sub={e.sub}>
-            {e.img && <img src={e.img} alt={e.title} />}
-            <div class="card-body">
-              <h3 class="title">{e.title}</h3>
-              {(e.year || e.person) && <p class="meta">{e.year}{(e.year && e.person) ? ' · ' : ''}{e.person}</p>}
-              {e.tags.length ? <div class="tags">{e.tags.map(t => <span class="tag">#{t}</span>)}</div> : null}
-            </div>
-          </a>
-        ))}
-      </div>
+      {Object.entries(groupedEntries).map(([folder, entriesInFolder]) => (
+        <section>
+          <h3 class="group-title">{folder}</h3>
+          <div class="gallery">
+            {entriesInFolder.map(e => (
+              <a href={`/${e.slug}`} class="card" data-root={e.root}>
+                {e.img && <img src={e.img} alt={e.title} />}
+                <div class="card-body">
+                  <h4 class="title">{e.title}</h4>
+                  {(e.year || e.person) && (
+                    <p class="meta" set:html={e.year + ((e.year && e.person) ? ' \u00b7 ' : '') + e.person}></p>
+                  )}
+                  {e.tags.length > 0 && (
+                    <div class="tags">
+                      {e.tags.map(t => <span class="tag">{t}</span>)}
+                    </div>
+                  )}
+                </div>
+              </a>
+            ))}
+          </div>
+        </section>
+      ))}
     </main>
-
     <Footer />
-
-    <script>
-      const rootSel = document.getElementById('rootFilter');
-      const subSel = document.getElementById('subFilter');
-      const cards = document.querySelectorAll('#gallery .card');
-      function applyFilters() {
-        const r = rootSel.value;
-        const s = subSel.value;
-        cards.forEach(c => {
-          const okRoot = !r || c.dataset.root === r;
-          const okSub  = !s || c.dataset.sub === s;
-          c.style.display = (okRoot && okSub) ? '' : 'none';
-        });
-      }
-      rootSel.addEventListener('change', applyFilters);
-      subSel.addEventListener('change', applyFilters);
-    </script>
   </body>
 </html>
