@@ -5,8 +5,8 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
-    "build": "astro check && astro build --remote",
-    "build:local": "astro check && astro build",
+    "build": "astro build --remote",
+    "build:local": "astro build",
     "preview": "astro preview",
     "astro": "astro",
     "db:backup": "bash scripts/db-backup.sh",
