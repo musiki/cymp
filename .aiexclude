@@ -1,0 +1,8 @@
+node_modules
+build
+dist
+.astro
+.vscode
+.DS_Store
+.vercel
+

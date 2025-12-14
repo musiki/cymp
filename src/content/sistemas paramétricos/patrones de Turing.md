@@ -1,5 +1,6 @@
 #patrones
 #complejidad #sistemascomplejos 
+#operativos/sistemasparamétricos 
 
 Son patrones complejos que crecen a partir de un estado inicial uniforme y homogeneo. Fue estudiado por primera vez en el papel fundacional de Alan Turing ["The Chemical Basis of Morphogenesis"](The Chemical Basis of Morphogenesis") .
 

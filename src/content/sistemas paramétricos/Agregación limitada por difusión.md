@@ -1,7 +1,8 @@
 ---
-person: 
-url: 
-year: 
+person:
+url:
+year:
+tag: operativos/sistemasparamétricos
 ---
 
 

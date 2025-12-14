@@ -1,0 +1,372 @@
+---
+// Graph Modal Component - Press 'g' to toggle
+const currentSlug = Astro.url.pathname.replace(/^\//, '').replace(/\/$/, '');
+---
+
+<div id="graph-modal" class="graph-modal">
+  <div class="graph-container">
+    <div class="graph-header">
+      <h2>Graph View</h2>
+      <div class="graph-controls">
+        <button id="graph-center" title="Center on current page">⊙</button>
+        <button id="graph-close" title="Close (ESC or G)">✕</button>
+      </div>
+    </div>
+    <div id="graph-canvas"></div>
+    <div class="graph-legend">
+      <div><span class="legend-doc"></span> Documents</div>
+      <div><span class="legend-tag"></span> Tags</div>
+      <div><span class="legend-current"></span> Current Page</div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/force-graph"></script>
+
+<script define:vars={{ currentSlug }}>
+  let graphData = null;
+  let graphInstance = null;
+  const highlightNodes = new Set();
+  const highlightLinks = new Set();
+  let hoverNode = null;
+
+  // Load graph data
+  async function initGraph() {
+    if (!graphData) {
+      const response = await fetch('/graph-data.json');
+      graphData = await response.json();
+      
+      // Cross-link node objects for highlighting
+      graphData.links.forEach(link => {
+        const a = graphData.nodes.find(n => n.id === link.source);
+        const b = graphData.nodes.find(n => n.id === link.target);
+        if (a && b) {
+          !a.neighbors && (a.neighbors = []);
+          !b.neighbors && (b.neighbors = []);
+          a.neighbors.push(b);
+          b.neighbors.push(a);
+          
+          !a.links && (a.links = []);
+          !b.links && (b.links = []);
+          a.links.push(link);
+          b.links.push(link);
+        }
+      });
+    }
+    
+    return graphData;
+  }
+
+  // Show/hide modal
+  function toggleModal() {
+    const modal = document.getElementById('graph-modal');
+    const isHidden = modal.classList.contains('hidden');
+    
+    if (isHidden) {
+      modal.classList.remove('hidden');
+      setTimeout(() => modal.classList.add('visible'), 10);
+      if (!graphInstance) {
+        renderGraph();
+      }
+    } else {
+      modal.classList.remove('visible');
+      setTimeout(() => modal.classList.add('hidden'), 300);
+    }
+  }
+
+  // Render the graph
+  async function renderGraph() {
+    const data = await initGraph();
+    const container = document.getElementById('graph-canvas');
+    
+    // Clear container
+    container.innerHTML = '';
+    
+    // Detect current theme
+    const isDark = document.documentElement.classList.contains('dark');
+    
+    // Color scheme based on theme
+    const colors = isDark ? {
+      document: '#4f83ff',
+      tag: '#34d399',
+      current: '#f87171',
+      link: '#6b7280',
+      tagLink: '#059669',
+      highlight: '#fbbf24',
+      hover: '#f87171'
+    } : {
+      document: '#2563eb',
+      tag: '#059669',
+      current: '#dc2626',
+      link: '#9ca3af',
+      tagLink: '#10b981',
+      highlight: '#f59e0b',
+      hover: '#dc2626'
+    };
+    
+    const NODE_R = 4;
+    
+    graphInstance = ForceGraph()(container)
+      .graphData(data)
+      .nodeId('id')
+      .nodeLabel('name')
+      .nodeRelSize(NODE_R)
+      .nodeColor(node => {
+        if (node.id === currentSlug) return colors.current;
+        if (highlightNodes.has(node)) return colors.highlight;
+        return node.type === 'tag' ? colors.tag : colors.document;
+      })
+      .nodeVal(node => {
+        if (node.id === currentSlug) return 12;
+        return node.type === 'tag' ? 3 : 6;
+      })
+      .linkColor(link => {
+        if (highlightLinks.has(link)) return colors.highlight;
+        return link.type === 'tag' ? colors.tagLink : colors.link;
+      })
+      .linkWidth(link => highlightLinks.has(link) ? 3 : (link.type === 'tag' ? 1 : 1.5))
+      .linkDirectionalParticles(link => highlightLinks.has(link) ? 4 : 0)
+      .linkDirectionalParticleWidth(link => highlightLinks.has(link) ? 3 : 0)
+      .d3AlphaDecay(0.02)
+      .d3VelocityDecay(0.3)
+      .autoPauseRedraw(false)
+      .onNodeHover(node => {
+        highlightNodes.clear();
+        highlightLinks.clear();
+        
+        if (node) {
+          highlightNodes.add(node);
+          if (node.neighbors) {
+            node.neighbors.forEach(neighbor => highlightNodes.add(neighbor));
+          }
+          if (node.links) {
+            node.links.forEach(link => highlightLinks.add(link));
+          }
+        }
+        
+        hoverNode = node || null;
+        container.style.cursor = node ? 'pointer' : 'default';
+      })
+      .onLinkHover(link => {
+        highlightNodes.clear();
+        highlightLinks.clear();
+        
+        if (link) {
+          highlightLinks.add(link);
+          const source = data.nodes.find(n => n.id === link.source.id || n.id === link.source);
+          const target = data.nodes.find(n => n.id === link.target.id || n.id === link.target);
+          if (source) highlightNodes.add(source);
+          if (target) highlightNodes.add(target);
+        }
+      })
+      .nodeCanvasObjectMode(node => highlightNodes.has(node) ? 'before' : undefined)
+      .nodeCanvasObject((node, ctx) => {
+        if (highlightNodes.has(node)) {
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, NODE_R * (node.id === currentSlug ? 3 : 2.5), 0, 2 * Math.PI, false);
+          ctx.fillStyle = node === hoverNode ? colors.hover : colors.highlight;
+          ctx.fill();
+        }
+      })
+      .onNodeClick(node => {
+        if (node.type === 'document') {
+          window.location.href = '/' + node.id;
+        } else if (node.type === 'tag') {
+          const tag = node.id.replace('tag:', '');
+          window.location.href = '/tags/' + encodeURIComponent(tag);
+        }
+      });
+    
+    // Center on current node if it exists
+    setTimeout(() => {
+      const currentNode = data.nodes.find(n => n.id === currentSlug);
+      if (currentNode && graphInstance) {
+        graphInstance.centerAt(currentNode.x, currentNode.y, 1000);
+        graphInstance.zoom(2, 1000);
+      }
+    }, 1000);
+  }
+
+  // Center on current page
+  async function centerOnCurrent() {
+    if (!graphData) await initGraph();
+    if (graphInstance && graphData) {
+      const currentNode = graphData.nodes.find(n => n.id === currentSlug);
+      if (currentNode) {
+        graphInstance.centerAt(currentNode.x, currentNode.y, 1000);
+        graphInstance.zoom(2, 1000);
+      }
+    }
+  }
+
+  // Event listeners
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'g' || e.key === 'G') {
+      e.preventDefault();
+      toggleModal();
+    } else if (e.key === 'Escape') {
+      const modal = document.getElementById('graph-modal');
+      if (modal.classList.contains('visible')) {
+        toggleModal();
+      }
+    }
+  });
+
+  document.getElementById('graph-close')?.addEventListener('click', toggleModal);
+  document.getElementById('graph-center')?.addEventListener('click', centerOnCurrent);
+  
+  document.getElementById('graph-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'graph-modal') {
+      toggleModal();
+    }
+  });
+</script>
+
+<style>
+  .graph-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.95);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+  }
+
+  .graph-modal.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .graph-modal.hidden {
+    display: none;
+  }
+
+  .graph-container {
+    width: 95vw;
+    height: 95vh;
+    background: rgb(30 30 30);
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  }
+
+  .graph-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    background: rgb(20 20 20);
+    border-bottom: 1px solid rgb(50 50 50);
+  }
+
+  .graph-header h2 {
+    margin: 0;
+    color: rgb(245 245 245);
+    font-size: 1.2rem;
+  }
+
+  .graph-controls {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .graph-controls button {
+    background: rgb(60 60 60);
+    border: none;
+    color: white;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    transition: background 0.2s;
+  }
+
+  .graph-controls button:hover {
+    background: rgb(80 80 80);
+  }
+
+  #graph-canvas {
+    flex: 1;
+    position: relative;
+  }
+
+  .graph-legend {
+    padding: 1rem 1.5rem;
+    background: rgb(20 20 20);
+    border-top: 1px solid rgb(50 50 50);
+    display: flex;
+    gap: 2rem;
+    color: rgb(200 200 200);
+    font-size: 0.9rem;
+  }
+
+  .graph-legend > div {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .graph-legend span {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+
+  .legend-doc {
+    background: #4f83ff;
+  }
+
+  .legend-tag {
+    background: #34d399;
+  }
+
+  .legend-current {
+    background: #f87171;
+  }
+
+  /* Light mode adjustments */
+  :global(:not(.dark)) .graph-modal {
+    background: rgba(255, 255, 255, 0.95);
+  }
+
+  :global(:not(.dark)) .graph-container {
+    background: rgb(250 250 250);
+  }
+
+  :global(:not(.dark)) .graph-header,
+  :global(:not(.dark)) .graph-legend {
+    background: rgb(240 240 240);
+    border-color: rgb(220 220 220);
+  }
+
+  :global(:not(.dark)) .graph-header h2 {
+    color: rgb(30 30 30);
+  }
+
+  :global(:not(.dark)) .graph-controls button {
+    background: rgb(200 200 200);
+    color: rgb(30 30 30);
+  }
+
+  :global(:not(.dark)) .graph-controls button:hover {
+    background: rgb(180 180 180);
+  }
+
+  :global(:not(.dark)) .graph-legend {
+    color: rgb(60 60 60);
+  }
+</style>

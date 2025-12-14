@@ -1,4 +1,4 @@
-
+#operativos/sistemasparamétricos 
 
 ## Entropy
 

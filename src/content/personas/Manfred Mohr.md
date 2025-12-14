@@ -196,12 +196,12 @@ async () => {
 
 
 
-.	Los vértices del cubo se definen como
-	
+.Los vértices del cubo se definen como
+
 $$V = {-1,1}^3 \quad \Rightarrow \quad |V|=8.$$
-	2.	Dos vértices se conectan si su distancia de Hamming es
+2.Dos vértices se conectan si su distancia de Hamming es
 $$d_H(i,j)=1.$$
-	3.	Rotación en el plano XY:
+3.Rotación en el plano XY:
 $$
 R_{xy}(\alpha)=
 \begin{bmatrix}
@@ -210,35 +210,35 @@ R_{xy}(\alpha)=
 0 & 0 & 1
 \end{bmatrix}.
 $$
-	4.	Rotación en el plano XZ con ángulo proporcional:
+4.Rotación en el plano XZ con ángulo proporcional:
 $$
 \beta = 0.7\alpha.
 $$
-	5.	Proyección en perspectiva:
+5.Proyección en perspectiva:
 $$
 p = \frac{1}{1+kz}, \quad
 x’ = x S p + \tfrac{W}{2}, \quad
 y’ = y S p + \tfrac{H}{2}.
 $$
-	6.	Introducción de una máscara binaria:
+6.Introducción de una máscara binaria:
 $$m \in [0,255].$$
-	7.	Para cada arista [i,j], calcular:
+7.Para cada arista [i,j], calcular:
 $$
 b = (i \oplus j) \land m.
 $$
-	8.	Criterio: dibujar si la paridad de $b$ es impar:
+8.Criterio: dibujar si la paridad de $b$ es impar:
 $$
 \text{popcount}(b) \equiv 1 \mod{2}.
 $$
-	9.	Controles:
+9.Controles:
 $$\alpha \quad (rotación), \quad m \quad (máscara), \quad S \quad (escala).$$
-	10.	Ordenar aristas según la coordenada z para simular oclusión.
-	11.	Trazar con línea uniforme de 1 px: estética tipo plotter.
-	12.	Mantener coordenadas en [-1,1] evita inestabilidades.
-	13.	Blanco/negro + rarefacción combinatoria = estilo Mohr.
-	14.	Complejidad computacional:
+10.Ordenar aristas según la coordenada z para simular oclusión.
+11.Trazar con línea uniforme de 1 px: estética tipo plotter.
+12.Mantener coordenadas en [-1,1] evita inestabilidades.
+13.Blanco/negro + rarefacción combinatoria = estilo Mohr.
+14.Complejidad computacional:
 $$O(|E|), \quad |E|=12.$$
-	15.	Variante: cambiar la regla a
+15.Variante: cambiar la regla a
 $$
 b = (i+j) \land m \quad \text{o} \quad \text{paridad}(i\cdot j).
 $$
@@ -340,52 +340,52 @@ $$
 
 
 Tesseracto 4D (proyección 2D)
-	1.	Vértices:
+1. Vértices:
 $$V = {-1,1}^4, \quad |V|=16.$$
-	2.	Aristas: conecta i,j si
+2. Aristas: conecta i,j si
 $$d_H(i,j)=1 \quad \Rightarrow \quad |E|=32.$$
-	3.	Rotación en plano XY:
+3. Rotación en plano XY:
 $$
 \begin{cases}
 x’ = x\cos\alpha - y\sin\alpha \
 y’ = x\sin\alpha + y\cos\alpha
 \end{cases}
 $$
-	4.	Rotación en plano ZW:
+4. Rotación en plano ZW:
 $$
 \begin{cases}
 z’ = z\cos\beta - w\sin\beta \
 w’ = z\sin\beta + w\cos\beta
 \end{cases}
 $$
-	5.	Transformación completa:
+5. Transformación completa:
 $$
 (x,y,z,w) \mapsto R_{zw}(\beta),R_{xy}(\alpha),(x,y,z,w).
 $$
-	6.	Proyección 4D a 2D con factor:
+6. Proyección 4D a 2D con factor:
 $$
 p = \frac{1}{1+\lambda w + \mu z}.
 $$
-	7.	Coordenadas proyectadas:
+7. Coordenadas proyectadas:
 $$
 x’ = x S p + \tfrac{W}{2}, \quad
 y’ = y S p + \tfrac{H}{2}.
 $$
-	8.	Máscara combinatoria:
+8. Máscara combinatoria:
 $$M \in [0,65535].$$
-	9.	Para cada arista [i,j], calcular:
+9. Para cada arista [i,j], calcular:
 $$
 b = (i \cdot j) \land M.
 $$
-	10.	Criterio: dibujar si
+10. Criterio: dibujar si
 $$
 \text{popcount}(b) \equiv 1 \pmod{2}.
 $$
-	11.	Sliders:
+11. Sliders:
 $$\alpha, \quad \beta, \quad M.$$
-	12.	Escala fija S \approx 120.
-	13.	Profundidad: ordenar por z+w para sugerir lejanía.
-	14.	Variantes: agregar otras rotaciones, por ejemplo R_{xw}, R_{yz}.
+12. Escala fija S \approx 120.
+13. Profundidad: ordenar por z+w para sugerir lejanía.
+14. Variantes: agregar otras rotaciones, por ejemplo R_{xw}, R_{yz}.
 
 
 

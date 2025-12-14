@@ -1,0 +1,43 @@
+---
+import BaseHead from "../components/BaseHead.astro";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+---
+<html lang="es">
+<head>
+    <BaseHead title="Login" description="Inicia sesión para acceder a tus cursos." />
+    <style>
+        .wrap { max-width: 400px; margin: 4rem auto; padding: 2rem; border: 1px solid var(--c-border); border-radius: 8px; }
+        h1 { text-align: center; }
+        .provider-login {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            margin-top: 2rem;
+        }
+        .provider-login a {
+            display: block;
+            padding: 0.75rem;
+            border: 1px solid var(--c-border);
+            text-align: center;
+            border-radius: 6px;
+            text-decoration: none;
+        }
+         .provider-login a:hover {
+            background-color: var(--c-bg-mute);
+        }
+    </style>
+</head>
+<body>
+    <Header />
+    <main class="wrap">
+        <h1>Iniciar Sesión</h1>
+        <div class="provider-login">
+            <!-- better-auth crea estas rutas por ti al configurar un proveedor -->
+            <a href="/api/auth/login/github">Continuar con GitHub</a>
+            <a href="/api/auth/login/google">Continuar con Google</a>
+        </div>
+    </main>
+    <Footer />
+</body>
+</html>

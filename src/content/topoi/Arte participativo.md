@@ -1,9 +1,11 @@
 ---
-img: "https://www.deselys-psicologo.com/wp-content/uploads/2016/08/5776854365_411da97e9c_b.jpg"
+img: https://www.deselys-psicologo.com/wp-content/uploads/2016/08/5776854365_411da97e9c_b.jpg
 type: topoi
-tags: topoi,
+tags:
+  - publicspace
+  - participatory
 unit: 51
-author: 
+author:
 ---
 ## modos de escucha
 
@@ -35,3 +37,6 @@ what Kyle Gann calls maximalist style.
 
 Gordon Pask, cibernetic public participation
     [https://eliza-pert.medium.com/1969-ab2783c47cbf](https://eliza-pert.medium.com/1969-ab2783c47cbf)
+
+
+Erin Manning, [The dance of Attention, 2013](http://www.inflexions.org/n6_manning.pdf)

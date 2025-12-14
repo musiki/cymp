@@ -689,5 +689,5 @@ flowchart TB
 
 ---
 
-Para saber mas...[[generatividad MOC]]
+Para saber mas...[[00-moc/generatividad MOC]]
 

@@ -467,7 +467,6 @@ Tools for artistic research – Taiteellinen tutkimus, fecha de acceso: julio 9,
 
 Las acciones en un nivel afectan directamente al otro. Es un bucle constante entre la gestión macro y la intervención micro.
 
-Aquí tienes el código completo. Guárdalo como un archivo `.html` y ábrelo en tu navegador para jugar.
 
 \<immersive id="atomic-reactor-arcade-game" type="code"title="La Consola Atómica: El Juego Arcade"\>
 

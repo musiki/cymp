@@ -1,0 +1,44 @@
+---
+export const prerender = false;
+
+import { getCollection } from 'astro:content';
+import BlogPost from '../layouts/BlogPost.astro';
+
+const { slug } = Astro.params;
+
+// Helper function to create a clean slug from a filename
+function createCleanSlug(filename: string): string {
+  return filename
+    .replace(/\.(md|mdx)$/i, '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // Remove accents
+    .replace(/[^a-z0-9]+/g, '-') // Replace non-alphanumeric with hyphens
+    .replace(/^-+|-+$/g, ''); // Remove leading/trailing hyphens
+}
+
+// Get all content entries (excluding cursos which have their own routes)
+const allContent = await getCollection('content');
+
+// Find entry by matching clean slug
+const entry = allContent.find(item => {
+  const filename = item.id.split('/').pop() || '';
+  const cleanSlug = createCleanSlug(filename);
+  return cleanSlug === slug;
+});
+
+if (!entry) {
+  return Astro.redirect('/404');
+}
+
+// Render the content
+const { Content } = await entry.render();
+---
+
+<BlogPost
+  title={entry.data.title || 'Untitled'}
+  description={entry.data.description || entry.data.subtitle || ''}
+  pubDate={new Date()}
+>
+  <Content />
+</BlogPost>

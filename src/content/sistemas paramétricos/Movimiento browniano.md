@@ -1,9 +1,10 @@
 ---
 concept:
-tags: matemática 
-
+tags:
+  - matemática
+  - operativos/sistemasparamétricos
 ---
-
+ 
 El movimiento browniano se formaliza en matemáticas como un proceso estocástico de tiempo continuo. La representación más básica es la ecuación diferencial estocástica que define el movimiento browniano estándar (Wiener):
 
 ---
@@ -1229,4 +1230,431 @@ try{
 }
 ```
 
+
+## version 4
+
+```dataviewjs
+try{
+  const r=this.container;
+
+  // ---------- loader ----------
+  const tried=new Set();
+  async function loadOne(url){ if([...document.scripts].some(s=>s.src.includes(url))) return; return new Promise((ok,ko)=>{ const t=document.createElement('script'); t.src=url; t.async=true; t.onload=ok; t.onerror=()=>ko(new Error(`ERROR cargando: ${url}`)); document.head.appendChild(t); }); }
+  async function loadAny(paths){ let last=null; for(const p of paths){ if(tried.has(p))continue; tried.add(p); try{await loadOne(p); return;}catch(e){last=e;} } throw last||new Error('No se pudo cargar'); }
+
+  // ---------- UI ----------
+  const panel=document.createElement('div');
+  const row=(label,input)=>{ const w=document.createElement('div'); w.style.display='flex'; w.style.alignItems='center'; w.style.gap='6px'; const lb=document.createElement('label'); lb.textContent=label; lb.style.width='170px'; w.append(lb,input); return w; };
+  const mkRange=(min,max,step,val)=>{ const i=document.createElement('input'); i.type='range'; i.min=min; i.max=max; i.step=step; i.value=val; i.style.flex='1'; return i; };
+  const mkCheck=(val)=>{ const i=document.createElement('input'); i.type='checkbox'; i.checked=val; return i; };
+  const mkSelect=(opts,val)=>{ const s=document.createElement('select'); opts.forEach(o=>{const op=document.createElement('option'); op.value=o.value||o; op.textContent=o.label||o; if((o.value||o)===val) op.selected=true; s.append(op);}); return s; };
+  const lbl=(label,el,fmt=v=>v)=>{ const w=row(label,el); const sp=document.createElement('span'); sp.textContent=fmt(el.value ?? (el.checked? 'on':'off')); sp.style.width='70px'; sp.style.textAlign='right'; w.append(sp); const upd=()=>{ sp.textContent=fmt(el.value ?? (el.checked? 'on':'off')); }; el.addEventListener('input',upd); el.addEventListener('change',upd); return w; }
+
+  panel.style.display='grid';
+  panel.style.gridTemplateColumns='repeat(2,minmax(340px,1fr))';
+  panel.style.gap='8px'; panel.style.marginBottom='8px';
+
+  const btn=document.createElement('button'); btn.textContent='▶ Play'; btn.style.width='120px';
+
+  const iN     = mkRange(2,100,1,2);
+  const iSpd   = mkRange(1,240,1,1);
+  const iTail  = mkRange(0,4000,10,0);
+  const iTubeR = mkRange(0.02,0.5,0.01,0.12);
+
+  const iFcMin = mkRange(40,1000,1,110);
+  const iFcMax = mkRange(200,6000,1,880);
+  const iFmMin = mkRange(0.5,1000,0.5,1);
+  const iFmMax = mkRange(1,6000,1,220);
+  const iIMax  = mkRange(0,4000,1,700);
+
+  const iWet   = mkRange(0,1,0.01,0.5);
+  const iRel   = mkRange(0.01,2.0,0.01,0.25);
+
+  // continuo/ducking/ruido
+  const iCont  = mkCheck(true);
+  const iRestP = mkRange(0,1,0.01,0.20);
+  const iPersist = mkRange(0,1,0.01,0.35);
+  const iNoise  = mkSelect([{label:'white',value:'white'},{label:'pink (1/f)',value:'pink'},{label:'brown',value:'brown'}],'brown');
+  const iDuck   = mkRange(0,1,0.01,0.6);
+  const iColorSens = mkRange(0,1,0.01,0.7);
+
+  // musical
+  const iMusical = mkCheck(true);
+  const iScale = mkSelect([
+    {label:'Harm 1–8',value:'harm8'},
+    {label:'Justa (1,5/4,4/3,3/2,5/3,2,7/4)',value:'just7'},
+    {label:'Pent. mayor',value:'pentaM'},
+    {label:'Octavas',value:'octs'}
+  ], 'harm8');
+
+  // afinación
+  const iTune  = mkCheck(true);
+  const iA4    = mkRange(380,470,0.1,440);
+  const iPitchSpan = mkRange(12,84,1,48);
+  const iKey   = mkSelect([{label:'C',value:'C'},{label:'C#',value:'C#'},{label:'D',value:'D'},{label:'D#',value:'D#'},{label:'E',value:'E'},{label:'F',value:'F'},{label:'F#',value:'F#'},{label:'G',value:'G'},{label:'G#',value:'G#'},{label:'A',value:'A'},{label:'A#',value:'A#'},{label:'B',value:'B'}],'A');
+  const iScalePitch = mkSelect([{label:'Cromática (12)',value:'chrom'},{label:'Mayor',value:'maj'},{label:'Menor natural',value:'min'},{label:'Pent. mayor',value:'pentaM'}],'chrom');
+
+  r.append(panel);
+  panel.append(
+    btn,
+    lbl('N (lado y grilla)', iN, v=>v),
+    lbl('Velocidad (steps/s)', iSpd, v=>v),
+    lbl('Largo estela', iTail, v=>v),
+    lbl('Radio estela', iTubeR, v=>(+v).toFixed(2)),
+    lbl('Carrier f min (Hz)', iFcMin, v=>v),
+    lbl('Carrier f max (Hz)', iFcMax, v=>v),
+    lbl('Mod f min (Hz)', iFmMin, v=>v),
+    lbl('Mod f max (Hz)', iFmMax, v=>v),
+    lbl('Índice max (Hz)', iIMax, v=>v),
+    lbl('Reverb wet', iWet, v=>(+v).toFixed(2)),
+    lbl('Release (s)', iRel, v=>(+v).toFixed(2)),
+    lbl('Modo continuo', iCont),
+    lbl('Prob. de rest', iRestP, v=>(+v).toFixed(2)),
+    lbl('Persistencia', iPersist, v=>(+v).toFixed(2)),
+    lbl('Color de ruido', iNoise, v=>v),
+    lbl('Ducking auto', iDuck, v=>(+v).toFixed(2)),
+    lbl('Sens. color', iColorSens, v=>(+v).toFixed(2)),
+    lbl('Modo musical', iMusical),
+    lbl('Escala ratios', iScale, v=>v),
+    lbl('Afinación 12-TET', iTune),
+    lbl('A4 (Hz)', iA4, v=>(+v).toFixed(1)),
+    lbl('Rango ±semitonos', iPitchSpan, v=>v),
+    lbl('Tónica', iKey, v=>v),
+    lbl('Escala notas', iScalePitch, v=>v)
+  );
+
+  // ---------- canvas ----------
+  const W=r.clientWidth||640, H=460;
+  const stage=document.createElement('div');
+  stage.style.width='100%'; stage.style.height=H+'px'; stage.style.border='1px solid var(--text-muted)';
+  r.appendChild(stage);
+
+  // ---------- three ----------
+  await loadAny(['https://unpkg.com/three@0.149.0/build/three.min.js','https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js']);
+
+  const ren=new THREE.WebGLRenderer({antialias:true,alpha:true});
+  const w=stage.clientWidth||W; ren.setSize(w,H); stage.appendChild(ren.domElement);
+  ren.toneMapping=THREE.ACESFilmicToneMapping; ren.toneMappingExposure=1.05;
+
+  const scn=new THREE.Scene(); scn.background=new THREE.Color(0x060606);
+  const cam=new THREE.PerspectiveCamera(60,w/H,.1,2000);
+  function positionCameraForN(N){ const radius=Math.max(8, N*1.6); cam.position.set(radius, radius*0.75, radius*1.2); cam.near=0.01; cam.far=Math.max(1000, radius*10); cam.updateProjectionMatrix(); }
+  positionCameraForN(+iN.value);
+
+  scn.add(new THREE.AmbientLight(0xffffff,.25));
+  const dl=new THREE.DirectionalLight(0xffffff,.8); dl.position.set(6,9,4); scn.add(dl);
+
+  // orbit
+  class Orbit{
+    constructor(c,d){ this.c=c; this.d=d; this.t=new THREE.Vector3();
+      this.s=new THREE.Spherical().setFromVector3(c.position.clone());
+      this.min=.01; this.max=Math.PI-.01; this.rmin=1; this.rmax=4000; this.rot=.008; this.zoom=1.1;
+      this.drag=false; this.p={x:0,y:0};
+      d.addEventListener('pointerdown',e=>{this.drag=true;this.p.x=e.clientX;this.p.y=e.clientY;});
+      d.addEventListener('pointerup',()=>this.drag=false);
+      d.addEventListener('pointermove',e=>{ if(!this.drag)return; const dx=e.clientX-this.p.x,dy=e.clientY-this.p.y; this.p.x=e.clientX; this.p.y=e.clientY; this.s.theta-=dx*this.rot; this.s.phi=Math.min(this.max,Math.max(this.min,this.s.phi-dy*this.rot)); this.upd(); });
+      d.addEventListener('wheel',e=>{ e.preventDefault(); this.s.radius=e.deltaY>0?Math.min(this.rmax,this.s.radius*this.zoom):Math.max(this.rmin,this.s.radius/this.zoom); this.upd(); },{passive:false});
+      this.upd();
+    }
+    upd(){ this.c.position.setFromSpherical(this.s).add(this.t); this.c.lookAt(this.t); }
+  }
+  const orbit=new Orbit(cam,ren.domElement);
+
+  // caja + grids
+  let boxMesh=null, grids=[];
+  function clearGrids(){ grids.forEach(g=>scn.remove(g)); grids=[]; }
+  function addGrids(N){
+    clearGrids(); const L=N/2, size=2*L, div=N, color=0x2244aa, e=L+0.001;
+    const mk=(rot,tx,ty,tz)=>{
+      const g=new THREE.GridHelper(size,div,color,color);
+      g.material.transparent=true; g.material.opacity=0.35;
+      g.rotation.set(rot.x,rot.y,rot.z); g.position.set(tx,ty,tz);
+      scn.add(g); grids.push(g);
+    };
+    mk(new THREE.Euler(0,0,0), 0,-e,0);
+    mk(new THREE.Euler(0,0,0), 0, e,0);
+    mk(new THREE.Euler(Math.PI/2,0,0), 0,0,-e);
+    mk(new THREE.Euler(Math.PI/2,0,0), 0,0, e);
+    mk(new THREE.Euler(0,0,Math.PI/2), -e,0,0);
+    mk(new THREE.Euler(0,0,Math.PI/2),  e,0,0);
+  }
+  function rebuildBox(N){
+    if(boxMesh) scn.remove(boxMesh);
+    const L=N/2;
+    boxMesh=new THREE.Mesh(new THREE.BoxGeometry(2*L,2*L,2*L),
+      new THREE.MeshBasicMaterial({color:0x4477ff,wireframe:true,transparent:true,opacity:0.18}));
+    scn.add(boxMesh); addGrids(N);
+  }
+  rebuildBox(+iN.value);
+  iN.addEventListener('input',()=>{const N=+iN.value; rebuildBox(N); positionCameraForN(N); resetGridState(N);});
+
+  // emisor + halo (DECLARADO UNA SOLA VEZ)
+  const emitterCore=new THREE.Mesh(new THREE.BoxGeometry(1,1,1),
+    new THREE.MeshStandardMaterial({color:0xdd2222,emissive:0x660000,roughness:.25,metalness:.15}));
+  const emitterHalo=new THREE.Mesh(new THREE.BoxGeometry(1.4,1.4,1.4),
+    new THREE.MeshBasicMaterial({color:0xff3333, transparent:true, opacity:0.35, blending:THREE.AdditiveBlending, depthWrite:false}));
+  const emitter=new THREE.Group(); emitter.add(emitterCore); emitter.add(emitterHalo);
+  const pl=new THREE.PointLight(0xff4444,2.2,Math.max(14, +iN.value*2),2.0); emitter.add(pl);
+  scn.add(emitter);
+
+  // estela tubular + halo (materiales declarados acá para que setEmitterColor los vea)
+  let tailMax=+iTail.value|0;
+  let tailPts=[];
+  let tube=null, tubeHalo=null;
+  let tubeMat=null, tubeHaloMat=null;
+  function rebuildTubes(){
+    if(tube) scn.remove(tube); if(tubeHalo) scn.remove(tubeHalo);
+    const r=+iTubeR.value;
+    const pts = tailPts.length ? tailPts : [new THREE.Vector3(), new THREE.Vector3(0,0,0.001)];
+    const curve = new THREE.CatmullRomCurve3(pts);
+    const tubularSegments = Math.max(8, Math.min(2048, pts.length*3));
+    const geo = new THREE.TubeGeometry(curve, tubularSegments, r, 16, false);
+    const geoHalo = new THREE.TubeGeometry(curve, tubularSegments, r*1.6, 16, false);
+    if(!tubeMat) tubeMat = new THREE.MeshStandardMaterial({color:0xff2222,emissive:0x330000,roughness:.5,metalness:.1});
+    if(!tubeHaloMat) tubeHaloMat = new THREE.MeshBasicMaterial({color:0xff3333,transparent:true,opacity:0.28,blending:THREE.AdditiveBlending,depthWrite:false});
+    tube = new THREE.Mesh(geo, tubeMat);
+    tubeHalo = new THREE.Mesh(geoHalo, tubeHaloMat);
+    scn.add(tube); scn.add(tubeHalo);
+  }
+  function pushTail(p){ if(tailMax<=0) return; tailPts.unshift(p.clone()); if(tailPts.length>tailMax) tailPts.pop(); }
+  iTail.addEventListener('input',()=>{ tailMax=+iTail.value|0; tailPts.length=0; rebuildTubes(); });
+  iTubeR.addEventListener('input', rebuildTubes);
+
+  // estado + ruido
+  let Ncur=+iN.value, Lhalf=Ncur/2;
+  let posDiscrete = new THREE.Vector3(0.5,0.5,0.5);
+  let prevAxis = 0, prevDir = 1, pinkAccum = 0;
+  function clampToGrid(v,N){ const L=N/2; v.x=Math.max(-L+0.5,Math.min(L-0.5,v.x)); v.y=Math.max(-L+0.5,Math.min(L-0.5,v.y)); v.z=Math.max(-L+0.5,Math.min(L-0.5,v.z)); }
+  function resetGridState(N){ Ncur=N; Lhalf=N/2; posDiscrete.set(0.5,0.5,0.5); tailPts.length=0; rebuildTubes(); pl.distance=Math.max(14,N*2); prevAxis=0; prevDir=1; pinkAccum=0; }
+  function stepRandomWalk(){
+    if(Math.random() < +iRestP.value){ return false; }
+    let axis, dir;
+    if(Math.random() < +iPersist.value){ axis=prevAxis; dir=prevDir; }
+    else { axis=(Math.random()*3|0); dir=Math.random()<0.5?-1:1; }
+    const mode=iNoise.value;
+    if(mode==='pink'){ pinkAccum = 0.98*pinkAccum + 0.02*(Math.random()*2-1); if(Math.random() < Math.abs(pinkAccum)) dir = (pinkAccum>=0)? 1 : -1; }
+    if(mode==='brown'){ if(Math.random() < 0.5) dir = prevDir; if(Math.random() < 0.5) axis = prevAxis; }
+    if(axis===0) posDiscrete.x += dir;
+    if(axis===1) posDiscrete.y += dir;
+    if(axis===2) posDiscrete.z += dir;
+    clampToGrid(posDiscrete,Ncur);
+    prevAxis=axis; prevDir=dir; return true;
+  }
+  const gridToWorld=(v)=>new THREE.Vector3(v.x,v.y,v.z);
+
+  // ---------- AUDIO (lazy) ----------
+  let audio=null;
+  async function createAudio(){
+    if(audio){ try{ if(audio.running) await stopAudio(true); await audio.ctx.close(); }catch(_){} audio=null; }
+    const AudioCtx = window.AudioContext||window.webkitAudioContext;
+    const ctx=new AudioCtx();
+    const carrier=ctx.createOscillator(); carrier.type='square';
+    const mod=ctx.createOscillator();     mod.type='sine';
+    const modGain=ctx.createGain();
+    const outGain=ctx.createGain(); outGain.gain.value=0.0;
+    function makeIR(seconds=2.2,decay=3.2){ const rate=ctx.sampleRate,len=Math.floor(seconds*rate),buf=ctx.createBuffer(2,len,rate); for(let ch=0; ch<2; ch++){ const d=buf.getChannelData(ch); for(let i=0;i<len;i++){ const t=i/len; d[i]=(Math.random()*2-1)*Math.pow(1-t,decay);} } return buf; }
+    const convolver=ctx.createConvolver(); convolver.buffer=makeIR(2.2,3.2);
+    const dryGain=ctx.createGain(), wetGain=ctx.createGain();
+    const panner=ctx.createPanner(); panner.panningModel='HRTF'; panner.distanceModel='inverse'; panner.refDistance=1.6; panner.rolloffFactor=1.4;
+
+    mod.connect(modGain).connect(carrier.frequency);
+    carrier.connect(outGain);
+    const splitter=ctx.createGain();
+    outGain.connect(panner); panner.connect(splitter);
+    splitter.connect(dryGain).connect(ctx.destination);
+    splitter.connect(convolver).connect(wetGain).connect(ctx.destination);
+
+    dryGain.gain.value=1.0-+iWet.value; wetGain.gain.value=+iWet.value;
+    iWet.addEventListener('input',()=>{dryGain.gain.setValueAtTime(1-+iWet.value,ctx.currentTime);wetGain.gain.setValueAtTime(+iWet.value,ctx.currentTime);});
+
+    return {ctx,carrier,mod,modGain,outGain,panner,dryGain,wetGain,running:false,started:false};
+  }
+
+  function mapLinear(v,a,b,A,B){ return A + ((v-a)*(B-A))/(b-a); }
+
+  // ratios musicales (Z)
+  function ratioSet(kind){
+    if(kind==='harm8') return [1,2,3,4,5,6,7,8];
+    if(kind==='just7') return [1,5/4,4/3,3/2,5/3,2,7/4];
+    if(kind==='pentaM')return [1,9/8,5/4,3/2,5/3];
+    if(kind==='octs')  return [0.5,1,2,4];
+    return [1];
+  }
+
+  // regímenes FM (X)
+  function regimeIndexFromX(xNorm, Imax){
+    const z=Math.min(0.999,Math.max(0,xNorm)), seg=Math.floor(z*5);
+    const ranges=[[0,120],[120,250],[250,600],[600,1200],[1200,2000]];
+    const [a,b]=ranges[seg]; const t=(z*5-seg); return Math.min(a+t*(b-a),Imax);
+  }
+
+  // afinación 12-TET
+  const noteIndex = {C:0,'C#':1,D:2,'D#':3,E:4,F:5,'F#':6,G:7,'G#':8,A:9,'A#':10,B:11};
+  function quantize12TET(fc, A4, keyName, scaleKind){
+    const midi = 69 + 12*Math.log2(fc / A4);
+    if(scaleKind==='chrom'){
+      const mRound = Math.round(midi);
+      return A4 * Math.pow(2, (mRound-69)/12);
+    }
+    const tonic = noteIndex[keyName]||9;
+    let mask=[];
+    if(scaleKind==='maj')     mask=[0,2,4,5,7,9,11];
+    else if(scaleKind==='min')mask=[0,2,3,5,7,8,10];
+    else if(scaleKind==='pentaM') mask=[0,2,4,7,9];
+    else mask=[...Array(12).keys()];
+    const pcTarget = Math.round(midi)%12;
+    const oct = Math.floor(Math.round(midi)/12);
+    let bestMidi=null, bestDiff=1e9;
+    for(let k=-1;k<=1;k++){
+      for(const pc of mask){
+        const pcAbs=(pc+tonic)%12;
+        const m=12*(oct+k)+pcAbs;
+        const diff=Math.abs(m - midi);
+        if(diff<bestDiff){ bestDiff=diff; bestMidi=m; }
+      }
+    }
+    return A4 * Math.pow(2, (bestMidi-69)/12);
+  }
+
+  function updateFMFromPos(px,py,pz){
+    if(!audio) return; const {ctx,carrier,mod,modGain}=audio;
+    const L=Lhalf;
+    // carrier ← Y
+    const fmin=+iFcMin.value, fmax=+iFcMax.value;
+    let fc = mapLinear(py,-L,L,fmin,fmax);
+    if(iTune.checked){ fc = quantize12TET(fc, +iA4.value, iKey.value, iScalePitch.value); }
+    carrier.frequency.setTargetAtTime(fc, ctx.currentTime, 0.01);
+    // modulador ← Z
+    let fm;
+    if(iMusical.checked){
+      const R=ratioSet(iScale.value);
+      const z01 = Math.min(1, Math.max(0, (pz - (-L))/(2*L)));
+      const k = Math.max(0, Math.min(R.length-1, Math.round(z01*(R.length-1))));
+      fm = Math.max(0.1, fc * R[k]);
+    }else{
+      const fmmin=+iFmMin.value, fmmax=+iFmMax.value;
+      fm = Math.max(fmmin, mapLinear(pz,-L,L,fmmin,fmmax));
+    }
+    mod.frequency.setTargetAtTime(fm, ctx.currentTime, 0.01);
+    // índice ← X
+    const Imax=+iIMax.value;
+    const x01 = Math.min(1, Math.max(0, (px - (-L))/(2*L)));
+    const I = iMusical.checked? regimeIndexFromX(x01,Imax) : Math.max(0, mapLinear(px,-L,L,0,Imax));
+    modGain.gain.setTargetAtTime(I, ctx.currentTime, 0.01);
+  }
+
+  function updatePanner(px,py,pz){
+    if(!audio) return; const {ctx,panner}=audio;
+    panner.positionX.setValueAtTime(px, ctx.currentTime);
+    panner.positionY.setValueAtTime(py, ctx.currentTime);
+    panner.positionZ.setValueAtTime(pz, ctx.currentTime);
+  }
+
+  // audio engine
+  async function startAudio(){
+    if(!audio) audio=await createAudio();
+    const {ctx,carrier,mod,outGain}=audio;
+    if(ctx.state!=='running') await ctx.resume();
+    if(!audio.started){ carrier.start(); mod.start(); audio.started=true; }
+    outGain.gain.cancelScheduledValues(ctx.currentTime);
+    outGain.gain.setValueAtTime(outGain.gain.value, ctx.currentTime);
+    outGain.gain.linearRampToValueAtTime(0.06, ctx.currentTime+0.02);
+    audio.running=true;
+  }
+  async function stopAudio(hard=false){
+    if(!audio) return; const {ctx,carrier,mod,outGain}=audio;
+    const rel=Math.max(0.01,+iRel.value);
+    outGain.gain.cancelScheduledValues(ctx.currentTime);
+    outGain.gain.setValueAtTime(outGain.gain.value, ctx.currentTime);
+    outGain.gain.linearRampToValueAtTime(0.0, ctx.currentTime+(hard?0.01:rel));
+    audio.running=false;
+    await new Promise(res=>setTimeout(res,(hard?0.02:rel*1000)+20));
+    try{ carrier.stop(); mod.stop(); }catch(_){}
+  }
+
+  // Play/Stop
+  let running=false;
+  btn.onclick=async ()=>{ running=!running; btn.textContent=running?'■ Stop':'▶ Play'; if(running){ await startAudio(); } else { await stopAudio(false); } };
+  stage.addEventListener('pointerdown',async ()=>{ if(running){ await startAudio(); } });
+
+  // color reactivo (usa tubeMat/tubeHaloMat ya declarados)
+  function setEmitterColor(energy){
+    const sens=+iColorSens.value;
+    const e=Math.min(1, Math.max(0, energy*sens));
+    const r = Math.round(0xdd + e*(0xff-0xdd));
+    const g = Math.round(0x22 + e*(0xcc-0x22));
+    const b = Math.round(0x22 + e*(0x33-0x22));
+    const color = (r<<16)|(g<<8)|b;
+    emitterCore.material.color.setHex(color);
+    emitterHalo.material.color.setHex(color);
+    pl.color.setHex(color);
+    emitterCore.material.emissiveIntensity = 0.5 + e*1.5;
+    if(tubeMat){ tubeMat.color.setHex(color); tubeMat.emissiveIntensity = 0.3 + e*1.2; }
+    if(tubeHaloMat){ tubeHaloMat.color.setHex(color); }
+  }
+
+  // loop
+  let last=performance.now(), acc=0;
+  function animate(){
+    requestAnimationFrame(animate);
+    const now=performance.now(), dt=(now-last)/1000; last=now;
+    const targetSteps=+iSpd.value; acc+=dt*targetSteps;
+
+    let stepsThisFrame=0, moved=false;
+    if(running){
+      while(acc>=1){
+        acc-=1;
+        const didMove=stepRandomWalk();
+        moved = moved || didMove;
+        stepsThisFrame += didMove?1:0;
+        const p=gridToWorld(posDiscrete);
+        emitter.position.copy(p);
+        pushTail(p);
+        rebuildTubes();
+        if(audio){ updatePanner(p.x,p.y,p.z); updateFMFromPos(p.x,p.y,p.z); }
+      }
+
+      // energía para ducking/color
+      const energy = Math.min(1, stepsThisFrame / Math.max(1,targetSteps/60));
+      setEmitterColor(energy);
+
+      if(audio){
+        const {ctx, outGain, wetGain, dryGain} = audio;
+        const duck = +iDuck.value * energy;
+        const baseOut = 0.06;
+        const duckedOut = baseOut * (1 - 0.2*duck);
+        const wet = +iWet.value * (1 - 0.8*duck);
+        const dry = 1 - wet;
+        wetGain.gain.setTargetAtTime(wet, ctx.currentTime, 0.03);
+        dryGain.gain.setTargetAtTime(dry, ctx.currentTime, 0.03);
+        outGain.gain.setTargetAtTime(duckedOut, ctx.currentTime, 0.03);
+      }
+
+      // continuo: micro-silencios en descanso
+      if(iCont.checked && audio){
+        const {ctx,outGain} = audio;
+        if(!moved){
+          const rel=Math.max(0.01,+iRel.value);
+          outGain.gain.cancelScheduledValues(ctx.currentTime);
+          outGain.gain.setTargetAtTime(0.0, ctx.currentTime, rel);
+        }else{
+          outGain.gain.setTargetAtTime(0.06, audio.ctx.currentTime, 0.02);
+        }
+      }
+    }
+
+    orbit.upd();
+    ren.render(scn,cam);
+  }
+  animate();
+
+  // resize
+  window.addEventListener('resize',()=>{ const w2=stage.clientWidth||w; ren.setSize(w2,H); cam.aspect=w2/H; cam.updateProjectionMatrix(); });
+
+}catch(e){
+  const pre=document.createElement('pre');
+  pre.textContent='ERROR:\n'+(e && (e.stack || e.message || String(e)));
+  this.container.appendChild(pre);
+}
+```
 

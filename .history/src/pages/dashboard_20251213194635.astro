@@ -1,0 +1,585 @@
+---
+// src/pages/dashboard.astro
+import BaseHead from '../components/BaseHead.astro';
+import Footer from '../components/Footer.astro';
+import Header from '../components/Header.astro';
+
+import fs from 'node:fs';
+import path from 'node:path';
+import matter from 'gray-matter';
+import { db, User, Enrollment, Submission, Assignment, eq } from 'astro:db';
+
+// --- AUTHENTICATION ---
+const session = Astro.locals.session as any;
+const currentUser = session?.user;
+
+if (!currentUser?.email) {
+  return Astro.redirect('/login?redirect=/dashboard');
+}
+
+// Get user details from DB to check role using email
+let [dbUser] = await db.select().from(User).where(eq(User.email, currentUser.email));
+
+// If user doesn't exist in DB, create them (first login)
+if (!dbUser) {
+  await db.insert(User).values({
+    id: crypto.randomUUID(),
+    email: currentUser.email,
+    name: currentUser.name || currentUser.email,
+    emailVerified: true,
+    image: currentUser.image || null,
+    role: 'student', // Default role
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+  
+  // Fetch the newly created user
+  [dbUser] = await db.select().from(User).where(eq(User.email, currentUser.email));
+  
+  if (!dbUser) {
+    return Astro.redirect('/login?redirect=/dashboard');
+  }
+}
+
+const isTeacher = dbUser.role === 'teacher';
+
+import '../styles/theme.css';
+
+// --- TEACHER DASHBOARD ---
+let allUsers, allEnrollments, allSubmissions, allAssignments;
+
+if (isTeacher) {
+  // Query all data for teacher view
+  allUsers = await db.select().from(User);
+  allEnrollments = await db.select().from(Enrollment);
+  allSubmissions = await db.select().from(Submission);
+  allAssignments = await db.select().from(Assignment);
+}
+
+// --- STUDENT DASHBOARD ---
+const userEnrollments = await db.select({ courseId: Enrollment.courseId })
+  .from(Enrollment)
+  .where(eq(Enrollment.userId, dbUser.id));
+
+const enrolledCourseIds = userEnrollments.map(e => e.courseId);
+
+// Scan content for enrolled courses
+const ROOT = path.resolve('src/content/cursos');
+const files:any[] = [];
+(function walk(dir: string) {
+  if (!fs.existsSync(dir)) return;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      const courseId = path.basename(p);
+      if (enrolledCourseIds.includes(courseId)) {
+        walk(p);
+      }
+    } else if (/\.(md|mdx)$/i.test(e.name)) {
+      files.push(p);
+    }
+  }
+})(ROOT);
+
+const entries = await Promise.all(
+  files.map(async (abs) => {
+    const rel = abs.slice(ROOT.length + 1);
+    const posix = rel.split(path.sep).join('/');
+    const slug = posix.replace(/\.(md|mdx)$/i, '');
+    const segs = slug.split('/');
+    
+    const raw = fs.readFileSync(abs, 'utf8');
+    const fm = matter(raw);
+
+    return {
+      slug,
+      root: segs[0],
+      title: fm.data.title || segs[segs.length - 1],
+      img: fm.data.img || fm.data.coverUrl || fm.data.image || fm.data.photo || '',
+      tags: Array.isArray(fm.data.tags)
+        ? fm.data.tags
+        : (fm.data.tags ? String(fm.data.tags).split(',').map((s:string) => s.trim()) : []),
+    };
+  })
+);
+
+const validEntries = entries.filter(Boolean);
+
+const groupedEntries = validEntries.reduce((acc:any, entry:any) => {
+  const { root } = entry;
+  (acc[root] ||= []).push(entry);
+  return acc;
+}, {});
+---
+
+<html lang="es">
+  <head>
+    <BaseHead title={isTeacher ? "Panel de Administración" : "Mis Cursos"} description="Plataforma de aprendizaje" />
+    <meta charset="utf-8" />
+    <script src="https://cdn.zinggrid.com/zinggrid.min.js" defer></script>
+    <style is:inline>
+      .wrap { max-width: 1200px; margin: 0 auto; padding: 1rem; }
+      .group-title { margin-top: 3rem; margin-bottom: 1rem; border-bottom: 1px solid var(--c-border); padding-bottom: 0.5rem; }
+      .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
+      .card { border: 1px solid var(--c-border); border-radius: 8px; overflow: hidden; background: var(--c-bg); display: flex; flex-direction: column; text-decoration: none; color: var(--c-fg); position: relative; }
+      .card:hover { border-color: var(--c-link); }
+      .card img { width: 100%; height: 140px; object-fit: cover; display: block; flex-shrink: 0; }
+      .card-body { padding: 0.5rem 0.75rem; flex: 1; display: flex; flex-direction: column; min-height: 0; }
+      .title { margin: 0; font-size: 1rem; font-weight: 600; line-height: 1.3; }
+      .tags { display: flex; gap: .25rem; flex-wrap: wrap; margin-top: auto; padding-top: .5rem; }
+      .tag { font-size: .7rem; padding: .1rem .4rem; border: 1px solid var(--c-border); border-radius: 6px; text-decoration: none; display: inline-block; }
+      
+      /* Teacher Dashboard Styles */
+      .admin-table { width: 100%; border-collapse: collapse; margin-top: 2rem; font-size: 0.9rem; }
+      .admin-table th { background: var(--c-bg-mute); padding: 0.75rem; text-align: left; border-bottom: 2px solid var(--c-border); font-weight: 600; }
+      .admin-table td { padding: 0.75rem; border-bottom: 1px solid var(--c-border); }
+      .admin-table tr:hover { background: var(--c-bg-mute); }
+      .role-badge { padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 500; }
+      .role-teacher { background: #e3f2fd; color: #1976d2; }
+      .role-student { background: #f3e5f5; color: #7b1fa2; }
+      .enrollment-list { font-size: 0.85rem; }
+      .enrollment-item { display: inline-block; padding: 0.2rem 0.5rem; background: var(--c-bg-mute); border-radius: 4px; margin: 0.2rem; }
+      .submission-count { font-weight: 600; color: var(--c-link); }
+      .grade-link { color: var(--c-link); text-decoration: none; padding: 0.25rem 0.5rem; border-radius: 4px; border: 1px solid var(--c-border); font-size: 0.8rem; }
+      .grade-link:hover { background: var(--c-bg-mute); }
+      .status-pending { color: #f57c00; }
+      .status-graded { color: #388e3c; }
+      .tabs { display: flex; gap: 1rem; border-bottom: 2px solid var(--c-border); margin-bottom: 2rem; }
+      .tab { padding: 0.75rem 1.5rem; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -2px; font-weight: 500; transition: all 0.2s; }
+      .tab:hover { background: var(--c-bg-mute); }
+      .tab.active { border-bottom-color: var(--c-link); color: var(--c-link); }
+    </style>
+  </head>
+  <body>
+    <Header />
+    <main class="wrap">
+      {isTeacher ? (
+        <>
+          <h1>👨‍🏫 Panel de Administración</h1>
+          <p>Gestión de usuarios, inscripciones y calificaciones</p>
+
+          <div class="tabs">
+            <div class="tab active" data-tab="users">Usuarios</div>
+            <div class="tab" data-tab="enrollments">Inscripciones</div>
+            <div class="tab" data-tab="submissions">Entregas Recientes</div>
+            <div class="tab" data-tab="course-grades">Entregas por Curso</div>
+          </div>
+
+          <div id="users-content">
+            <h2>📋 Lista de Usuarios</h2>
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>Nombre</th>
+                  <th>Email</th>
+                  <th>Rol</th>
+                  <th>Cursos Inscritos</th>
+                  <th>Entregas</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allUsers.map((user:any) => {
+                  const userEnrolls = allEnrollments.filter((e:any) => e.userId === user.id);
+                  const userSubs = allSubmissions.filter((s:any) => s.userId === user.id);
+                  const pendingSubs = userSubs.filter((s:any) => !s.gradedAt);
+                  const gradedSubs = userSubs.filter((s:any) => s.gradedAt);
+                  
+                  return (
+                    <tr>
+                      <td>{user.name}</td>
+                      <td style="font-size: 0.85rem; color: var(--c-fg-dim);">{user.email}</td>
+                      <td>
+                        <span class:list={['role-badge', user.role === 'teacher' ? 'role-teacher' : 'role-student']}>
+                          {user.role === 'teacher' ? '👨‍🏫 Teacher' : '👨‍🎓 Student'}
+                        </span>
+                      </td>
+                      <td>
+                        <div class="enrollment-list">
+                          {userEnrolls.length > 0 ? (
+                            userEnrolls.map((e:any) => (
+                              <span class="enrollment-item">{e.courseId}</span>
+                            ))
+                          ) : (
+                            <span style="color: var(--c-fg-dim); font-size: 0.85rem;">Sin inscripciones</span>
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        <div>
+                          <span class="submission-count">{userSubs.length}</span> total
+                          {pendingSubs.length > 0 && (
+                            <span class="status-pending"> • {pendingSubs.length} pendientes</span>
+                          )}
+                          {gradedSubs.length > 0 && (
+                            <span class="status-graded"> • {gradedSubs.length} calificadas</span>
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        <a href={`/admin/user/${user.id}`} class="grade-link">Ver detalles</a>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div id="enrollments-content" style="display: none;">
+            <h2>📚 Inscripciones por Curso</h2>
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>Curso</th>
+                  <th>Usuario</th>
+                  <th>Rol en Curso</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allEnrollments.map((enrollment:any) => {
+                  const enrolledUser = allUsers.find((u:any) => u.id === enrollment.userId);
+                  return (
+                    <tr>
+                      <td><strong>{enrollment.courseId}</strong></td>
+                      <td>{enrolledUser?.name || 'Usuario desconocido'}</td>
+                      <td>
+                        <span class:list={['role-badge', enrollment.roleInCourse === 'teacher' ? 'role-teacher' : 'role-student']}>
+                          {enrollment.roleInCourse}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div id="submissions-content" style="display: none;">
+            <h2>📝 Entregas Recientes</h2>
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>Usuario</th>
+                  <th>Tarea</th>
+                  <th>Intentos</th>
+                  <th>Fecha</th>
+                  <th>Estado</th>
+                  <th>Calificación</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allSubmissions && allSubmissions.map((sub:any) => {
+                  const submitter = allUsers && allUsers.find((u:any) => u.id === sub.userId);
+                  return (
+                    <tr>
+                      <td>{submitter?.name || 'Usuario desconocido'}</td>
+                      <td style="font-size: 0.85rem;">{sub.assignmentId}</td>
+                      <td style="text-align: center;">{sub.attempts}</td>
+                      <td style="font-size: 0.85rem;">
+                        {new Date(sub.submittedAt).toLocaleDateString('es-ES')}
+                      </td>
+                      <td>
+                        {sub.gradedAt ? (
+                          <span class="status-graded">✓ Calificada</span>
+                        ) : (
+                          <span class="status-pending">⏳ Pendiente</span>
+                        )}
+                      </td>
+                      <td style="text-align: center; font-weight: 600;">
+                        {sub.score !== null ? `${sub.score}/10` : '-'}
+                      </td>
+                      <td>
+                        <a href={`/admin/grade/${sub.id}`} class="grade-link">
+                          {sub.gradedAt ? 'Ver' : 'Calificar'}
+                        </a>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div id="course-grades-content" style="display: none;">
+            <h2>📊 Entregas por Curso</h2>
+            {allEnrollments && allSubmissions && allUsers && (() => {
+              // Group by course
+              const courseGroups = allEnrollments.reduce((acc: any, enroll: any) => {
+                if (!acc[enroll.courseId]) acc[enroll.courseId] = [];
+                acc[enroll.courseId].push(enroll);
+                return acc;
+              }, {});
+
+              return Object.entries(courseGroups).map(([courseId, enrolls]: [string, any]) => {
+                // Get all assignments for this course using Assignment table
+                const courseAssignments = allAssignments.filter((a: any) => a.courseId === courseId);
+                const assignmentIds = courseAssignments.map((a: any) => a.id).sort();
+                
+                // Get submissions for these assignments
+                const courseSubmissions = allSubmissions.filter((s: any) => 
+                  assignmentIds.includes(s.assignmentId)
+                );
+                
+                // Group assignments by page/article using Assignment.slug
+                const assignmentsByPage = courseAssignments.reduce((acc: any, assignment: any) => {
+                  // Use the slug field to group (e.g., "ejemplo-generative-art/01-conceptos-basicos/03-autoevaluacion")
+                  const page = assignment.slug.replace(`${courseId}/`, '') || 'other';
+                  if (!acc[page]) acc[page] = [];
+                  acc[page].push(assignment.id);
+                  return acc;
+                }, {});
+                
+                // Get students enrolled in this course (not teachers)
+                const students = enrolls
+                  .filter((e: any) => e.roleInCourse === 'student')
+                  .map((e: any) => allUsers.find((u: any) => u.id === e.userId))
+                  .filter(Boolean);
+
+                if (students.length === 0) return null;
+
+                return (
+                  <div style="margin-bottom: 3rem;">
+                    <h3 style="margin-bottom: 1rem; padding: 0.75rem; background: var(--c-bg-mute); border-radius: 6px;">
+                      📚 {courseId}
+                    </h3>
+                    <div style="overflow-x: auto;">
+                      <table class="admin-table grades-table" style="min-width: 800px;">
+                        <thead>
+                          <tr>
+                            <th rowspan="2" style="position: sticky; left: 0; background: var(--c-bg-mute); z-index: 2; vertical-align: bottom;">Estudiante</th>
+                            {Object.entries(assignmentsByPage).map(([page, assigns]: [string, any]) => (
+                              <th colspan={assigns.length} style="text-align: center; border-bottom: 1px solid var(--c-border); background: var(--c-bg-mute);">
+                                {page}
+                              </th>
+                            ))}
+                            <th rowspan="2" style="text-align: center; background: var(--c-bg-mute); vertical-align: bottom;">Promedio</th>
+                          </tr>
+                          <tr>
+                            {Object.entries(assignmentsByPage).map(([page, assigns]: [string, any]) => 
+                              assigns.map((assignId: string) => {
+                                const shortId = assignId.split('/').pop() || assignId;
+                                return (
+                                  <th style="min-width: 70px; text-align: center; font-size: 0.75rem; padding: 0.5rem; background: var(--c-bg-mute);">
+                                    {shortId}
+                                  </th>
+                                );
+                              })
+                            )}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {students.map((student: any) => {
+                            const studentSubs = courseSubmissions.filter((s: any) => s.userId === student.id);
+                            const scores = assignmentIds.map((assignId: string) => {
+                              const sub = studentSubs.find((s: any) => s.assignmentId === assignId);
+                              return sub?.score !== null && sub?.score !== undefined ? parseFloat(sub.score) : null;
+                            });
+                            const validScores = scores.filter((s: any) => s !== null) as number[];
+                            const average = validScores.length > 0 
+                              ? (validScores.reduce((a: number, b: number) => a + b, 0) / validScores.length).toFixed(1)
+                              : '-';
+
+                            return (
+                              <tr>
+                                <td style="position: sticky; left: 0; background: var(--c-bg); font-weight: 600; z-index: 1;">
+                                  {student.name}
+                                </td>
+                                {assignmentIds.map((assignId: string) => {
+                                  const sub = studentSubs.find((s: any) => s.assignmentId === assignId);
+                                  return (
+                                    <td style="text-align: center; padding: 0.25rem;" class="grade-cell">
+                                      {sub ? (
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          max="10"
+                                          step="0.1"
+                                          value={sub.score !== null && sub.score !== undefined ? sub.score : ''}
+              placeholder="-"
+                                          data-submission-id={sub.id}
+                                          data-student-name={student.name}
+                                          data-assignment-id={assignId}
+                                          class="grade-input"
+                                          style="width: 60px; padding: 0.25rem; text-align: center; border: 1px solid var(--c-border); border-radius: 4px; background: var(--c-bg); font-size: 0.9rem;"
+                                        />
+                                      ) : (
+                                        <span style="color: var(--c-fg-dim); font-size: 0.85rem;">-</span>
+                                      )}
+                                    </td>
+                                  );
+                                })}
+                                <td style="text-align: center; font-weight: 700; background: var(--c-bg-mute); font-size: 1.1rem;" class="average-cell">
+                                  {average}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+          </div>
+
+          <script>
+            document.querySelectorAll('.tab').forEach(tab => {
+              tab.addEventListener('click', () => {
+                // Remove active from all
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('[id$="-content"]').forEach(c => c.style.display = 'none');
+                
+                // Add active to clicked
+                tab.classList.add('active');
+                const tabName = tab.getAttribute('data-tab');
+                const content = document.getElementById(`${tabName}-content`);
+                if (content) content.style.display = 'block';
+                
+                // Initialize autosave for grade inputs when switching to course grades tab
+                if (tabName === 'course-grades') {
+                  initializeGradeAutosave();
+                }
+              });
+            });
+
+            // Debounce function for autosave
+            function debounce(func, wait) {
+              let timeout;
+              return function executedFunction(...args) {
+                const later = () => {
+                  clearTimeout(timeout);
+                  func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+              };
+            }
+
+            // Autosave grade changes
+            async function saveGrade(input) {
+              const submissionId = input.dataset.submissionId;
+              const score = parseFloat(input.value);
+              
+              if (!submissionId || isNaN(score)) return;
+              
+              // Visual feedback - change border color
+              input.style.borderColor = '#ffa500'; // Orange = saving
+              
+              try {
+                const response = await fetch(`/api/grade/quick-update`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    submissionId: submissionId,
+                    score: score
+                  })
+                });
+                
+                if (response.ok) {
+                  // Success - green border briefly
+                  input.style.borderColor = '#4caf50';
+                  setTimeout(() => {
+                    input.style.borderColor = '';
+                  }, 1000);
+                  
+                  // Update row average
+                  updateRowAverage(input);
+                } else {
+                  // Error - red border
+                  input.style.borderColor = '#f44336';
+                  setTimeout(() => {
+                    input.style.borderColor = '';
+                  }, 2000);
+                }
+              } catch (error) {
+                console.error('Error saving grade:', error);
+                input.style.borderColor = '#f44336';
+                setTimeout(() => {
+                  input.style.borderColor = '';
+                }, 2000);
+              }
+            }
+
+            // Update row average after grade change
+            function updateRowAverage(input) {
+              const row = input.closest('tr');
+              if (!row) return;
+              
+              const gradeInputs = row.querySelectorAll('.grade-input');
+              const scores = [];
+              
+              gradeInputs.forEach(inp => {
+                const val = parseFloat(inp.value);
+                if (!isNaN(val)) {
+                  scores.push(val);
+                }
+              });
+              
+              const averageCell = row.querySelector('.average-cell');
+              if (averageCell && scores.length > 0) {
+                const avg = (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1);
+                averageCell.textContent = avg;
+              } else if (averageCell) {
+                averageCell.textContent = '-';
+              }
+            }
+
+            const debouncedSaveGrade = debounce(saveGrade, 800);
+
+            function initializeGradeAutosave() {
+              const gradeInputs = document.querySelectorAll('.grade-input');
+              
+              gradeInputs.forEach(input => {
+                // Remove existing listeners to avoid duplicates
+                input.removeEventListener('input', input._autosaveHandler);
+                
+                // Create and store handler
+                input._autosaveHandler = (e) => {
+                  debouncedSaveGrade(e.target);
+                };
+                
+                input.addEventListener('input', input._autosaveHandler);
+              });
+            }
+
+            // Initialize on load if course-grades tab is active
+            document.addEventListener('DOMContentLoaded', () => {
+              const activeTab = document.querySelector('.tab.active');
+              if (activeTab && activeTab.getAttribute('data-tab') === 'course-grades') {
+                initializeGradeAutosave();
+              }
+            });
+          </script>
+        </>
+      ) : (
+        <>
+          <h1>Mis Cursos</h1>
+          {Object.keys(groupedEntries).length === 0 ? (
+            <p>Bienvenido, {currentUser.name}. Aún no estás inscrito en ningún curso.</p>
+          ) : (
+            Object.entries(groupedEntries).map(([folder, entriesInFolder]:any) => (
+              <section>
+                <h3 class="group-title">{folder}</h3>
+                <div class="gallery">
+                  {entriesInFolder.map((e:any) => (
+                    <a href={`/cursos/${e.slug}`} class="card" data-root={e.root}>
+                      {e.img && <img src={e.img} alt={e.title} />}
+                      <div class="card-body">
+                        <h4 class="title">{e.title}</h4>
+                        {e.tags.length > 0 && <div class="tags">{e.tags.map((t:string) => <span class="tag">{t}</span>)}</div>}
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              </section>
+            ))
+          )}
+        </>
+      )}
+    </main>
+    <Footer />
+  </body>
+</html>

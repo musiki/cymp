@@ -1,10 +1,11 @@
 ---
 type: topoi
-tags: azar, generativad, topoi, cym
+tags:
+  - generative
 unit: 32
 publish: 2021
 author: zztt
-img: "https://noosphere.princeton.edu/images/movie256_b.gif"
+img: https://noosphere.princeton.edu/images/movie256_b.gif
 ---
 
 ### unit: 0
@@ -41,7 +42,9 @@ console.log ("random limitado :", numRandom, "\n", "random limitado entero :", M
 
 ```
 
-> [!TODO] > hacer un generador melódico de solo 3 notas sucesivas de la escala.
+> [!TIP] 
+> hacer un generador melódico de solo 3 notas sucesivas de la escala.
+
 
 
 ## Solución

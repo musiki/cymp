@@ -1,0 +1,366 @@
+---
+export const prerender = false;
+import BaseHead from '../components/BaseHead.astro';
+import Footer from '../components/Footer.astro';
+import Header from '../components/Header.astro';
+import GraphModal from '../components/GraphModal.astro';
+
+import fs from 'node:fs';
+import path from 'node:path';
+import matter from 'gray-matter';
+
+import { unified } from 'unified';
+import remarkParse from 'remark-parse';
+import remarkRehype from 'remark-rehype';
+import rehypeRaw from 'rehype-raw';
+import rehypeStringify from 'rehype-stringify';
+import { visit } from 'unist-util-visit';
+
+import '../styles/theme.css';
+
+const { tag } = Astro.params;
+
+// ---------- Utils ----------
+function norm(s) {
+  return String(s)
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/\\/g, '/')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function encodePath(p) {
+  return encodeURI(p);
+}
+
+// ---------- build index de slugs ----------
+let SLUGS_CACHE = null;
+function buildSlugIndex() {
+  if (SLUGS_CACHE) return SLUGS_CACHE;
+  const ROOT = path.resolve(process.cwd(), 'src/content');
+  const files = [];
+  (function walk(dir) {
+    if (!fs.existsSync(dir)) return;
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(md|mdx)$/i.test(e.name)) files.push(p);
+    }
+  })(ROOT);
+
+  const byFull = new Map();
+  const byBase = new Map();
+  const allSlugs = [];
+
+  for (const abs of files) {
+    const rel = abs.slice(ROOT.length + 1);
+    const posix = rel.split(path.sep).join('/');
+    const slug = posix.replace(/\.(md|mdx)$/i, '');
+    const fullKey = norm(slug);
+    byFull.set(fullKey, slug);
+
+    const base = slug.split('/').pop() || slug;
+    const baseKey = norm(base);
+    if (!byBase.has(baseKey)) byBase.set(baseKey, slug);
+
+    allSlugs.push(slug);
+  }
+  SLUGS_CACHE = { byFull, byBase, allSlugs };
+  return SLUGS_CACHE;
+}
+
+// ---------- Plugin: Wikilinks ----------
+function remarkWikilinks({ slugIndex }) {
+  return (tree) => {
+    const toProcess = [];
+    visit(tree, 'text', (node, index, parent) => {
+      if (!parent || typeof index !== 'number') return;
+      toProcess.push({ node, index, parent, value: node.value });
+    });
+
+    for (let i = toProcess.length - 1; i >= 0; i--) {
+      const { index, parent, value } = toProcess[i];
+      const regex = /\[\[([^\]]+)\]\]/g;
+      let match;
+      const parts = [];
+      let last = 0;
+
+      while ((match = regex.exec(value)) !== null) {
+        if (match.index > last) {
+          parts.push({ type: 'text', value: value.substring(last, match.index) });
+        }
+        let inner = match[1].trim();
+        let target = inner;
+        let alias = '';
+
+        const barIndex = inner.indexOf('|');
+        if (barIndex > -1) {
+          alias = inner.substring(barIndex + 1).trim();
+          target = inner.substring(0, barIndex).trim();
+        }
+
+        let section = '';
+        const hashIndex = target.indexOf('#');
+        if (hashIndex > -1) {
+          section = target.substring(hashIndex + 1).trim();
+          target = target.substring(0, hashIndex).trim();
+        }
+
+        const key = norm(target);
+        const hit = slugIndex.byFull.get(key) || slugIndex.byBase.get(key);
+        const textLabel = alias || target + (section ? `#${section}` : '');
+
+        if (hit) {
+          const href = '/blog/' + encodePath(hit) + (section ? '#' + encodeURIComponent(section) : '');
+          parts.push({
+            type: 'link',
+            title: null,
+            url: href,
+            children: [{ type: 'text', value: textLabel }]
+          });
+        } else {
+          parts.push({
+            type: 'html',
+            value: `<span class="wikilink-missing" title="Enlace no encontrado: ${target}">${textLabel}</span>`
+          });
+        }
+        last = regex.lastIndex;
+      }
+
+      if (last < value.length) parts.push({ type: 'text', value: value.substring(last) });
+      if (parts.length) parent.children.splice(index, 1, ...parts);
+    }
+  };
+}
+
+// ---------- Scan content ----------
+const ROOT = path.resolve('src/content');
+const files = [];
+(function walk(dir) {
+  if (!fs.existsSync(dir)) return;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) walk(p);
+    else if (/\.(md|mdx)$/i.test(e.name)) files.push(p);
+  }
+})(ROOT);
+
+const slugIndex = buildSlugIndex();
+
+const metaProcessor = unified()
+  .use(remarkParse)
+  .use(remarkWikilinks, { slugIndex })
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(rehypeRaw)
+  .use(rehypeStringify, { allowDangerousHtml: true });
+
+// Recolectar metadata
+const entries = await Promise.all(
+  files.map(async (abs) => {
+    const rel = abs.slice(ROOT.length + 1);
+    const posix = rel.split(path.sep).join('/');
+    const slug = posix.replace(/\.(md|mdx)$/i, '');
+    const segs = slug.split('/');
+
+    if (slug.toLowerCase() === 'home') return null;
+
+    const raw = fs.readFileSync(abs, 'utf8');
+    const fm = matter(raw);
+
+    const personRaw = Array.isArray(fm.data.person)
+      ? fm.data.person.join(', ')
+      : (fm.data.person || '');
+
+    let processedPerson = '';
+    if (personRaw) {
+      try {
+        const vfile = await metaProcessor.process(String(personRaw));
+        processedPerson = String(vfile).replace(/^<p>|<\/p>$/g, '');
+      } catch {
+        processedPerson = String(personRaw);
+      }
+    }
+
+    return {
+      slug,
+      root: segs[0],
+      title: fm.data.title || segs[segs.length - 1],
+      year: fm.data.year || '',
+      person: processedPerson,
+      img: fm.data.img || fm.data.coverUrl || fm.data.image || fm.data.photo || '',
+      tags: Array.isArray(fm.data.tags)
+        ? fm.data.tags
+        : (fm.data.tags ? String(fm.data.tags).split(',').map((s) => s.trim()) : []),
+    };
+  })
+);
+
+// Filtrar por tag
+const validEntries = entries.filter(Boolean);
+const filteredEntries = validEntries.filter(e => 
+  e.tags.some(t => String(t).toLowerCase() === String(tag).toLowerCase())
+);
+
+// Agrupar por carpeta raíz
+const groupedEntries = filteredEntries.reduce((acc, entry) => {
+  const { root } = entry;
+  (acc[root] ||= []).push(entry);
+  return acc;
+}, {});
+
+export async function getStaticPaths() {
+  const ROOT = path.resolve('src/content');
+  const files = [];
+  (function walk(dir) {
+    if (!fs.existsSync(dir)) return;
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(md|mdx)$/i.test(e.name)) files.push(p);
+    }
+  })(ROOT);
+
+  const allTags = new Set();
+  for (const abs of files) {
+    const raw = fs.readFileSync(abs, 'utf8');
+    const fm = matter(raw);
+    const tags = Array.isArray(fm.data.tags)
+      ? fm.data.tags
+      : (fm.data.tags ? String(fm.data.tags).split(',').map((s) => s.trim()) : []);
+    tags.forEach(t => {
+      const tagStr = String(t).trim();
+      if (tagStr) allTags.add(tagStr);
+    });
+  }
+
+  return Array.from(allTags)
+    .filter(tag => tag && String(tag).trim() && !String(tag).includes('/'))
+    .map(tag => ({
+      params: { tag: String(tag).trim() }
+    }));
+}
+---
+
+<html lang="es">
+  <head>
+    <BaseHead title={`Tag: ${tag}`} description={`Contenidos etiquetados con ${tag}`} />
+    <meta charset="utf-8" />
+    <style>
+      .wrap { max-width: 1000px; margin: 0 auto; padding: 1rem; }
+      .back-link { display: inline-block; margin-bottom: 1rem; color: var(--accent); text-decoration: none; }
+      .back-link:hover { text-decoration: underline; }
+      .tag-header { margin-bottom: 2rem; }
+      .tag-header h1 { margin: 0; }
+      .tag-count { color: var(--c-subtle); font-size: 0.9rem; margin-top: 0.5rem; }
+      .group-title {
+        margin-top: 3rem;
+        margin-bottom: 1rem;
+        border-bottom: 1px solid var(--c-border);
+        padding-bottom: 0.5rem;
+      }
+      .gallery {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 1rem;
+      }
+      .card {
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        overflow: hidden;
+        background: var(--c-bg);
+        display: flex;
+        flex-direction: column;
+        text-decoration: none;
+        color: var(--c-fg);
+        position: relative;
+      }
+      .card:hover { border-color: var(--c-link); }
+      .card img { 
+        width: 100%; 
+        height: 140px; 
+        object-fit: cover; 
+        display: block;
+        flex-shrink: 0;
+      }
+      .card-body { 
+        padding: 0.5rem 0.75rem; 
+        flex: 1; 
+        display: flex; 
+        flex-direction: column;
+        min-height: 0;
+      }
+      .title { 
+        margin: 0; 
+        font-size: 1rem; 
+        font-weight: 600;
+        line-height: 1.3;
+      }
+      .meta { 
+        font-size: .8rem; 
+        color: var(--c-subtle); 
+        margin: .25rem 0;
+        line-height: 1.4;
+      }
+      .meta a { color: var(--c-link); }
+      .tags { 
+        display: flex; 
+        gap: .25rem; 
+        flex-wrap: wrap; 
+        margin-top: auto;
+        padding-top: .5rem;
+      }
+      .tag { 
+        font-size: .7rem; 
+        padding: .1rem .4rem; 
+        border: 1px solid var(--c-border); 
+        border-radius: 6px;
+        text-decoration: none;
+        display: inline-block;
+      }
+      .wikilink-missing { color: #b00; }
+      .no-results { text-align: center; padding: 3rem; color: var(--c-subtle); }
+    </style>
+  </head>
+  <body>
+    <GraphModal />
+    <Header />
+    <main class="wrap">
+      <a href="/" class="back-link">← Volver al inicio</a>
+      <div class="tag-header">
+        <h1>Tag: {tag}</h1>
+        <p class="tag-count">{filteredEntries.length} {filteredEntries.length === 1 ? 'artículo' : 'artículos'}</p>
+      </div>
+
+      {filteredEntries.length === 0 ? (
+        <div class="no-results">
+          <p>No se encontraron artículos con este tag.</p>
+        </div>
+      ) : (
+        Object.entries(groupedEntries).map(([folder, entriesInFolder]) => (
+          <section>
+            <h3 class="group-title">{folder}</h3>
+            <div class="gallery">
+              {entriesInFolder.map(e => (
+                <a href={`/${e.slug}`} class="card" data-root={e.root}>
+                  {e.img && <img src={e.img} alt={e.title} />}
+                  <div class="card-body">
+                    <h4 class="title">{e.title}</h4>
+                    {(e.year || e.person) && (
+                      <p class="meta" set:html={e.year + ((e.year && e.person) ? ' \u00b7 ' : '') + e.person}></p>
+                    )}
+                    {e.tags.length > 0 && (
+                      <div class="tags">
+                        {e.tags.map(t => <span class="tag">{t}</span>)}
+                      </div>
+                    )}
+                  </div>
+                </a>
+              ))}
+            </div>
+          </section>
+        ))
+      )}
+    </main>
+    <Footer />
+  </body>
+</html>

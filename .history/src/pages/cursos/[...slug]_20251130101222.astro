@@ -1,0 +1,252 @@
+---
+export const prerender = false;
+
+import { getCollection, getEntry, render } from 'astro:content';
+import BaseHead from '../../components/BaseHead.astro';
+import Header from '../../components/Header.astro';
+import Footer from '../../components/Footer.astro';
+
+const { slug } = Astro.params;
+if (!slug) return Astro.redirect('/cursos');
+
+// Parse the slug to get course and optional path
+const parts = slug.split('/');
+const courseSlug = parts[0];
+
+// Get the course index
+const courseIndex = await getEntry('cursos', `${courseSlug}/_index`);
+if (!courseIndex) return Astro.redirect('/cursos');
+
+// Check if user has access
+const session = Astro.locals.session;
+const hasAccess = courseIndex.data.public || session;
+
+if (!hasAccess) return Astro.redirect('/login');
+
+// Get all lessons in this course
+const allLessons = (await getCollection('cursos'))
+  .filter(entry => entry.id.startsWith(`${courseSlug}/`) && !entry.id.endsWith('_index'))
+  .sort((a, b) => (a.data.order || 0) - (b.data.order || 0));
+
+// Group lessons by chapter
+const chapters = allLessons.reduce((acc, lesson) => {
+  const chapter = lesson.data.chapter || 'general';
+  if (!acc[chapter]) acc[chapter] = [];
+  acc[chapter].push(lesson);
+  return acc;
+}, {} as Record<string, typeof allLessons>);
+
+// Determine what to show
+let currentEntry;
+if (parts.length === 1) {
+  // Show course overview
+  currentEntry = courseIndex;
+} else {
+  // Show specific lesson
+  const lessonPath = parts.slice(1).join('/');
+  currentEntry = allLessons.find(l => l.id === `${courseSlug}/${lessonPath}`);
+  if (!currentEntry) return Astro.redirect(`/cursos/${courseSlug}`);
+}
+
+const { Content } = await render(currentEntry);
+const isAssignment = currentEntry.data.type === 'assignment';
+---
+
+<!doctype html>
+<html lang="es">
+  <head>
+    <BaseHead 
+      title={currentEntry.data.title || courseIndex.data.title} 
+      description={currentEntry.data.description || courseIndex.data.description} 
+    />
+    <style>
+      .course-container {
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        gap: 2rem;
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 2rem;
+      }
+      
+      .sidebar {
+        position: sticky;
+        top: 2rem;
+        height: fit-content;
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        padding: 1.5rem;
+        background: var(--c-bg);
+      }
+      
+      .course-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        margin-bottom: 1.5rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid var(--c-border);
+      }
+      
+      .chapter {
+        margin-bottom: 1.5rem;
+      }
+      
+      .chapter-title {
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: var(--c-fg-dim);
+        margin-bottom: 0.5rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      
+      .lesson-list {
+        list-style: none;
+        padding: 0;
+      }
+      
+      .lesson-item {
+        margin-bottom: 0.25rem;
+      }
+      
+      .lesson-link {
+        display: block;
+        padding: 0.5rem 0.75rem;
+        border-radius: 4px;
+        text-decoration: none;
+        color: var(--c-fg);
+        font-size: 0.9rem;
+        transition: all 0.2s;
+      }
+      
+      .lesson-link:hover {
+        background: var(--c-bg-mute);
+      }
+      
+      .lesson-link.active {
+        background: var(--accent);
+        color: white;
+        font-weight: 500;
+      }
+      
+      .lesson-type {
+        font-size: 0.75rem;
+        opacity: 0.7;
+        margin-left: 0.5rem;
+      }
+      
+      .content-area {
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        padding: 2rem;
+        background: var(--c-bg);
+      }
+      
+      .assignment-badge {
+        display: inline-block;
+        background: var(--accent);
+        color: white;
+        padding: 0.25rem 0.75rem;
+        border-radius: 4px;
+        font-size: 0.85rem;
+        margin-bottom: 1rem;
+      }
+      
+      .course-nav {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 2rem;
+        padding-top: 2rem;
+        border-top: 1px solid var(--c-border);
+      }
+      
+      .nav-button {
+        padding: 0.5rem 1rem;
+        background: var(--accent);
+        color: white;
+        text-decoration: none;
+        border-radius: 4px;
+        transition: opacity 0.2s;
+      }
+      
+      .nav-button:hover {
+        opacity: 0.9;
+      }
+      
+      .nav-button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      @media (max-width: 968px) {
+        .course-container {
+          grid-template-columns: 1fr;
+        }
+        .sidebar {
+          position: static;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <Header />
+    <main class="course-container">
+      <!-- Sidebar Navigation -->
+      <aside class="sidebar">
+        <div class="course-title">
+          <a href={`/cursos/${courseSlug}`} style="text-decoration: none; color: inherit;">
+            {courseIndex.data.title}
+          </a>
+        </div>
+        
+        {Object.entries(chapters).map(([chapterName, lessons]) => (
+          <div class="chapter">
+            <div class="chapter-title">{chapterName.replace(/-/g, ' ')}</div>
+            <ul class="lesson-list">
+              {lessons.map((lesson) => {
+                const lessonSlug = lesson.id.replace(`${courseSlug}/`, '');
+                const isActive = currentEntry.id === lesson.id;
+                return (
+                  <li class="lesson-item">
+                    <a 
+                      href={`/cursos/${courseSlug}/${lessonSlug}`}
+                      class:list={['lesson-link', { active: isActive }]}
+                    >
+                      {lesson.data.title}
+                      {lesson.data.type === 'assignment' && (
+                        <span class="lesson-type">📝</span>
+                      )}
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+      </aside>
+
+      <!-- Main Content -->
+      <article class="content-area">
+        {isAssignment && (
+          <div class="assignment-badge">
+            📝 Tarea • {currentEntry.data.points || 0} puntos
+          </div>
+        )}
+        
+        <Content />
+        
+        {isAssignment && (
+          <div style="margin-top: 2rem; padding: 1.5rem; background: var(--c-bg-mute); border-radius: 8px;">
+            <p><em>Nota: Las respuestas se guardarán en una próxima actualización. Por ahora, puedes trabajar en el ejercicio localmente.</em></p>
+          </div>
+        )}
+        
+        <div class="course-nav">
+          <a href="/cursos" class="nav-button">← Volver a cursos</a>
+          <a href={`/cursos/${courseSlug}`} class="nav-button">Inicio del curso</a>
+        </div>
+      </article>
+    </main>
+    <Footer />
+  </body>
+</html>

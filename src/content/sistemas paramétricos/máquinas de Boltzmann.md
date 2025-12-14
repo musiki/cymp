@@ -1,3 +1,4 @@
+#operativos/sistemasparamétricos 
 ```dataviewjs
 (async () => {
   // ---------- UI ----------
@@ -152,6 +153,7 @@
   btnPlay.addEventListener('click',()=>{ if(!playing){ playSeq(currentSeq); btnPlay.textContent='■ Stop'; setTimeout(()=>{stopAll();btnPlay.textContent='▶︎ Play';}, (parseFloat(slDurTot.s.value)+0.5)*1000);} else { stopAll(); btnPlay.textContent='▶︎ Play'; } });
 })();
 ```
+
 
 
 Las máquinas de Boltzmann provienen de la física estadística y se aplican a redes neuronales y procesos estocásticos para modelar sistemas con muchas variables interdependientes.

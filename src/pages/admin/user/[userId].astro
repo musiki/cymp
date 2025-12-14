@@ -1,0 +1,253 @@
+---
+import BaseHead from '../../../components/BaseHead.astro';
+import Header from '../../../components/Header.astro';
+import Footer from '../../../components/Footer.astro';
+import { db, User, Enrollment, Submission, Assignment, eq } from 'astro:db';
+
+// Check authentication
+const session = (Astro.locals as any).session;
+const currentUser = session?.user;
+
+if (!currentUser?.email) {
+  return Astro.redirect('/login?redirect=' + Astro.url.pathname);
+}
+
+// Get current user from DB to verify they're a teacher
+const [currentDbUser] = await db.select().from(User).where(eq(User.email, currentUser.email));
+
+if (!currentDbUser || currentDbUser.role !== 'teacher') {
+  return Astro.redirect('/dashboard');
+}
+
+// Get the user being viewed
+const userId = Astro.params.userId;
+const [viewedUser] = await db.select().from(User).where(eq(User.id, userId!));
+
+if (!viewedUser) {
+  return new Response('User not found', { status: 404 });
+}
+
+// Get user's enrollments
+const enrollments = await db
+  .select()
+  .from(Enrollment)
+  .where(eq(Enrollment.userId, userId!));
+
+// Get user's submissions
+const submissions = await db
+  .select()
+  .from(Submission)
+  .where(eq(Submission.userId, userId!));
+
+// Calculate statistics
+const totalSubmissions = submissions.length;
+const gradedSubmissions = submissions.filter(s => s.gradedAt).length;
+const pendingSubmissions = totalSubmissions - gradedSubmissions;
+const averageScore = gradedSubmissions > 0
+  ? submissions.filter(s => s.score !== null).reduce((sum, s) => sum + (s.score || 0), 0) / gradedSubmissions
+  : 0;
+---
+
+<html lang="es">
+  <head>
+    <BaseHead title={`Usuario: ${viewedUser.name}`} description="Detalles del usuario" />
+    <meta charset="utf-8" />
+    <style>
+      .wrap {
+        max-width: 1000px;
+        margin: 2rem auto;
+        padding: 2rem;
+      }
+      .back-link {
+        color: var(--c-link);
+        text-decoration: none;
+        margin-bottom: 2rem;
+        display: inline-block;
+      }
+      .back-link:hover {
+        text-decoration: underline;
+      }
+      .user-header {
+        display: flex;
+        align-items: center;
+        gap: 2rem;
+        padding: 2rem;
+        background: var(--c-bg-mute);
+        border-radius: 8px;
+        margin-bottom: 2rem;
+      }
+      .user-avatar {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        border: 3px solid var(--c-border);
+      }
+      .user-info h1 {
+        margin: 0 0 0.5rem 0;
+      }
+      .user-info p {
+        margin: 0.25rem 0;
+        color: var(--c-fg-dim);
+      }
+      .role-badge {
+        padding: 0.25rem 0.75rem;
+        border-radius: 4px;
+        font-size: 0.85rem;
+        font-weight: 500;
+        display: inline-block;
+        margin-top: 0.5rem;
+      }
+      .role-teacher {
+        background: #e3f2fd;
+        color: #1976d2;
+      }
+      .role-student {
+        background: #f3e5f5;
+        color: #7b1fa2;
+      }
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        margin-bottom: 2rem;
+      }
+      .stat-card {
+        padding: 1.5rem;
+        background: var(--c-bg-mute);
+        border-radius: 8px;
+        text-align: center;
+      }
+      .stat-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--c-link);
+      }
+      .stat-label {
+        font-size: 0.9rem;
+        color: var(--c-fg-dim);
+        margin-top: 0.5rem;
+      }
+      .section {
+        margin-bottom: 3rem;
+      }
+      .section h2 {
+        border-bottom: 2px solid var(--c-border);
+        padding-bottom: 0.5rem;
+        margin-bottom: 1rem;
+      }
+      .enrollment-item {
+        padding: 1rem;
+        background: var(--c-bg-mute);
+        border-radius: 6px;
+        margin-bottom: 0.5rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .submission-item {
+        padding: 1rem;
+        background: var(--c-bg-mute);
+        border-radius: 6px;
+        margin-bottom: 0.5rem;
+      }
+      .submission-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.5rem;
+      }
+      .status-graded {
+        color: #4caf50;
+      }
+      .status-pending {
+        color: #f57c00;
+      }
+    </style>
+  </head>
+  <body>
+    <Header />
+    <main class="wrap">
+      <a href="/dashboard" class="back-link">← Volver al dashboard</a>
+      
+      <div class="user-header">
+        {viewedUser.image && (
+          <img src={viewedUser.image} alt={viewedUser.name} class="user-avatar" />
+        )}
+        <div class="user-info">
+          <h1>{viewedUser.name}</h1>
+          <p>{viewedUser.email}</p>
+          <span class:list={['role-badge', viewedUser.role === 'teacher' ? 'role-teacher' : 'role-student']}>
+            {viewedUser.role === 'teacher' ? '👨‍🏫 Teacher' : '👨‍🎓 Student'}
+          </span>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value">{enrollments.length}</div>
+          <div class="stat-label">Cursos inscritos</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">{totalSubmissions}</div>
+          <div class="stat-label">Entregas totales</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">{pendingSubmissions}</div>
+          <div class="stat-label">Pendientes</div>
+        </div>
+        
+
+<div class="stat-card">
+          <div class="stat-value">{averageScore.toFixed(1)}</div>
+          <div class="stat-label">Promedio</div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>📚 Cursos Inscritos</h2>
+        {enrollments.length > 0 ? (
+          enrollments.map(enrollment => (
+            <div class="enrollment-item">
+              <div>
+                <strong>{enrollment.courseId}</strong>
+                <span style="margin-left: 1rem; color: var(--c-fg-dim); font-size: 0.9rem;">
+                  Rol: {enrollment.roleInCourse}
+                </span>
+              </div>
+            </div>
+          ))
+        ) : (
+          <p style="color: var(--c-fg-dim);">No hay inscripciones</p>
+        )}
+      </div>
+
+      <div class="section">
+        <h2>📝 Entregas Recientes</h2>
+        {submissions.length > 0 ? (
+          submissions.slice(0, 10).map(submission => (
+            <div class="submission-item">
+              <div class="submission-header">
+                <strong>{submission.assignmentId}</strong>
+                <span class:list={submission.gradedAt ? 'status-graded' : 'status-pending'}>
+                  {submission.gradedAt ? '✓ Calificada' : '⏳ Pendiente'}
+                </span>
+              </div>
+              <div style="font-size: 0.85rem; color: var(--c-fg-dim);">
+                <span>Intentos: {submission.attempts}</span>
+                {submission.score !== null && (
+                  <span style="margin-left: 1rem;">Nota: {submission.score}/10</span>
+                )}
+                <span style="margin-left: 1rem;">
+                  {new Date(submission.submittedAt).toLocaleDateString('es-ES')}
+                </span>
+              </div>
+            </div>
+          ))
+        ) : (
+          <p style="color: var(--c-fg-dim);">No hay entregas</p>
+        )}
+      </div>
+    </main>
+    <Footer />
+  </body>
+</html>

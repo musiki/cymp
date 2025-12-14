@@ -1,0 +1,625 @@
+:root {
+	--accent: #2337ff;
+	--accent-dark: #000d8a;
+	--black: 15, 18, 25;
+	--gray: 96, 115, 159;
+	--gray-light: 229, 233, 240;
+	--gray-dark: 34, 41, 57;
+	--gray-gradient: rgba(var(--gray-light), 50%), #fff;
+	--box-shadow: 0 0 0 transparent;
+}
+@font-face {
+	font-family: "Dank Mono";
+	src: url("/fonts/DankMonoNerdFontMono-Regular.woff2") format("woff2");
+	font-weight: 400;
+font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: "Dank Mono";
+	src: url("/fonts/DankMonoNerdFontMono-Italic.woff2") format("woff2");
+	font-weight: 400;
+	font-style: italic;
+	font-display: swap;
+}
+@font-face {
+	font-family: "Dank Mono";
+	src: url("/fonts/DankMonoNerdFontMono-Bold.woff2") format("woff2");
+	font-weight: 700;
+	font-style: normal;
+	font-display: swap;
+}
+body {
+	font-family: "Dank Mono", monospace;
+	margin: 0;
+	padding: 0;
+	text-align: left;
+	background: #fff;
+	word-wrap: break-word;
+	overflow-wrap: break-word;
+	color: rgb(var(--gray-dark));
+	font-size: 20px;
+	line-height: 1.7;
+}
+main {
+	width: 100%;
+	max-width: 100%;
+	margin: 0;
+	padding: 3em 1em;
+}
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+	margin: 0 0 0.5rem 0;
+	color: rgb(var(--black));
+	line-height: 1.1;
+}
+h1 {
+	font-size: 1.5em;
+	font-weight: bold;
+}
+h2 {
+	font-size: 1.3em;
+}
+h3 {
+	font-size: 1.2em;
+}
+h4 {
+	font-size: 1.1em;
+}
+h5 {
+	font-size: 1em;
+}
+strong,
+b {
+	font-weight: 700;
+}
+a {
+	color: var(--accent);
+}
+a:hover {
+	color: var(--accent);
+}
+p {
+	margin-bottom: 1em;
+}
+.prose p {
+	margin-bottom: 2em;
+}
+textarea {
+	width: 100%;
+	font-size: 16px;
+}
+input {
+	font-size: 16px;
+}
+table {
+	width: 100%;
+}
+img {
+	max-width: 100%;
+	height: auto;
+	border-radius: 0;
+}
+code {
+	padding: 2px 5px;
+	background-color: transparent;
+	border-radius: 0;
+}
+pre {
+	padding: 1.5em;
+	border-radius: 0;
+}
+pre > code {
+	all: unset;
+}
+blockquote {
+	border-left: 4px solid var(--accent);
+	padding: 0 0 0 20px;
+	margin: 0px;
+	font-size: 1.333em;
+}
+hr {
+	border: none;
+	border-top: 1px solid transparent;
+	margin: 3em;
+}
+@media (max-width: 720px) {
+	body {
+		font-size: 18px;
+	}
+	main {
+		padding: 1em;
+	}
+}
+
+/* Dark mode styles */
+.dark {
+	--accent: #4f83ff;
+	--accent-dark: #1a3a9a;
+	--black: 245, 245, 245;
+	--gray: 159, 173, 189;
+	--gray-light: 71, 85, 105;
+	--gray-dark: 217, 217, 217;
+	--gray-gradient: rgba(var(--gray-light), 50%), rgb(30 30 30);
+}
+
+.dark body {
+	background: #000 !important;
+	color: white;
+}
+
+.dark header {
+	background: #000 !important;
+	border-bottom: 1px solid transparent;
+}
+
+.dark nav {
+	background: #000;
+}
+
+.dark .card {
+	border-color: transparent;
+}
+
+.dark main {
+	color: white;
+}
+
+.dark h1,
+.dark h2,
+.dark h3,
+.dark h4,
+.dark h5,
+.dark h6 {
+	color: rgb(var(--black));
+}
+
+.dark a {
+	color: var(--accent);
+}
+
+.dark code {
+	background-color: transparent;
+	color: rgb(var(--gray-dark));
+}
+
+.dark pre {
+	background-color: transparent;
+}
+
+.dark blockquote {
+	border-left-color: var(--accent);
+}
+
+.dark hr {
+	border-top-color: transparent;
+}
+
+.sr-only {
+	border: 0;
+	padding: 0;
+	margin: 0;
+	position: absolute !important;
+	height: 1px;
+	width: 1px;
+	overflow: hidden;
+	/* IE6, IE7 - a 0 height clip, off to the bottom right of the visible 1px box */
+	clip: rect(1px 1px 1px 1px);
+	/* maybe deprecated but we need to support legacy browsers */
+	clip: rect(1px, 1px, 1px, 1px);
+	/* modern browsers, clip-path works inwards from each corner */
+	clip-path: inset(50%);
+	/* added line to stop words getting smushed together (as they go onto separate lines and some screen readers do not understand line feeds as a space */
+	white-space: nowrap;
+}
+
+
+/* Callouts base */
+.callout {
+  --c-border: transparent;
+  --c-bg: transparent;
+  --c-accent: #111;
+  border: 1px solid var(--c-border);
+  border-left: 4px solid var(--c-accent);
+  background: var(--c-bg);
+  border-radius: 0;
+  padding: 0.75rem 1rem;
+  margin: 1rem 0;
+}
+
+/* Título del callout */
+.callout-title {
+  font-weight: 600;
+  margin: 0 0 .5rem 0;
+}
+
+/* Cuerpo */
+.callout-body > :first-child { margin-top: 0; }
+.callout-body > :last-child { margin-bottom: 0; }
+
+/* Paletas por tipo (podés ajustar a gusto) */
+.callout-note    { --c-accent:#6b7280; --c-border:transparent; --c-bg:transparent; }
+.callout-info    { --c-accent:#2563eb; --c-border:transparent; --c-bg:transparent; }
+.callout-tip     { --c-accent:#059669; --c-border:transparent; --c-bg:transparent; }
+.callout-warning { --c-accent:#d97706; --c-border:transparent; --c-bg:transparent; }
+.callout-danger  { --c-accent:#dc2626; --c-border:transparent; --c-bg:transparent; }
+.callout-quote   { --c-accent:#111827; --c-border:transparent; --c-bg:transparent; font-style: italic; }
+
+/* Dark mode callouts */
+.dark .callout {
+  --c-border: transparent;
+  --c-bg: transparent;
+  --c-accent: #f9fafb;
+}
+
+.dark .callout-note    { --c-accent:#9ca3af; --c-border:transparent; --c-bg:transparent; }
+.dark .callout-info    { --c-accent:#60a5fa; --c-border:transparent; --c-bg:transparent; }
+.dark .callout-tip     { --c-accent:#34d399; --c-border:transparent; --c-bg:transparent; }
+.dark .callout-warning { --c-accent:#fbbf24; --c-border:transparent; --c-bg:transparent; }
+.dark .callout-danger  { --c-accent:#f87171; --c-border:transparent; --c-bg:transparent; }
+.dark .callout-quote   { --c-accent:#f3f4f6; --c-border:transparent; --c-bg:transparent; font-style: italic; color: #f3f4f6; }
+
+/* Mermaid centering and padding for all modes */
+.mermaid {
+  display: flex;
+  justify-content: center;
+  padding: 1.5rem 0;
+  margin: 1rem 0;
+}
+
+.dark .mermaid {
+  --mermaid-bg: rgba(0, 0, 20, 0.9);
+  --mermaid-node-bg: rgba(0, 50, 100, 0.8);
+  --mermaid-node-border: #00ffff;
+  --mermaid-edge-color: #00ff00;
+  --mermaid-label-color: #ffffff;
+  --mermaid-cluster-bg: rgba(100, 0, 100, 0.6);
+  --mermaid-cluster-border: #ff00ff;
+}
+
+.dark .mermaid svg {
+  background: transparent !important;
+}
+
+.dark .mermaid .node rect,
+.dark .mermaid .node circle,
+.dark .mermaid .node ellipse,
+.dark .mermaid .node polygon,
+.dark .mermaid .node path {
+  fill: var(--mermaid-node-bg) !important;
+  stroke: var(--mermaid-node-border) !important;
+  stroke-width: 2px !important;
+  filter: drop-shadow(0 0 6px var(--mermaid-node-border)) !important;
+}
+
+.dark .mermaid .edgePath .path {
+  stroke: var(--mermaid-edge-color) !important;
+  stroke-width: 3px !important;
+  filter: drop-shadow(0 0 4px var(--mermaid-edge-color)) !important;
+}
+
+.dark .mermaid text {
+  fill: var(--mermaid-label-color) !important;
+  font-weight: bold !important;
+  text-shadow: 0 0 6px var(--mermaid-label-color) !important;
+}
+
+.dark .mermaid .edgeLabel text,
+.dark .mermaid .node text,
+.dark .mermaid .cluster text,
+.dark .mermaid .flowchartLabel text,
+.dark .mermaid .pieLabel text,
+.dark .mermaid .actor text,
+.dark .mermaid .note text {
+  fill: var(--mermaid-label-color) !important;
+  text-shadow: 0 0 6px var(--mermaid-label-color) !important;
+}
+
+.dark .mermaid span,
+.dark .mermaid .label,
+.dark .mermaid .nodeLabel,
+.dark .mermaid .nodetext,
+.dark .mermaid foreignObject span,
+.dark .mermaid text.node-label,
+.dark .mermaid text.cluster-label {
+  fill: var(--mermaid-label-color) !important;
+  color: var(--mermaid-label-color) !important;
+  text-shadow: 0 0 6px var(--mermaid-label-color) !important;
+}
+
+.dark .mermaid span.edge-label,
+.dark .mermaid .edge-label,
+.dark .mermaid .edgeLabel {
+  background-color: #1f1919 !important;
+  fill: #ffffff !important;
+  color: #ffffff !important;
+  text-shadow: none !important;
+}
+
+.dark .mermaid [id*="edgeLabel"] rect,
+.dark .mermaid [id*="edgeLabel"] {
+  fill: #1f1919 !important;
+  stroke: none !important;
+}
+
+.dark .mermaid .cluster rect,
+.dark .mermaid .cluster polygon {
+  fill: var(--mermaid-cluster-bg) !important;
+  stroke: var(--mermaid-cluster-border) !important;
+  stroke-width: 2px !important;
+  filter: drop-shadow(0 0 8px var(--mermaid-cluster-border)) !important;
+}
+
+
+
+.tag {
+  font-size: .85rem;
+  padding: .01rem 1rem !important;
+  border: 1px solid transparent;
+  border-radius: 0;
+  color: #374151;
+  background: transparent !important;
+  text-decoration: none;
+  display: inline-block;
+  transition: opacity 0.2s;
+}
+
+.tag:hover {
+  opacity: 0.8;
+}
+
+.dark .tag {
+  border-color: transparent;
+  color: #e5e7eb;
+  background: transparent !important;
+}
+
+
+/* DATAVIEW PLUGIN */
+
+  .dvlist { margin: 1rem 0; }
+  .dvlist-header { font-size: .9rem; color: var(--c-subtle); margin-bottom: .25rem; }
+  .dvlist-items { padding-left: 1rem; }
+  .dvlist-items li { margin: .15rem 0; }
+  .dvlist .meta { color: var(--c-subtle); font-size: .85em; }
+
+/* === LISTAS NO ORDENADAS (UL) === */
+ul {
+  list-style: none;
+  padding-left: 0;
+  margin-left: 0;
+  margin-top: 1em;
+  margin-bottom: 1em;
+  text-align: left;
+}
+
+ul > li {
+  position: relative;
+  padding-left: 1em;
+  margin: 0.3em;
+}
+
+ul > li::before {
+  content: "→";
+  position: absolute;
+  left: 0;
+  transform: translateY(-10%);
+  font-size: 1em;
+  color: #d4d700;
+  text-align: center;
+}
+
+ul ul > li {
+  padding-left: 1.6em;
+  margin: 0.2em 0;
+  text-align: left;
+}
+
+ul ul > li::before {
+  content: "○";
+  position: absolute;
+  left: 0.5em;
+  top: 0.2em;
+  font-size: 0.85em;
+}
+
+ul ul ul > li {
+  padding-left: 1.6em;
+  margin: 0.2em 0;
+  text-align: left;
+}
+
+ul ul ul > li::before {
+  content: "▪";
+  position: absolute;
+  left: 0.2em;
+  top: -0.09em;
+  font-size: 1.8em;
+}
+
+/* === LISTAS ORDENADAS (OL) === */
+ol {
+  counter-reset: item;
+  padding-left: 0;
+  margin-left: 0;
+  list-style: none;
+}
+
+ol > li {
+  counter-increment: item;
+  margin: 0.2em 0;
+  padding-left: 1.0em;
+  position: relative;
+  line-height: 1.4;
+  text-align: left;
+}
+
+ol > li::before {
+  content: counter(item);
+  position: absolute;
+  left: -1em;
+  top: 0.15em;
+  width: 1.6em;
+  height: 1.6em;
+  line-height: 1.6em;
+  border: 1px solid;
+  border-radius: 50%;
+  text-align: center;
+  font-size: 0.7em;
+}
+
+ol ol > li::before,
+ol ol ol > li::before,
+ol ol ol ol > li::before {
+  content: none !important;
+  border: none !important;
+  background: none !important;
+  position: static !important;
+  margin-right: 0 !important;
+  width: auto !important;
+  height: auto !important;
+  display: inline !important;
+}
+
+ol ol {
+  list-style: none;
+  padding-left: 2.0em;
+  margin-left: 0;
+  list-style-position: inside;
+}
+
+ol ol > li {
+  padding-left: 0;
+  margin: 0.3em 0;
+}
+
+ol ol > li::marker {
+  content: "▣ ";
+}
+
+ol ol ol {
+  list-style: none;
+  padding-left: 3.5em;
+  margin-left: 0;
+  list-style-position: inside;
+}
+
+ol ol ol > li {
+  padding-left: 0;
+  margin: 0.3em 0;
+}
+
+ol ol ol > li::marker {
+  content: "▸ ";
+}
+
+ol ol ol ol {
+  list-style: none;
+  padding-left: 5.0em;
+  margin-left: 0;
+  list-style-position: inside;
+}
+
+ol ol ol ol > li {
+  padding-left: 0;
+  margin: 0.3em 0;
+}
+
+ol ol ol ol > li::marker {
+  content: "– ";
+}
+
+/* Zenburn style for code blocks */
+.hljs {
+  display: block;
+  overflow-x: auto;
+  padding: 0.5em;
+  background: #3f3f3f;
+  color: #dcdcdc;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-tag {
+  color: #e3ceab;
+}
+
+.hljs-template-tag {
+  color: #dcdcdc;
+}
+
+.hljs-number {
+  color: #8cd0d3;
+}
+
+.hljs-variable,
+.hljs-template-variable,
+.hljs-attribute {
+  color: #efdcbc;
+}
+
+.hljs-literal {
+  color: #efefaf;
+}
+
+.hljs-subst {
+  color: #8f8f8f;
+}
+
+.hljs-title,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-section,
+.hljs-type {
+  color: #efef8f;
+}
+
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link {
+  color: #dca3a3;
+}
+
+.hljs-deletion,
+.hljs-string,
+.hljs-built_in,
+.hljs-builtin-name {
+  color: #cc9393;
+}
+
+.hljs-addition,
+.hljs-comment,
+.hljs-quote,
+.hljs-meta {
+  color: #7f9f7f;
+}
+
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: bold;
+}
+
+.bibtex.normal {
+    color: var(--text-faint);
+}
+
+.bibtex.value {
+    color: var(--text-muted);
+}
+
+.bibtex.key {
+    color: var(--text-faint);
+}
+
+.bibtex.header {
+    color: var(--text-accent);
+}

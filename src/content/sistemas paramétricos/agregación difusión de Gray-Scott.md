@@ -2,6 +2,7 @@
 tags: operativos/sistemasparamétricos
 person: Robert Munafo
 url: https://mrob.com
+aliases:
 ---
 
 

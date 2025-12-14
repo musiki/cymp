@@ -1,0 +1,532 @@
+---
+export const prerender = false;
+
+import { getCollection, getEntry, render } from 'astro:content';
+import BaseHead from '../../components/BaseHead.astro';
+import Header from '../../components/Header.astro';
+import Footer from '../../components/Footer.astro';
+
+const { slug } = Astro.params;
+if (!slug) return Astro.redirect('/cursos');
+
+// Parse the slug to get course and optional path
+const parts = slug.split('/');
+const courseSlug = parts[0];
+
+// Get the course index
+const courseIndex = await getEntry('cursos', `${courseSlug}/_index`);
+if (!courseIndex) return Astro.redirect('/cursos');
+
+// Check if user has access to course
+const session = (Astro.locals as any).session;
+const hasAccess = courseIndex.data.public || session;
+
+if (!hasAccess) return Astro.redirect('/login');
+
+// Get all lessons in this course
+const allLessons = (await getCollection('cursos'))
+  .filter(entry => entry.id.startsWith(`${courseSlug}/`) && !entry.id.endsWith('_index'))
+  .sort((a, b) => (a.data.order || 0) - (b.data.order || 0));
+
+// Group lessons by chapter
+const chapters = allLessons.reduce((acc, lesson) => {
+  const chapter = lesson.data.chapter || 'general';
+  if (!acc[chapter]) acc[chapter] = [];
+  acc[chapter].push(lesson);
+  return acc;
+}, {} as Record<string, typeof allLessons>);
+
+// Determine what to show
+let currentEntry;
+if (parts.length === 1) {
+  // Show course overview
+  currentEntry = courseIndex;
+} else {
+  // Show specific lesson
+  const lessonPath = parts.slice(1).join('/');
+  currentEntry = allLessons.find(l => l.id === `${courseSlug}/${lessonPath}`);
+  if (!currentEntry) return Astro.redirect(`/cursos/${courseSlug}`);
+  
+  // Check visibility at lesson level
+  const visibility = currentEntry.data.visibility;
+  if (visibility === 'enrolled-only') {
+    if (!session) {
+      return Astro.redirect(`/login?redirect=/cursos/${slug}`);
+    }
+    
+    // Check if user is enrolled in this course
+    const { db, User, Enrollment, eq, and } = await import('astro:db');
+    const currentUser = session.user;
+    
+    if (currentUser?.email) {
+      const [dbUser] = await db.select().from(User).where(eq(User.email, currentUser.email));
+      if (dbUser) {
+        const enrollments = await db
+          .select()
+          .from(Enrollment)
+          .where(and(
+            eq(Enrollment.userId, dbUser.id),
+            eq(Enrollment.courseId, courseSlug)
+          ));
+        
+        if (enrollments.length === 0) {
+          // Not enrolled, redirect to course page
+          return Astro.redirect(`/cursos/${courseSlug}`);
+        }
+      }
+    }
+  }
+}
+
+const { Content } = await render(currentEntry);
+const isAssignment = currentEntry.data.type === 'assignment';
+---
+
+<!doctype html>
+<html lang="es">
+  <head>
+    <BaseHead 
+      title={currentEntry.data.title || courseIndex.data.title} 
+      description={currentEntry.data.description || courseIndex.data.description} 
+    />
+    <style>
+      .course-container {
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        gap: 2rem;
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 2rem;
+      }
+      
+      .sidebar {
+        position: sticky;
+        top: 2rem;
+        height: fit-content;
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        padding: 1.5rem;
+        background: var(--c-bg);
+      }
+      
+      .course-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        margin-bottom: 1.5rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid var(--c-border);
+      }
+      
+      .chapter {
+        margin-bottom: 1.5rem;
+      }
+      
+      .chapter-title {
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: var(--c-fg-dim);
+        margin-bottom: 0.5rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      
+      .lesson-list {
+        list-style: none;
+        padding: 0;
+      }
+      
+      .lesson-item {
+        margin-bottom: 0.25rem;
+      }
+      
+      .lesson-link {
+        display: block;
+        padding: 0.5rem 0.75rem;
+        border-radius: 4px;
+        text-decoration: none;
+        color: var(--c-fg);
+        font-size: 0.9rem;
+        transition: all 0.2s;
+      }
+      
+      .lesson-link:hover {
+        background: var(--c-bg-mute);
+      }
+      
+      .lesson-link.active {
+        background: var(--accent);
+        color: white;
+        font-weight: 500;
+      }
+      
+      .lesson-type {
+        font-size: 0.75rem;
+        opacity: 0.7;
+        margin-left: 0.5rem;
+      }
+      
+      .content-area {
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        padding: 2rem;
+        background: var(--c-bg);
+      }
+      
+      .assignment-badge {
+        display: inline-block;
+        background: var(--accent);
+        color: white;
+        padding: 0.25rem 0.75rem;
+        border-radius: 4px;
+        font-size: 0.85rem;
+        margin-bottom: 1rem;
+      }
+      
+      .course-nav {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 2rem;
+        padding-top: 2rem;
+        border-top: 1px solid var(--c-border);
+      }
+      
+      .nav-button {
+        padding: 0.5rem 1rem;
+        background: var(--accent);
+        color: white;
+        text-decoration: none;
+        border-radius: 4px;
+        transition: opacity 0.2s;
+      }
+      
+      .nav-button:hover {
+        opacity: 0.9;
+      }
+      
+      .nav-button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      @media (max-width: 968px) {
+        .course-container {
+          grid-template-columns: 1fr;
+        }
+        .sidebar {
+          position: static;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <Header />
+    <main class="course-container">
+      <!-- Sidebar Navigation -->
+      <aside class="sidebar">
+        <div class="course-title">
+          <a href={`/cursos/${courseSlug}`} style="text-decoration: none; color: inherit;">
+            {courseIndex.data.title}
+          </a>
+        </div>
+        
+        {Object.entries(chapters).map(([chapterName, lessons]) => (
+          <div class="chapter">
+            <div class="chapter-title">{chapterName.replace(/-/g, ' ')}</div>
+            <ul class="lesson-list">
+              {lessons.map((lesson) => {
+                const lessonSlug = lesson.id.replace(`${courseSlug}/`, '');
+                const isActive = currentEntry.id === lesson.id;
+                return (
+                  <li class="lesson-item">
+                    <a 
+                      href={`/cursos/${courseSlug}/${lessonSlug}`}
+                      class:list={['lesson-link', { active: isActive }]}
+                    >
+                      {lesson.data.title}
+                      {lesson.data.type === 'assignment' && (
+                        <span class="lesson-type">📝</span>
+                      )}
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+      </aside>
+
+      <!-- Main Content -->
+      <article class="content-area">
+        {isAssignment && (
+          <div class="assignment-badge">
+            📝 Tarea • {currentEntry.data.points || 0} puntos
+          </div>
+        )}
+        
+        <Content />
+        
+        {isAssignment && (
+          <div style="margin-top: 2rem; padding: 1.5rem; background: var(--c-bg-mute); border-radius: 8px;">
+            <p><em>Nota: Las respuestas se guardarán en una próxima actualización. Por ahora, puedes trabajar en el ejercicio localmente.</em></p>
+          </div>
+        )}
+        
+        <div class="course-nav">
+          <a href="/cursos" class="nav-button">← Volver a cursos</a>
+          <a href={`/cursos/${courseSlug}`} class="nav-button">Inicio del curso</a>
+        </div>
+      </article>
+    </main>
+    <Footer />
+    
+    <script>
+      // Global state for submissions
+      let userSubmissions = {};
+      let hasEvalBlocks = false;
+
+      // Load user's previous submissions
+      async function loadUserSubmissions() {
+        try {
+          const response = await fetch('/api/submissions/my-submissions');
+          const data = await response.json();
+          if (data.submissions) {
+            userSubmissions = data.submissions;
+            console.log('[MCQ] Loaded user submissions:', userSubmissions);
+          }
+        } catch (error) {
+          console.error('[MCQ] Error loading submissions:', error);
+        }
+      }
+
+      // Initialize eval blocks
+      document.addEventListener('DOMContentLoaded', async () => {
+        console.log('[MCQ] DOMContentLoaded fired');
+        
+        // Load previous submissions first
+        await loadUserSubmissions();
+        
+        const evalWrappers = document.querySelectorAll('.eval-block-wrapper');
+        console.log('[MCQ] Found wrappers:', evalWrappers.length);
+        
+        if (evalWrappers.length > 0) {
+          hasEvalBlocks = true;
+        }
+        
+        evalWrappers.forEach((wrapper, index) => {
+          console.log(`[MCQ] Processing wrapper ${index + 1}`);
+          try {
+            const rawData = wrapper.dataset.eval;
+            console.log('[MCQ] Raw data:', rawData);
+            
+            const evalData = JSON.parse(rawData.replace(/&apos;/g, "'"));
+            console.log('[MCQ] Parsed data:', evalData);
+            
+            if (evalData.type === 'mcq') {
+              console.log('[MCQ] Rendering MCQ...');
+              renderMCQ(wrapper, evalData);
+            } else {
+              console.log('[MCQ] Type is not mcq:', evalData.type);
+            }
+          } catch (error) {
+            console.error('[MCQ] Error processing wrapper:', error);
+          }
+        });
+
+        // Add clear answers button if there are eval blocks and submissions
+        if (hasEvalBlocks && Object.keys(userSubmissions).length > 0) {
+          addClearAnswersButton();
+        }
+      });
+      
+      function renderMCQ(wrapper, data) {
+        const container = document.createElement('div');
+        container.className = 'eval-block';
+        container.dataset.evalId = data.id;
+        
+        // Prompt
+        const prompt = document.createElement('h4');
+        prompt.className = 'eval-prompt';
+        prompt.textContent = data.prompt;
+        container.appendChild(prompt);
+        
+        // Form
+        const form = document.createElement('form');
+        form.className = 'mcq-form';
+        
+        // Options - parse correctly
+        data.options.forEach((option, index) => {
+          const label = document.createElement('label');
+          label.className = 'mcq-option';
+          
+          const input = document.createElement('input');
+          input.type = 'radio';
+          input.name = data.id;
+          input.value = index;
+          
+          // Check if option starts with [x] or [ ]
+          const isCorrect = option.includes('[x]');
+          input.dataset.correct = isCorrect ? 'true' : 'false';
+          
+          // Remove the checkbox markers from text
+          const text = option.replace(/\[(x| )\]\s*/, '');
+          const span = document.createElement('span');
+          span.textContent = text;
+          
+          label.appendChild(input);
+          label.appendChild(span);
+          form.appendChild(label);
+        });
+        
+        // Submit button
+        const button = document.createElement('button');
+        button.type = 'submit';
+        button.className = 'eval-submit';
+        button.textContent = 'Enviar Respuesta';
+        form.appendChild(button);
+        
+        container.appendChild(form);
+        
+        // Feedback area
+        const feedback = document.createElement('div');
+        feedback.className = 'eval-feedback';
+        feedback.style.display = 'none';
+        
+        const message = document.createElement('p');
+        message.className = 'feedback-message';
+        feedback.appendChild(message);
+        
+        if (data.explanation) {
+          const explanation = document.createElement('p');
+          explanation.className = 'feedback-explanation';
+          explanation.textContent = data.explanation;
+          feedback.appendChild(explanation);
+        }
+        
+        container.appendChild(feedback);
+        
+        // Handle submission
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          
+          const selected = form.querySelector('input:checked');
+          if (!selected) {
+            alert('Por favor selecciona una opción');
+            return;
+          }
+          
+          const isCorrect = selected.dataset.correct === 'true';
+          
+          // Show feedback
+          message.textContent = isCorrect ? '✅ ¡Correcto!' : '❌ Incorrecto, intenta de nuevo';
+          message.className = `feedback-message ${isCorrect ? 'correct' : 'incorrect'}`;
+          feedback.style.display = 'block';
+          
+          // Save to database
+          try {
+            await fetch('/api/eval/submit', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                evalId: data.id,
+                answer: selected.value,
+                isCorrect
+              })
+            });
+          } catch (error) {
+            console.error('Error saving submission:', error);
+          }
+          
+          // Disable form after correct answer
+          if (isCorrect) {
+            form.querySelectorAll('input').forEach(input => input.disabled = true);
+            button.disabled = true;
+          }
+        });
+        
+        wrapper.appendChild(container);
+      }
+    </script>
+    
+    <style is:global>
+      .eval-block {
+        margin: 2rem 0;
+        padding: 1.5rem;
+        border: 2px solid var(--c-border);
+        border-radius: 8px;
+        background: var(--c-bg-mute);
+      }
+      .eval-prompt {
+        margin: 0 0 1rem 0;
+        font-size: 1.1rem;
+        font-weight: 600;
+      }
+      .mcq-form {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .mcq-option {
+        display: flex;
+        align-items: center;
+        padding: 0.75rem;
+        border: 1px solid var(--c-border);
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .mcq-option:hover {
+        background: var(--c-bg);
+        border-color: var(--c-link);
+      }
+      .mcq-option input {
+        margin-right: 0.75rem;
+        cursor: pointer;
+      }
+      .mcq-option span {
+        flex: 1;
+      }
+      .eval-submit {
+        margin-top: 1rem;
+        padding: 0.75rem 1.5rem;
+        background: var(--accent);
+        color: white;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 600;
+        transition: opacity 0.2s;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      }
+      .eval-submit:hover:not(:disabled) {
+        opacity: 0.9;
+      }
+      .eval-submit:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .eval-feedback {
+        margin-top: 1rem;
+        padding: 1rem;
+        border-radius: 6px;
+        background: var(--c-bg);
+      }
+      .feedback-message {
+        margin: 0 0 0.5rem 0;
+        font-weight: 600;
+        font-size: 1.05rem;
+      }
+      .feedback-message.correct {
+        color: #4caf50;
+      }
+      .feedback-message.incorrect {
+        color: #f44336;
+      }
+      .feedback-explanation {
+        margin: 0.5rem 0 0 0;
+        font-style: italic;
+        color: var(--c-fg-dim);
+        line-height: 1.6;
+      }
+    </style>
+  </body>
+</html>

@@ -13,7 +13,9 @@ country: USA
 connect:
   - "[[Casey Reas]]"
 url: https://get-lauren.net/
+cssclass: person
 ---
+
 
 
 

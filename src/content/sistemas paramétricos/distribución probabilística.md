@@ -1,3 +1,4 @@
+#operativos/sistemasparamétricos 
 
 ```dataviewjs
 (async () => {
@@ -275,6 +276,7 @@
   });
 })();
 ```
+
 
 
 
