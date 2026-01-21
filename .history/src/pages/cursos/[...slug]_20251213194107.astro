@@ -5,7 +5,6 @@ import { getCollection, getEntry, render } from 'astro:content';
 import BaseHead from '../../components/BaseHead.astro';
 import Header from '../../components/Header.astro';
 import Footer from '../../components/Footer.astro';
-import { createClient } from '@supabase/supabase-js';
 
 const { slug } = Astro.params;
 if (!slug) return Astro.redirect('/cursos');
@@ -56,19 +55,21 @@ if (parts.length === 1) {
     }
     
     // Check if user is enrolled in this course
-    const supabase = createClient(import.meta.env.SUPABASE_URL, import.meta.env.SUPABASE_KEY);
+    const { db, User, Enrollment, eq, and } = await import('astro:db');
     const currentUser = session.user;
     
     if (currentUser?.email) {
-      const { data: user } = await supabase.from('User').select('id').eq('email', currentUser.email).single();
-      if (user) {
-        const { data: enrollment } = await supabase.from('Enrollment')
-          .select('id')
-          .eq('userId', user.id)
-          .eq('courseId', courseSlug)
-          .single();
+      const [dbUser] = await db.select().from(User).where(eq(User.email, currentUser.email));
+      if (dbUser) {
+        const enrollments = await db
+          .select()
+          .from(Enrollment)
+          .where(and(
+            eq(Enrollment.userId, dbUser.id),
+            eq(Enrollment.courseId, courseSlug)
+          ));
         
-        if (!enrollment) {
+        if (enrollments.length === 0) {
           // Not enrolled, redirect to course page
           return Astro.redirect(`/cursos/${courseSlug}`);
         }

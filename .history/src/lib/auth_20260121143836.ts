@@ -1,6 +1,5 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { db } from "astro:db";
 
 // Helper to get environment variables with fallback
 function getEnv(key: string): string {

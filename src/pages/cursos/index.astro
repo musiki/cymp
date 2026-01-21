@@ -3,7 +3,7 @@ import { getCollection } from 'astro:content';
 import BaseHead from '../../components/BaseHead.astro';
 import Header from '../../components/Header.astro';
 import Footer from '../../components/Footer.astro';
-import { db, User, Enrollment, eq, and } from 'astro:db';
+import { createClient } from '@supabase/supabase-js';
 
 // Get all courses (files named _index.md in cursos collection)
 const allCourseFiles = await getCollection('cursos');
@@ -21,13 +21,14 @@ const currentUser = session?.user;
 // Get user enrollment status
 let userEnrollments: string[] = [];
 if (currentUser?.email) {
-  const [dbUser] = await db.select().from(User).where(eq(User.email, currentUser.email));
-  if (dbUser) {
-    const enrollments = await db
-      .select({ courseId: Enrollment.courseId })
-      .from(Enrollment)
-      .where(eq(Enrollment.userId, dbUser.id));
-    userEnrollments = enrollments.map(e => e.courseId);
+  const supabase = createClient(import.meta.env.SUPABASE_URL, import.meta.env.SUPABASE_KEY);
+  const { data: user } = await supabase.from('User').select('id').eq('email', currentUser.email).single();
+  
+  if (user) {
+    const { data: enrollments } = await supabase.from('Enrollment').select('courseId').eq('userId', user.id);
+    if (enrollments) {
+      userEnrollments = enrollments.map((e: any) => e.courseId);
+    }
   }
 }
 ---
