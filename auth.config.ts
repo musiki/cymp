@@ -8,6 +8,7 @@ export default defineConfig({
       clientSecret: import.meta.env.GOOGLE_CLIENT_SECRET,
     }),
   ],
+  secret: import.meta.env.AUTH_SECRET,
   callbacks: {
     async redirect({ url, baseUrl }) {
       // Redirect to home page after login
