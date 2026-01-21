@@ -14,12 +14,16 @@ import remarkEvalBlocks from './src/plugins/remark-eval-blocks.mjs'
 import remarkDataviewLite from './src/plugins/remark-dataview-lite.mjs'
 
 import auth from 'auth-astro';
+import node from '@astrojs/node';
 import vercel from '@astrojs/vercel';
 
 
 export default defineConfig({
   site: 'https://musiki.github.io/cymp/',
   output: 'server',
+  adapter: node({
+    mode: 'standalone',
+  }),
   adapter: vercel(),
   integrations: [
     mdx(), 
