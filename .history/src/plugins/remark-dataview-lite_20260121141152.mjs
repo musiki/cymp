@@ -17,6 +17,7 @@ export default function remarkDataviewLite() {
     })(ROOT);
 
     visit(tree, 'code', (node, index, parent) => {
+      if (node.lang !== 'dataview') return;
       if (node.lang !== 'dataview' && node.lang !== 'dataviewjs') return;
 
       const command = node.value.trim();

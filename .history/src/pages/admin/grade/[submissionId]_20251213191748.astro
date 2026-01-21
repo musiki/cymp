@@ -2,7 +2,7 @@
 import BaseHead from '../../../components/BaseHead.astro';
 import Header from '../../../components/Header.astro';
 import Footer from '../../../components/Footer.astro';
-import { createClient } from '@supabase/supabase-js';
+import { db, User, Submission, Assignment, eq } from 'astro:db';
 
 // Check authentication
 const session = (Astro.locals as any).session;
@@ -12,52 +12,43 @@ if (!currentUser?.email) {
   return Astro.redirect('/login?redirect=' + Astro.url.pathname);
 }
 
-// Initialize Supabase
-const supabase = createClient(import.meta.env.SUPABASE_URL, import.meta.env.SUPABASE_KEY);
-
 // Get current user from DB to verify they're a teacher
-const { data: currentDbUser, error: teacherError } = await supabase.from('User').select('id, role').eq('email', currentUser.email).single();
+const [currentDbUser] = await db.select().from(User).where(eq(User.email, currentUser.email));
 
-if (teacherError || !currentDbUser || currentDbUser.role !== 'teacher') {
+if (!currentDbUser || currentDbUser.role !== 'teacher') {
   return Astro.redirect('/dashboard');
 }
 
 // Get the submission
 const submissionId = Astro.params.submissionId;
-const { data: submission, error: subError } = await supabase.from('Submission').select('*').eq('id', submissionId!).single();
+const [submission] = await db.select().from(Submission).where(eq(Submission.id, submissionId!));
 
-if (subError || !submission) {
+if (!submission) {
   return new Response('Submission not found', { status: 404 });
 }
 
 // Get the assignment details
-const { data: assignment, error: assignError } = await supabase.from('Assignment').select('*').eq('id', submission.assignmentId).single();
+const [assignment] = await db.select().from(Assignment).where(eq(Assignment.id, submission.assignmentId));
 
 // Get the student
-const { data: student, error: studentError } = await supabase.from('User').select('*').eq('id', submission.userId).single();
-
-if (studentError || !student) {
-  return new Response('Student for this submission not found', { status: 404 });
-}
+const [student] = await db.select().from(User).where(eq(User.id, submission.userId));
 
 // Handle grading POST
 if (Astro.request.method === 'POST') {
   try {
     const formData = await Astro.request.formData();
-    const scoreValue = formData.get('score');
-    const score = scoreValue !== null ? parseFloat(scoreValue as string) : null;
+    const score = parseFloat(formData.get('score') as string);
     const feedback = formData.get('feedback') as string;
     
-    const { error: updateError } = await supabase.from('Submission')
-      .update({
+    await db.update(Submission)
+      .set({
         score: score,
         feedback: feedback || null,
         gradedAt: new Date(),
+        gradedBy: currentDbUser.id,
       })
-      .eq('id', submissionId!);
+      .where(eq(Submission.id, submissionId!));
     
-    if (updateError) throw updateError;
-
     return Astro.redirect(`/admin/grade/${submissionId}?saved=true`);
   } catch (error) {
     console.error('Error grading:', error);
@@ -315,11 +306,7 @@ const saved = Astro.url.searchParams.get('saved') === 'true';
         <h2 class="section-title">Respuesta del Estudiante</h2>
         
         <div class="answer-display">
-          {submission.payload ? (
-            <pre>{JSON.stringify(submission.payload, null, 2)}</pre>
-          ) : (
-            <p style="color: var(--c-fg-dim); font-style: italic;">No hay datos de respuesta registrados para esta entrega.</p>
-          )}
+          <pre>{JSON.stringify(submission.payload, null, 2)}</pre>
         </div>
         
         {typeof submission.payload === 'object' && submission.payload !== null && 'isCorrect' in submission.payload && (

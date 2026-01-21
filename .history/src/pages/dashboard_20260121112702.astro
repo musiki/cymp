@@ -3,6 +3,10 @@
 import BaseHead from '../components/BaseHead.astro';
 import Footer from '../components/Footer.astro';
 import Header from '../components/Header.astro';
+
+import fs from 'node:fs';
+import path from 'node:path';
+import matter from 'gray-matter';
 import { createClient } from '@supabase/supabase-js';
 
 // --- AUTHENTICATION ---
@@ -63,7 +67,7 @@ let studentSubmissions: any[] = [];
 
 if (!isTeacher) {
   const { data: a } = await supabase.from('Assignment').select('id, courseId'); studentAssignments = a || [];
-  const { data: s } = await supabase.from('Submission').select('*').eq('userId', dbUser.id).order('submittedAt', { ascending: false }); studentSubmissions = s || [];
+  const { data: s } = await supabase.from('Submission').select('assignmentId').eq('userId', dbUser.id); studentSubmissions = s || [];
 }
 
 const { data: userEnrollmentsData } = await supabase
@@ -74,32 +78,59 @@ const { data: userEnrollmentsData } = await supabase
 const userEnrollments = userEnrollmentsData || [];
 const enrolledCourseIds = userEnrollments.map((e: any) => e.courseId);
 
-// --- LOAD COURSES FROM FILES ---
-// Use import.meta.glob for robust file finding in production/Vercel
-const courseFiles = import.meta.glob('/src/content/cursos/**/_index.{md,mdx}', { eager: true });
+// Scan content for enrolled courses
+const ROOT = path.resolve('src/content/cursos');
+const files:any[] = [];
+(function walk(dir: string) {
+  if (!fs.existsSync(dir)) return;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      const courseId = path.basename(p);
+      walk(p); // Walk all directories to find all courses
+    } else if (/\.(md|mdx)$/i.test(e.name)) {
+      files.push(p);
+    }
+  }
+})(ROOT);
 
-const courseEntries = Object.entries(courseFiles).map(([filepath, module]: any) => {
-  const fm = module.frontmatter;
-  
-  // Only process files explicitly marked as courses
-  if (fm.type !== 'course') return null;
+const entries = await Promise.all(
+  files.map(async (abs) => {
+    const rel = abs.slice(ROOT.length + 1);
+    const posix = rel.split(path.sep).join('/');
+    const slug = posix.replace(/\.(md|mdx)$/i, '');
+    const segs = slug.split('/');
+    
 
-  // Extract courseId from path (e.g., /src/content/cursos/my-course/_index.md -> my-course)
-  const parts = filepath.split('/');
-  // Assuming structure is .../cursos/[courseId]/_index.md
-  const courseId = parts[parts.length - 2];
+    const raw = fs.readFileSync(abs, 'utf8');
+    const fm = matter(raw);
 
-  return {
-    slug: courseId, // The slug for the course page
-    courseId: courseId,
-    title: fm.title || courseId,
-    // Support multiple image keys
-    img: fm.coverImage || fm.img || fm.coverUrl || fm.image || '', 
-    tags: Array.isArray(fm.tags) 
-      ? fm.tags 
-      : (fm.tags ? String(fm.tags).split(',').map(s => s.trim()) : [])
-  };
-}).filter(Boolean);
+    // Only process files that are explicitly marked as a course.
+    if (fm.data.type !== 'course') {
+      return null;
+    }
+
+    return {
+      slug,
+      root: segs[0],
+      courseId: segs[0],
+      title: fm.data.title || segs[segs.length - 1],
+      img: fm.data.img || fm.data.coverUrl || fm.data.image || fm.data.photo || '',
+      tags: Array.isArray(fm.data.tags)
+        ? fm.data.tags
+        : (fm.data.tags ? String(fm.data.tags).split(',').map((s:string) => s.trim()) : []),
+    };
+  })
+);
+
+const validEntries = entries.filter(Boolean);
+
+const groupedEntries = validEntries.reduce((acc:any, entry:any) => {
+  const { root } = entry;
+  (acc[root] ||= []).push(entry);
+  return acc;
+}, {});
+const courseEntries = entries.filter(Boolean);
 ---
 
 <html lang="es">
@@ -225,60 +256,31 @@ const courseEntries = Object.entries(courseFiles).map(([filepath, module]: any) 
 
           <div id="enrollments-content" style="display: none;">
             <h2>📚 Inscripciones por Curso</h2>
-            
-            {courseEntries.map((course: any) => {
-              const courseEnrollments = allEnrollments.filter((e: any) => e.courseId === course.courseId);
-              
-              // Check if the current teacher is enrolled in this course
-              const isTeacherEnrolled = allEnrollments.some((e: any) => e.userId === dbUser.id && e.courseId === course.courseId);
-
-              return (
-                <div style="margin-bottom: 2rem; border: 1px solid var(--c-border); border-radius: 8px; overflow: hidden;">
-                  <div style="background: var(--c-bg-mute); padding: 0.75rem 1rem; border-bottom: 1px solid var(--c-border); display: flex; justify-content: space-between; align-items: center;">
-                    <h3 style="margin: 0; font-size: 1.1rem;">
-                      <a href={`/cursos/${course.slug}`} style="text-decoration: none; color: inherit;">
-                        {course.title}
-                      </a>
-                    </h3>
-                    {isTeacherEnrolled ? (
-                      <span style="font-size: 0.85rem; color: var(--c-fg-dim); font-weight: 500;">✓ Inscrito</span>
-                    ) : (
-                      <button type="button" class="enroll-btn" data-course-id={course.courseId}>Inscribirme</button>
-                    )}
-                  </div>
-                  
-                  {courseEnrollments.length > 0 ? (
-                    <table class="admin-table" style="margin-top: 0; border: none;">
-                      <thead>
-                        <tr>
-                          <th style="border-top: none;">Usuario</th>
-                          <th style="border-top: none;">Rol</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {courseEnrollments.map((enrollment: any) => {
-                          const user = allUsers.find((u: any) => u.id === enrollment.userId);
-                          return (
-                            <tr>
-                              <td>{user?.name || enrollment.userId}</td>
-                              <td>
-                                <span class:list={['role-badge', enrollment.roleInCourse === 'teacher' ? 'role-teacher' : 'role-student']}>
-                                  {enrollment.roleInCourse}
-                                </span>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <div style="padding: 1rem; color: var(--c-fg-dim); font-style: italic;">
-                      No hay estudiantes inscritos en este curso.
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>Curso</th>
+                  <th>Usuario</th>
+                  <th>Rol en Curso</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allEnrollments.map((enrollment:any) => {
+                  const enrolledUser = allUsers.find((u:any) => u.id === enrollment.userId);
+                  return (
+                    <tr>
+                      <td><strong>{enrollment.courseId}</strong></td>
+                      <td>{enrolledUser?.name || 'Usuario desconocido'}</td>
+                      <td>
+                        <span class:list={['role-badge', enrollment.roleInCourse === 'teacher' ? 'role-teacher' : 'role-student']}>
+                          {enrollment.roleInCourse}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
 
           <div id="submissions-content" style="display: none;">
@@ -583,50 +585,41 @@ const courseEntries = Object.entries(courseFiles).map(([filepath, module]: any) 
       ) : (
         <>
           <h1>Mis Cursos</h1>
-          
-          {studentSubmissions.length > 0 && (
-            <div style="margin-bottom: 3rem;">
-              <h2 class="group-title">📝 Mis Entregas Recientes</h2>
-              <table class="admin-table">
-                <thead>
-                  <tr>
-                    <th>Tarea</th>
-                    <th>Fecha</th>
-                    <th>Estado</th>
-                    <th>Calificación</th>
-                    <th>Acciones</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {studentSubmissions.slice(0, 5).map((sub: any) => (
-                    <tr>
-                      <td>{sub.assignmentId}</td>
-                      <td>{new Date(sub.submittedAt).toLocaleDateString()}</td>
-                      <td>
-                        {sub.gradedAt ? (
-                          <span class="status-graded">✓ Calificada</span>
-                        ) : (
-                          <span class="status-pending">⏳ Pendiente</span>
-                        )}
-                      </td>
-                      <td>{sub.score !== null ? `${sub.score}/10` : '-'}</td>
-                      <td>
-                        <a href={`/submission/${sub.id}`} class="grade-link">Ver Detalles</a>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
+          {Object.keys(groupedEntries).length === 0 ? (
           {courseEntries.length === 0 ? (
             <p>No hay cursos disponibles en este momento.</p>
           ) : (
+            Object.entries(groupedEntries).map(([folder, entriesInFolder]:any) => {
+              const isEnrolled = enrolledCourseIds.includes(folder);
+              
+              // Calculate Progress
+              const courseAssignments = studentAssignments.filter(a => a.courseId === folder);
+              const totalAssignments = courseAssignments.length;
+              const completedAssignments = studentSubmissions.filter(s => courseAssignments.some(a => a.id === s.assignmentId)).length;
+              const progressPercent = totalAssignments > 0 ? Math.round((completedAssignments / totalAssignments) * 100) : 0;
             <div class="gallery">
               {courseEntries.map((course: any) => {
                 const isEnrolled = enrolledCourseIds.includes(course.courseId);
 
+              return (
+                <section>
+                  <h3 class="group-title">
+                    {folder} 
+                    {!isEnrolled && <span style="font-size: 0.8rem; color: var(--c-fg-dim); font-weight: normal; margin-left: 0.5rem;">(No inscrito)</span>}
+                  </h3>
+                  <div class="gallery">
+                    {entriesInFolder.map((e:any) => (
+                      <div class="card" style="position: relative;">
+                        {e.img && <img src={e.img} alt={e.title} />}
+                        <div class="card-body">
+                          <h4 class="title">{e.title}</h4>
+                          {e.tags.length > 0 && <div class="tags">{e.tags.map((t:string) => <span class="tag">{t}</span>)}</div>}
+                          
+                          {isEnrolled && totalAssignments > 0 && (
+                            <div class="progress-container" title={`${progressPercent}% Completado`}>
+                              <div class="progress-bar" style={`width: ${progressPercent}%`}></div>
+                            </div>
+                          )}
                 // Calculate Progress
                 const courseAssignments = studentAssignments.filter(a => a.courseId === course.courseId);
                 const totalAssignments = courseAssignments.length;
@@ -644,6 +637,14 @@ const courseEntries = Object.entries(courseFiles).map(([filepath, module]: any) 
                         <div class="progress-container" title={`${progressPercent}% Completado`}>
                           <div class="progress-bar" style={`width: ${progressPercent}%`}></div>
                         </div>
+                        
+                        {isEnrolled ? (
+                          <a href={`/cursos/${e.slug}`} style="position:absolute; top:0; left:0; width:100%; height:100%; z-index:1;"></a>
+                        ) : (
+                          <div class="enroll-overlay">
+                            <button type="button" class="enroll-btn" data-course-id={folder}>Inscribirse</button>
+                          </div>
+                        )}
                       )}
                     </div>
 
@@ -653,8 +654,12 @@ const courseEntries = Object.entries(courseFiles).map(([filepath, module]: any) 
                       <div class="enroll-overlay">
                         <button type="button" class="enroll-btn" data-course-id={course.courseId}>Inscribirse</button>
                       </div>
+                    ))}
                     )}
                   </div>
+                </section>
+              );
+            })
                 );
               })}
             </div>

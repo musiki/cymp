@@ -54,6 +54,7 @@ if (Astro.request.method === 'POST') {
         feedback: feedback || null,
         gradedAt: new Date(),
       })
+      .where(eq(Submission.id, submissionId!));
       .eq('id', submissionId!);
     
     if (updateError) throw updateError;
@@ -315,6 +316,7 @@ const saved = Astro.url.searchParams.get('saved') === 'true';
         <h2 class="section-title">Respuesta del Estudiante</h2>
         
         <div class="answer-display">
+          <pre>{JSON.stringify(submission.payload, null, 2)}</pre>
           {submission.payload ? (
             <pre>{JSON.stringify(submission.payload, null, 2)}</pre>
           ) : (

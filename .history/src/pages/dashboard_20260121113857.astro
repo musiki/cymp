@@ -63,7 +63,7 @@ let studentSubmissions: any[] = [];
 
 if (!isTeacher) {
   const { data: a } = await supabase.from('Assignment').select('id, courseId'); studentAssignments = a || [];
-  const { data: s } = await supabase.from('Submission').select('*').eq('userId', dbUser.id).order('submittedAt', { ascending: false }); studentSubmissions = s || [];
+  const { data: s } = await supabase.from('Submission').select('assignmentId').eq('userId', dbUser.id); studentSubmissions = s || [];
 }
 
 const { data: userEnrollmentsData } = await supabase
@@ -235,11 +235,7 @@ const courseEntries = Object.entries(courseFiles).map(([filepath, module]: any) 
               return (
                 <div style="margin-bottom: 2rem; border: 1px solid var(--c-border); border-radius: 8px; overflow: hidden;">
                   <div style="background: var(--c-bg-mute); padding: 0.75rem 1rem; border-bottom: 1px solid var(--c-border); display: flex; justify-content: space-between; align-items: center;">
-                    <h3 style="margin: 0; font-size: 1.1rem;">
-                      <a href={`/cursos/${course.slug}`} style="text-decoration: none; color: inherit;">
-                        {course.title}
-                      </a>
-                    </h3>
+                    <h3 style="margin: 0; font-size: 1.1rem;">{course.title}</h3>
                     {isTeacherEnrolled ? (
                       <span style="font-size: 0.85rem; color: var(--c-fg-dim); font-weight: 500;">✓ Inscrito</span>
                     ) : (
@@ -583,43 +579,6 @@ const courseEntries = Object.entries(courseFiles).map(([filepath, module]: any) 
       ) : (
         <>
           <h1>Mis Cursos</h1>
-          
-          {studentSubmissions.length > 0 && (
-            <div style="margin-bottom: 3rem;">
-              <h2 class="group-title">📝 Mis Entregas Recientes</h2>
-              <table class="admin-table">
-                <thead>
-                  <tr>
-                    <th>Tarea</th>
-                    <th>Fecha</th>
-                    <th>Estado</th>
-                    <th>Calificación</th>
-                    <th>Acciones</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {studentSubmissions.slice(0, 5).map((sub: any) => (
-                    <tr>
-                      <td>{sub.assignmentId}</td>
-                      <td>{new Date(sub.submittedAt).toLocaleDateString()}</td>
-                      <td>
-                        {sub.gradedAt ? (
-                          <span class="status-graded">✓ Calificada</span>
-                        ) : (
-                          <span class="status-pending">⏳ Pendiente</span>
-                        )}
-                      </td>
-                      <td>{sub.score !== null ? `${sub.score}/10` : '-'}</td>
-                      <td>
-                        <a href={`/submission/${sub.id}`} class="grade-link">Ver Detalles</a>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
           {courseEntries.length === 0 ? (
             <p>No hay cursos disponibles en este momento.</p>
           ) : (

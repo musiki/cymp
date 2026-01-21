@@ -54,8 +54,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       await supabase.from('Assignment').insert([{
         id: evalId,
         courseId: finalCourseId,
-        slug: finalSlug,
-        weight: 1
+        slug: finalSlug
       }]);
     }
 
@@ -64,7 +63,6 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
     if (existing) {
       await supabase.from('Submission').update({
-        payload: { answer, isCorrect },
         score: isCorrect ? 1 : 0,
         attempts: (existing.attempts || 0) + 1,
         submittedAt: new Date(),
@@ -73,7 +71,6 @@ export const POST: APIRoute = async ({ request, locals }) => {
       await supabase.from('Submission').insert([{
         userId: user.id,
         assignmentId: evalId,
-        payload: { answer, isCorrect },
         score: isCorrect ? 1 : 0,
         attempts: 1,
         submittedAt: new Date(),

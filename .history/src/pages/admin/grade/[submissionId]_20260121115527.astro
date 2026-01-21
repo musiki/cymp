@@ -54,7 +54,7 @@ if (Astro.request.method === 'POST') {
         feedback: feedback || null,
         gradedAt: new Date(),
       })
-      .eq('id', submissionId!);
+      .where(eq(Submission.id, submissionId!));
     
     if (updateError) throw updateError;
 
@@ -315,11 +315,7 @@ const saved = Astro.url.searchParams.get('saved') === 'true';
         <h2 class="section-title">Respuesta del Estudiante</h2>
         
         <div class="answer-display">
-          {submission.payload ? (
-            <pre>{JSON.stringify(submission.payload, null, 2)}</pre>
-          ) : (
-            <p style="color: var(--c-fg-dim); font-style: italic;">No hay datos de respuesta registrados para esta entrega.</p>
-          )}
+          <pre>{JSON.stringify(submission.payload, null, 2)}</pre>
         </div>
         
         {typeof submission.payload === 'object' && submission.payload !== null && 'isCorrect' in submission.payload && (

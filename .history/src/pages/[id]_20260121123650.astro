@@ -1,0 +1,133 @@
+---
+import BaseHead from '../../components/BaseHead.astro';
+import Header from '../../components/Header.astro';
+import Footer from '../../components/Footer.astro';
+import { createClient } from '@supabase/supabase-js';
+
+// Check authentication
+const session = (Astro.locals as any).session;
+const currentUser = session?.user;
+
+if (!currentUser?.email) {
+  return Astro.redirect('/login?redirect=' + Astro.url.pathname);
+}
+
+// Initialize Supabase
+const supabase = createClient(import.meta.env.SUPABASE_URL, import.meta.env.SUPABASE_KEY);
+
+// Get current user
+const { data: user } = await supabase.from('User').select('id').eq('email', currentUser.email).single();
+if (!user) return Astro.redirect('/login');
+
+// Get the submission
+const { id } = Astro.params;
+const { data: submission, error } = await supabase.from('Submission').select('*').eq('id', id!).single();
+
+if (error || !submission) {
+  return new Response('Submission not found', { status: 404 });
+}
+
+// Security Check: Ensure user owns this submission
+if (submission.userId !== user.id) {
+  return Astro.redirect('/dashboard');
+}
+
+// Get assignment details
+const { data: assignment } = await supabase.from('Assignment').select('*').eq('id', submission.assignmentId).single();
+---
+
+<html lang="es">
+  <head>
+    <BaseHead title="Detalles de Entrega" description="Ver detalles y retroalimentación" />
+    <style>
+      .wrap { max-width: 800px; margin: 2rem auto; padding: 1rem; }
+      .header-card { background: var(--c-bg-mute); padding: 2rem; border-radius: 8px; margin-bottom: 2rem; border: 1px solid var(--c-border); }
+      .status-badge { padding: 0.25rem 0.75rem; border-radius: 4px; font-weight: 600; font-size: 0.9rem; }
+      .status-graded { background: #d4edda; color: #155724; }
+      .status-pending { background: #fff3cd; color: #856404; }
+      
+      .score-display { font-size: 2.5rem; font-weight: 700; color: var(--c-link); margin: 1rem 0; }
+      
+      .section { margin-bottom: 2rem; border: 1px solid var(--c-border); border-radius: 8px; padding: 1.5rem; }
+      .section h3 { margin-top: 0; border-bottom: 1px solid var(--c-border); padding-bottom: 0.5rem; }
+      
+      .feedback-box { background: #e3f2fd; padding: 1.5rem; border-radius: 6px; border-left: 4px solid #2196f3; }
+      .answer-box { background: var(--c-bg-mute); padding: 1rem; border-radius: 6px; overflow-x: auto; }
+      
+      .back-link { display: inline-block; margin-bottom: 1rem; color: var(--c-link); text-decoration: none; }
+    </style>
+  </head>
+  <body>
+    <Header />
+    <main class="wrap">
+      <a href="/dashboard" class="back-link">← Volver al Dashboard</a>
+
+      <div class="header-card">
+        <h1 style="margin:0 0 0.5rem 0;">{assignment?.id || submission.assignmentId}</h1>
+        <p style="color: var(--c-fg-dim); margin:0 0 1.5rem 0;">
+          Entregado el {new Date(submission.submittedAt).toLocaleDateString()} a las {new Date(submission.submittedAt).toLocaleTimeString()}
+        </p>
+
+        <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+          <span class:list={['status-badge', submission.gradedAt ? 'status-graded' : 'status-pending']}>
+            {submission.gradedAt ? '✓ Calificada' : '⏳ Pendiente de revisión'}
+          </span>
+          
+          {submission.gradedAt && (
+            <span>
+              Calificado el {new Date(submission.gradedAt).toLocaleDateString()}
+            </span>
+          )}
+        </div>
+
+        {submission.score !== null && (
+          <div class="score-display">
+            {submission.score} <span style="font-size: 1rem; color: var(--c-fg-dim); font-weight: normal;">/ 10</span>
+          </div>
+        )}
+      </div>
+
+      {submission.feedback && (
+        <div class="section">
+          <h3>💬 Retroalimentación del Profesor</h3>
+          <div class="feedback-box">
+            {submission.feedback}
+          </div>
+        </div>
+      )}
+
+      <div class="section">
+        <h3>📄 Tu Respuesta</h3>
+        <div class="answer-box">
+          {submission.payload ? (
+            <pre>{JSON.stringify(submission.payload, null, 2)}</pre>
+          ) : (
+            <p style="font-style: italic; color: var(--c-fg-dim);">No hay datos de respuesta visualizables.</p>
+          )}
+        </div>
+        
+        {submission.payload?.isCorrect !== undefined && (
+          <p style="margin-top: 1rem;">
+            <strong>Resultado automático:</strong> 
+            {submission.payload.isCorrect ? (
+              <span style="color: green;">✅ Correcto</span>
+            ) : (
+              <span style="color: red;">❌ Incorrecto</span>
+            )}
+          </p>
+        )}
+      </div>
+
+      <div class="section">
+        <h3>ℹ️ Detalles Técnicos</h3>
+        <ul style="color: var(--c-fg-dim); font-size: 0.9rem;">
+          <li><strong>ID de Entrega:</strong> {submission.id}</li>
+          <li><strong>Intentos:</strong> {submission.attempts}</li>
+          <li><strong>Curso:</strong> {assignment?.courseId || 'N/A'}</li>
+        </ul>
+      </div>
+
+    </main>
+    <Footer />
+  </body>
+</html>

@@ -1,0 +1,160 @@
+---
+import BaseHead from '../../../../components/BaseHead.astro';
+import Header from '../../../../components/Header.astro';
+import Footer from '../../../../components/Footer.astro';
+import { createClient } from '@supabase/supabase-js';
+import '../../../../styles/theme.css';
+
+const { id } = Astro.params;
+
+// --- AUTHENTICATION & DATA FETCHING ---
+const supabase = createClient(import.meta.env.SUPABASE_URL, import.meta.env.SUPABASE_KEY);
+const session = Astro.locals.session as any;
+const currentUser = session?.user;
+
+if (!currentUser) return Astro.redirect('/login');
+
+// Check if viewer is teacher
+const { data: viewer } = await supabase.from('User').select('role').eq('email', currentUser.email).single();
+if (viewer?.role !== 'teacher') return Astro.redirect('/dashboard');
+
+// Fetch Target User
+const { data: user, error: userError } = await supabase.from('User').select('*').eq('id', id).single();
+
+if (userError || !user) {
+  return Astro.redirect('/dashboard');
+}
+
+// Fetch Enrollments
+const { data: enrollments } = await supabase.from('Enrollment').select('*').eq('userId', id);
+
+// Fetch Submissions
+const { data: submissions } = await supabase.from('Submission').select('*').eq('userId', id).order('submittedAt', { ascending: false });
+
+// Fetch Assignments to map IDs to names
+const { data: assignments } = await supabase.from('Assignment').select('*');
+
+// Helper to get assignment info
+const getAssignmentInfo = (aid: string) => {
+  const a = assignments?.find(x => x.id === aid);
+  return a ? { slug: a.slug, courseId: a.courseId } : { slug: aid, courseId: 'Unknown' };
+};
+---
+
+<html lang="es">
+  <head>
+    <BaseHead title={`Perfil: ${user.name}`} description="Detalles del usuario" />
+    <style>
+      .wrap { max-width: 1000px; margin: 0 auto; padding: 2rem 1rem; }
+      .profile-header { background: var(--c-bg-mute); padding: 2rem; border-radius: 8px; margin-bottom: 2rem; display: flex; align-items: center; gap: 1.5rem; border: 1px solid var(--c-border); }
+      .avatar { width: 80px; height: 80px; background: var(--c-link); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 2rem; font-weight: bold; }
+      .info h1 { margin: 0 0 0.5rem 0; font-size: 1.8rem; }
+      .meta { color: var(--c-fg-dim); font-size: 0.9rem; display: flex; gap: 1rem; }
+      .badge { padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; }
+      .role-student { background: #e8f5e9; color: #2e7d32; }
+      .role-teacher { background: #e3f2fd; color: #1565c0; }
+      
+      .section { margin-bottom: 3rem; }
+      .section h2 { border-bottom: 2px solid var(--c-border); padding-bottom: 0.5rem; margin-bottom: 1.5rem; }
+      
+      .data-table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+      .data-table th { text-align: left; padding: 0.75rem; background: var(--c-bg-mute); border-bottom: 2px solid var(--c-border); }
+      .data-table td { padding: 0.75rem; border-bottom: 1px solid var(--c-border); }
+      .status-graded { color: #2e7d32; font-weight: 500; }
+      .status-pending { color: #f57c00; font-weight: 500; }
+      
+      .back-link { display: inline-block; margin-bottom: 1rem; color: var(--c-link); text-decoration: none; }
+      .back-link:hover { text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <Header />
+    <main class="wrap">
+      <a href="/dashboard" class="back-link">← Volver al Panel</a>
+      
+      <div class="profile-header">
+        <div class="avatar">
+          {user.image ? <img src={user.image} alt={user.name} style="width:100%; height:100%; border-radius:50%; object-fit:cover;" /> : user.name.charAt(0).toUpperCase()}
+        </div>
+        <div class="info">
+          <h1>{user.name}</h1>
+          <div class="meta">
+            <span>📧 {user.email}</span>
+            <span>🆔 {user.id}</span>
+            <span class={`badge role-${user.role}`}>{user.role}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>📚 Cursos Inscritos</h2>
+        {enrollments && enrollments.length > 0 ? (
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>ID del Curso</th>
+                <th>Rol en Curso</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {enrollments.map((e: any) => (
+                <tr>
+                  <td><strong>{e.courseId}</strong></td>
+                  <td>{e.roleInCourse}</td>
+                  <td><span style="color: green;">Active</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p>Este usuario no está inscrito en ningún curso.</p>
+        )}
+      </div>
+
+      <div class="section">
+        <h2>📝 Historial de Entregas</h2>
+        {submissions && submissions.length > 0 ? (
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Tarea</th>
+                <th>Curso</th>
+                <th>Fecha</th>
+                <th>Intentos</th>
+                <th>Calificación</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {submissions.map((s: any) => {
+                const info = getAssignmentInfo(s.assignmentId);
+                return (
+                  <tr>
+                    <td>{info.slug.split('/').pop()}</td>
+                    <td>{info.courseId}</td>
+                    <td>{new Date(s.submittedAt).toLocaleDateString()} {new Date(s.submittedAt).toLocaleTimeString()}</td>
+                    <td>{s.attempts}</td>
+                    <td>
+                      {s.gradedAt ? (
+                        <span class="status-graded">{s.score}/10</span>
+                      ) : (
+                        <span class="status-pending">Pendiente</span>
+                      )}
+                    </td>
+                    <td>
+                      <a href={`/admin/grade/${s.id}`} style="color: var(--c-link);">Ver entrega</a>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : (
+          <p>No hay entregas registradas.</p>
+        )}
+      </div>
+    </main>
+    <Footer />
+  </body>
+</html>

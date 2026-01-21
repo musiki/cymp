@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { createClient } from '@supabase/supabase-js';
+import { db, Enrollment, User, eq, and } from 'astro:db';
 
 export const POST: APIRoute = async ({ params, locals }) => {
   const session = (locals as any).session;
@@ -21,13 +21,11 @@ export const POST: APIRoute = async ({ params, locals }) => {
     });
   }
 
-  const supabase = createClient(import.meta.env.SUPABASE_URL, import.meta.env.SUPABASE_KEY);
-
   try {
-    // Get user
-    const { data: user } = await supabase.from('User').select('id, role').eq('email', currentUser.email).single();
+    // Get user from DB
+    const [dbUser] = await db.select().from(User).where(eq(User.email, currentUser.email));
 
-    if (!user) {
+    if (!dbUser) {
       return new Response(JSON.stringify({ error: 'User not found' }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' },
@@ -35,21 +33,29 @@ export const POST: APIRoute = async ({ params, locals }) => {
     }
 
     // Check if already enrolled
-    const { data: existing } = await supabase.from('Enrollment').select('id').eq('userId', user.id).eq('courseId', courseId).single();
+    const existing = await db
+      .select()
+      .from(Enrollment)
+      .where(and(
+        eq(Enrollment.userId, dbUser.id),
+        eq(Enrollment.courseId, courseId)
+      ));
 
-    if (existing) {
+    if (existing.length > 0) {
       return new Response(JSON.stringify({ message: 'Already enrolled' }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
     }
 
-    // Create enrollment
-    await supabase.from('Enrollment').insert([{
-      userId: user.id,
+    // Create enrollment - teachers enroll as teachers
+    await db.insert(Enrollment).values({
+      id: crypto.randomUUID(),
+      userId: dbUser.id,
       courseId: courseId,
-      roleInCourse: user.role === 'teacher' ? 'teacher' : 'student',
-    }]);
+      roleInCourse: dbUser.role === 'teacher' ? 'teacher' : 'student',
+      enrolledAt: new Date(),
+    });
 
     return new Response(JSON.stringify({ success: true, message: 'Enrolled successfully' }), {
       status: 200,
