@@ -226,7 +226,7 @@ const groupedEntries = validEntries.reduce((acc, entry) => {
                   </h4>
                   {e.tags.length > 0 && (
                     <div class="tags">
-                      {e.tags.map(t => <a href={`/tags/${t}`} class="tag">{t}</a>)}
+                      {e.tags.map(t => <a href={`/tags/${encodeURIComponent(t)}`} class="tag">{t}</a>)}
                     </div>
                   )}
                 </div>

@@ -28,6 +28,14 @@ export default defineConfig({
     auth()
   ],
   markdown: {
+    shikiConfig: {
+      langAlias: {
+        'dataview': 'javascript',
+        'dataviewjs': 'javascript',
+        'ref': 'text',
+        'run-python': 'python',
+      }
+    },
     remarkPlugins: [
       remarkGfm,
       slugMathRemark,         // primero traducís $<
