@@ -107,12 +107,30 @@ const groupedEntries = validEntries.reduce((acc, entry) => {
         display: flex;
         align-items: center;
         justify-content: space-between;
-      }
-      .group-title h3 {
-        margin: 0;
-        margin-bottom: 1rem;
         border-bottom: 1px solid var(--c-border);
+        margin-bottom: 1rem;
         padding-bottom: 0.5rem;
+      }
+      .folder-toggle {
+        background: none;
+        border: none;
+        padding: 0;
+        margin: 0;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        width: 100%;
+        text-align: left;
+        color: inherit;
+        justify-content: space-between;
+        font: inherit;
+      }
+      .folder-toggle:hover {
+        color: var(--c-link);
+      }
+      .folder-toggle h3 {
+        margin: 0;
+        flex: 1;
       }
       .gallery {
         display: grid;
@@ -174,6 +192,10 @@ const groupedEntries = validEntries.reduce((acc, entry) => {
         display: inline-block;
       }
       .wikilink-missing { color: #b00; }
+      
+      .chevron { transition: transform 0.2s; }
+      .folder-section.collapsed .gallery { display: none; }
+      .folder-section.collapsed .chevron { transform: rotate(-90deg); }
     </style>
   </head>
   <body>
@@ -181,18 +203,17 @@ const groupedEntries = validEntries.reduce((acc, entry) => {
     <Header />
     <main class="wrap">
       <div class="page-header">
-        <h1>Contenidos</h1>
-        <button id="graph-toggle" class="graph-toggle-btn" title="Mostrar grafo de conocimiento (g)">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M11 19.5a8.5 8.5 0 1 1 5.23-15.52l-1.06 1.06a6.5 6.5 0 1 0-3.17 12.46l-1 1zM12.5 5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm-7 5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm13 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm-7 7a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/>
-          </svg>
-        </button>
+        <!-- <h1>Contenidos</h1> -->
+
       </div>
 
       {Object.entries(groupedEntries).map(([folder, entriesInFolder]) => (
-        <section>
+        <section class="folder-section" data-folder={folder}>
           <div class="group-title">
-            <h3>{folder}</h3>
+            <button class="folder-toggle" aria-expanded="true" title="Toggle section">
+              <h3>{folder}</h3>
+              <svg class="chevron" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            </button>
           </div>
           <div class="gallery">
             {entriesInFolder.map(e => (
@@ -217,6 +238,27 @@ const groupedEntries = validEntries.reduce((acc, entry) => {
     </main>
     <Footer />
   </body>
+  <script is:inline>
+    (function() {
+      const state = JSON.parse(localStorage.getItem('folder-state') || '{}');
+      document.querySelectorAll('.folder-section').forEach(sec => {
+        const folder = sec.dataset.folder;
+        const toggle = sec.querySelector('.folder-toggle');
+        
+        if (state[folder] === false) {
+          sec.classList.add('collapsed');
+          toggle.setAttribute('aria-expanded', 'false');
+        }
+
+        toggle.onclick = () => {
+          const isCollapsed = sec.classList.toggle('collapsed');
+          toggle.setAttribute('aria-expanded', !isCollapsed);
+          state[folder] = !isCollapsed;
+          localStorage.setItem('folder-state', JSON.stringify(state));
+        };
+      });
+    })();
+  </script>
   <script>
     document.getElementById('graph-toggle')?.addEventListener('click', () => {
       const event = new KeyboardEvent('keydown', {
@@ -236,21 +278,6 @@ const groupedEntries = validEntries.reduce((acc, entry) => {
     }
     .page-header h1 {
       margin: 0;
-    }
-    .graph-toggle-btn {
-      background: none;
-      border: 1px solid var(--c-border);
-      color: var(--c-fg);
-      border-radius: 8px;
-      width: 40px;
-      height: 40px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .graph-toggle-btn:hover {
-      background: var(--c-bg-mute);
     }
   </style>
 </html>

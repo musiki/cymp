@@ -636,3 +636,10 @@ ol ol ol ol > li::marker {
 .bibtex.entry {
     color: var(--text-accent);
 }
+
+/* LilyPond Scores */
+.lily-score {
+  margin: 1.5rem 0;
+  text-align: center;
+  overflow-x: auto;
+}

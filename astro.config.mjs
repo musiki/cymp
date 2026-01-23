@@ -13,6 +13,7 @@ import remarkRefsApa from './src/plugins/remark-refs-apa.mjs'
 import remarkEvalBlocks from './src/plugins/remark-eval-blocks.mjs'
 import remarkDataviewLite from './src/plugins/remark-dataview-lite.mjs'
 import remarkWikiLink from './src/plugins/remark-wiki-link.mjs'
+import remarkLily from './src/plugins/remark-lily.mjs'
 
 import auth from 'auth-astro';
 import vercel from '@astrojs/vercel';
@@ -36,6 +37,7 @@ export default defineConfig({
       remarkEvalBlocks,       // procesa bloques eval
       remarkDataviewLite,     // procesa bloques dataview
       remarkWikiLink,         // procesa wiki links [[Link]]
+      remarkLily,             // procesa bloques lilypond
     ],
     rehypePlugins: [
       rehypeRaw,              // permite inyectar HTML desde remark

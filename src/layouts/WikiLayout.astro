@@ -32,6 +32,18 @@ const { title, description, heroImage } = Astro.props;
       main { width: calc(100% - 2em); max-width: 100%; margin: 0; }
       .prose { width: 960px; max-width: calc(100% - 2em); margin:auto; padding:1em; }
       .title { margin-bottom:1em; padding:1em 0; text-align:center; }
+      
+      /* Copy Button Styles */
+      .code-wrapper { position: relative; }
+      .copy-btn {
+        position: absolute; top: 0.5rem; right: 0.5rem;
+        background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+        color: #888; padding: 0.2rem 0.5rem; font-size: 0.8rem;
+        border-radius: 4px; cursor: pointer; opacity: 0; transition: opacity 0.2s;
+      }
+      .code-wrapper:hover .copy-btn { opacity: 1; }
+      .copy-btn:hover { background: rgba(255,255,255,0.2); color: #fff; }
+      .copy-btn.copied { background: #22c55e; color: #fff; border-color: #22c55e; }
     </style>
   </head>
   <body>
@@ -49,5 +61,30 @@ const { title, description, heroImage } = Astro.props;
       </article>
     </main>
     <Footer />
+    <script>
+      function addCopyButtons() {
+        document.querySelectorAll('pre').forEach(pre => {
+          if (pre.parentNode.classList.contains('code-wrapper')) return;
+          
+          const wrapper = document.createElement('div');
+          wrapper.className = 'code-wrapper';
+          pre.parentNode.insertBefore(wrapper, pre);
+          wrapper.appendChild(pre);
+
+          const btn = document.createElement('button');
+          btn.className = 'copy-btn';
+          btn.textContent = 'Copy';
+          btn.onclick = () => {
+            navigator.clipboard.writeText(pre.innerText);
+            btn.textContent = 'Copied!';
+            btn.classList.add('copied');
+            setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+          };
+          wrapper.appendChild(btn);
+        });
+      }
+      document.addEventListener('astro:page-load', addCopyButtons);
+      document.addEventListener('DOMContentLoaded', addCopyButtons);
+    </script>
   </body>
 </html>
