@@ -1,32 +1,16 @@
-# build output
-dist/
-
-# generated types
-.astro/
-# BUT keep database file for persistence
-!.astro/content.db
-
-# database backups are kept locally only
-db/backups/
-
-# dependencies
+# Dependencies
 node_modules/
 
-# logs
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
+# Build output
+dist/
 
+# Astro
+.astro/
 
-# environment variables
+# Environment variables
 .env
-.env.production
+.env*.local
 
-# macOS-specific files
+# Editor directories and files
+.history/
 .DS_Store
-
-# jetbrains setting folder
-.idea/
-.vercel
-cym-astro-obsidian-template/
