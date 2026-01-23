@@ -2,7 +2,7 @@
 export const prerender = false;
 
 import { getCollection } from 'astro:content';
-import WikiLayout from '../layouts/WikiLayout.astro';
+import WikiLayout from '../../layouts/WikiLayout.astro';
 
 const { tag } = Astro.params;
 const allContent = await getCollection('content');
