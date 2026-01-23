@@ -128,6 +128,7 @@ function renderClientSideDataviewJS(node, index, parent, command, config, file, 
 
   const script = `${imports}
 (function() {
+  try {
   const container = document.getElementById('${id}');
   if (!container) return;
 
@@ -178,12 +179,14 @@ function renderClientSideDataviewJS(node, index, parent, command, config, file, 
 
   // Manage WebAudioAPI instances to prevent leaks
   const audioContexts = [];
-  const OriginalAudioContext = window.AudioContext;
-  window.AudioContext = function(...args) {
-    const ctx = new OriginalAudioContext(...args);
-    audioContexts.push(ctx);
-    return ctx;
-  };
+  if (typeof window.AudioContext !== 'undefined') {
+    const OriginalAudioContext = window.AudioContext;
+    window.AudioContext = function(...args) {
+      const ctx = new OriginalAudioContext(...args);
+      audioContexts.push(ctx);
+      return ctx;
+    };
+  }
 
   // Observer to clean up on container removal (e.g., page navigation)
   const observer = new MutationObserver(() => {
@@ -202,8 +205,11 @@ function renderClientSideDataviewJS(node, index, parent, command, config, file, 
     const fn = new AsyncFunction('dv', code);
     await fn.call(dv, dv);  // Set 'this' to dv for codes using 'this.container', and pass dv for direct access
   } catch (e) {
-    container.innerHTML = '<div style="color:red;border:1px solid red;padding:10px;">DataviewJS Error: ' + e.message + '</div>';
+    if (container) container.innerHTML = '<div style="color:red;border:1px solid red;padding:10px;">DataviewJS Error: ' + e.message + '</div>';
     console.error(e);
+  }
+  } catch(err) {
+    console.error("DataviewJS Fatal:", err);
   }
 })();`;
 
