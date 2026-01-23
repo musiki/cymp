@@ -1,0 +1,38 @@
+---
+export const prerender = false;
+
+import { getCollection } from 'astro:content';
+import WikiLayout from '../layouts/WikiLayout.astro';
+
+const { slug } = Astro.params;
+
+// Get all content entries
+const allContent = await getCollection('content');
+
+// Find entry by matching the slug path
+const entry = allContent.find(item => {
+  const target = decodeURIComponent(slug || '').toLowerCase();
+  const id = item.id.toLowerCase();
+  // Flattened check: match filename (ignoring folder path)
+  const filename = item.id.split('/').pop()?.replace(/\.[^/.]+$/, '').toLowerCase();
+  
+  return id === target || id.replace(/\.[^/.]+$/, '') === target || filename === target;
+});
+
+if (!entry) {
+  return Astro.redirect('/404');
+}
+
+// Render the content
+const { Content, headings } = await entry.render();
+
+// Resolve title: Frontmatter > Filename
+const title = entry.data.title || entry.id.split('/').pop()?.replace(/\.[^/.]+$/, '') || 'Untitled';
+---
+
+<WikiLayout
+  title={title}
+  description={entry.data.description || entry.data.subtitle || ''}
+>
+  <Content />
+</WikiLayout>

@@ -1,0 +1,39 @@
+---
+export const prerender = false;
+
+import { getCollection } from 'astro:content';
+import BlogPost from '../../layouts/BlogPost.astro';
+
+const { slug } = Astro.params;
+
+// Get all content entries
+const allContent = await getCollection('content');
+
+// Find entry by matching the slug path
+const entry = allContent.find(item => {
+  // Decode URL-encoded slug
+  const decodedSlug = decodeURIComponent(slug || '');
+  // Check if the ID matches the slug
+  return item.id === decodedSlug || 
+         item.id === decodedSlug.toLowerCase() ||
+         item.id.replace(/\s/g, '-').toLowerCase() === decodedSlug.toLowerCase();
+});
+
+if (!entry) {
+  return Astro.redirect('/404');
+}
+
+// Render the content
+const { Content, headings } = await entry.render();
+
+// Resolve title: Frontmatter > Filename
+const title = entry.data.title || entry.id.split('/').pop()?.replace(/\.[^/.]+$/, '') || 'Untitled';
+---
+
+<BlogPost
+  title={title}
+  description={entry.data.description || entry.data.subtitle || ''}
+  pubDate={new Date()}
+>
+  <Content />
+</BlogPost>

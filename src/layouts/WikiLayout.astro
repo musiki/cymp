@@ -1,0 +1,53 @@
+---
+import { Image } from 'astro:assets';
+import type { CollectionEntry } from 'astro:content';
+import BaseHead from '../components/BaseHead.astro';
+import Footer from '../components/Footer.astro';
+import Header from '../components/Header.astro';
+
+type Props = CollectionEntry<'content'>['data'];
+const { title, description, heroImage } = Astro.props;
+---
+<html lang="es">
+  <head>
+    <BaseHead title={title} description={description} />
+
+    <!-- KaTeX CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+
+    <!-- Mermaid -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js" defer></script>
+    <script is:inline>
+      const initMermaid = () => {
+        if (window.mermaid?.run) {
+          window.mermaid.initialize({ startOnLoad: false, theme: 'default' });
+          window.mermaid.run({ querySelector: '.mermaid' });
+        }
+      };
+      document.addEventListener('DOMContentLoaded', initMermaid);
+      document.addEventListener('astro:page-load', initMermaid);
+    </script>
+    <style>
+      .mermaid svg { background: transparent !important; }
+      main { width: calc(100% - 2em); max-width: 100%; margin: 0; }
+      .prose { width: 960px; max-width: calc(100% - 2em); margin:auto; padding:1em; }
+      .title { margin-bottom:1em; padding:1em 0; text-align:center; }
+    </style>
+  </head>
+  <body>
+    <Header />
+    <main>
+      <article>
+        {heroImage && <Image width={1020} height={510} src={heroImage} alt="" style="display:block;margin:0 auto;border-radius:12px;" />}
+        <div class="prose">
+          <div class="title">
+            <h1>{title}</h1>
+            <hr />
+          </div>
+          <slot />
+        </div>
+      </article>
+    </main>
+    <Footer />
+  </body>
+</html>
