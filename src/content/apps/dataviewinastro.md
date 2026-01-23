@@ -8,4 +8,3 @@
 - **Assumption of global styles and theme properties**: CODE2 pulls colors via `getComputedStyle(root).getPropertyValue("--text-accent")`, which may return empty or default values in Astro if not set, leading to poor visuals. CODE1 avoids heavy reliance on this for core functionality.
 - **No cleanup safeguards for DOM detachment**: CODE2 checks `if (!root.isConnected)` in the loop, but lacks broader safeguards. If the component unmounts in Astro (e.g., during navigation), resources like animation frames or audio might leak without visual feedback. CODE1 manages this more implicitly through its structure.
 
-### Refactored CODE2 (Robust Version to Work Like CODE1)

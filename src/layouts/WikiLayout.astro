@@ -4,15 +4,37 @@ import type { CollectionEntry } from 'astro:content';
 import BaseHead from '../components/BaseHead.astro';
 import Footer from '../components/Footer.astro';
 import Header from '../components/Header.astro';
+import { execSync } from 'node:child_process';
+import path from 'node:path';
 
-type Props = CollectionEntry<'content'>['data'];
-const { title, description, heroImage } = Astro.props;
+type Props = CollectionEntry<'content'>['data'] & { id: string };
+const { title, description, heroImage, id } = Astro.props;
+
+// Compute last update info during build
+let lastAuthor = 'Unknown';
+let lastDate = 'Unknown';
+let commitSha = 'Unknown';
+let repoOwner = process.env.VERCEL_GIT_REPO_OWNER || 'unknown';
+let repoSlug = process.env.VERCEL_GIT_REPO_SLUG || 'unknown';
+
+try {
+  const filePath = path.join(process.cwd(), 'src/content', `${id}.md`); // Adjust collection name if needed
+  commitSha = execSync(`git log -1 --format="%H" -- ${filePath}`).toString().trim();
+  const lastCommit = execSync(`git log -1 --format="%an|%ad" -- ${filePath}`).toString().trim();
+  const [author, date] = lastCommit.split('|');
+  lastAuthor = author || 'Unknown';
+  lastDate = new Date(date).toLocaleString() || 'Unknown';
+} catch (e) {
+  console.warn(`Failed to get git info for ${id}: ${e.message}`);
+}
+const commitUrl = `https://github.com/${repoOwner}/${repoSlug}/commit/${commitSha}`;
 ---
-<html lang="es">
+
+<html lang="es" class="scroll-smooth">
   <head>
     <BaseHead title={title} description={description} />
 
-    <!-- KaTeX CSS -->
+    <!-- KaTeX -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
 
     <!-- Mermaid -->
@@ -27,64 +49,306 @@ const { title, description, heroImage } = Astro.props;
       document.addEventListener('DOMContentLoaded', initMermaid);
       document.addEventListener('astro:page-load', initMermaid);
     </script>
-    <style>
-      .mermaid svg { background: transparent !important; }
-      main { width: calc(100% - 2em); max-width: 100%; margin: 0; }
-      .prose { width: 960px; max-width: calc(100% - 2em); margin:auto; padding:1em; }
-      .title { margin-bottom:1em; padding:1em 0; text-align:center; }
-      
-      /* Copy Button Styles */
-      .code-wrapper { position: relative; }
-      .copy-btn {
-        position: absolute; top: 0.5rem; right: 0.5rem;
-        background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
-        color: #888; padding: 0.2rem 0.5rem; font-size: 0.8rem;
-        border-radius: 4px; cursor: pointer; opacity: 0; transition: opacity 0.2s;
+
+    <!-- Lenis smooth scroll (very light ~9kb) -->
+    <script src="https://cdn.jsdelivr.net/npm/@studio-freight/lenis@1.0.42/dist/lenis.min.js" defer></script>
+
+    <style is:global>
+      /* Fade-in animation for sections */
+      .fade-in-section {
+        opacity: 0;
+        transform: translateY(20px);
+        transition: opacity 0.7s ease-out, transform 0.7s ease-out;
       }
-      .code-wrapper:hover .copy-btn { opacity: 1; }
-      .copy-btn:hover { background: rgba(255,255,255,0.2); color: #fff; }
-      .copy-btn.copied { background: #22c55e; color: #fff; border-color: #22c55e; }
+
+      .fade-in-section.is-visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      /* Minimal title – left aligned, uses existing variables */
+      .article-header {
+        padding: 2rem 0 1.5rem;
+        margin-bottom: 2rem;
+      }
+
+      .article-header h1 {
+        font-size: 2.2rem;
+        font-weight: 700;
+        color: rgb(var(--black));
+        margin: 0;
+        text-align: left;
+      }
+
+      .dark .article-header h1 {
+        color: rgb(var(--black));
+      }
+
+      .article-header p.description {
+        margin-top: 0.75rem;
+        color: rgb(var(--gray));
+        font-size: 1.15rem;
+        line-height: 1.5;
+      }
+
+      .dark .article-header p.description {
+        color: rgb(var(--gray));
+      }
+
+      /* Main layout with sidebar */
+      main {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        width: 100%;
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 1rem 4rem;
+        gap: 1rem;
+      }
+
+      @media (max-width: 1024px) {
+        main { grid-template-columns: 1fr; }
+        #infobox-sidebar { display: none; } /* Hide on small screens, or make toggleable */
+      }
+
+      /* Improve spacing in prose while keeping your font/line-height */
+      .prose {
+        font-size: 1.1rem;
+        line-height: 1.8;
+      }
+
+      .prose h2, .prose h3, .prose h4 {
+        color: rgb(var(--black));
+        margin-top: 2.5rem;
+        margin-bottom: 1rem;
+      }
+
+      .dark .prose h2, .dark .prose h3, .dark .prose h4 {
+        color: rgb(var(--black));
+      }
+
+      /* Better blockquote contrast in both modes */
+      blockquote {
+        border-left-color: var(--accent);
+        background: rgba(var(--gray-light), 0.25);
+      }
+
+      .dark blockquote {
+        background: rgba(var(--gray-dark), 0.18);
+      }
+
+      /* Callouts already look good – just tiny contrast tweak */
+      .callout {
+        border-radius: 0;
+      }
+
+      /* Code copy button – match your style */
+      .copy-btn {
+        background: rgba(var(--gray-light), 0.6);
+        color: rgb(var(--gray-dark));
+        border: 1px solid rgba(var(--gray), 0.4);
+      }
+
+      .dark .copy-btn {
+        background: rgba(var(--gray-dark), 0.5);
+        color: rgb(var(--gray));
+        border-color: rgba(var(--gray), 0.35);
+      }
+
+      .copy-btn.copied {
+        background: var(--accent);
+        color: white;
+      }
+
+      /* Infobox sidebar */
+      #infobox-sidebar {
+        position: sticky;
+        top: 4rem;
+        width: 280px;
+        background: rgba(var(--gray-light), 0.15);
+        border-left: 1px solid rgba(var(--gray), 0.3);
+        padding: 1.5rem;
+        transition: transform 0.3s ease;
+        transform: translateX(0);
+      }
+
+      #infobox-sidebar.hidden {
+        transform: translateX(100%);
+      }
+
+      .dark #infobox-sidebar {
+        background: rgba(var(--gray-dark), 0.25);
+        border-left-color: rgba(var(--gray), 0.3);
+      }
+
+      #infobox-sidebar h3 {
+        font-size: 1.1rem;
+        margin: 0 0 1rem;
+        color: rgb(var(--black));
+      }
+
+      .dark #infobox-sidebar h3 {
+        color: rgb(var(--black));
+      }
+
+      #infobox-sidebar dl {
+        margin: 0;
+      }
+
+      #infobox-sidebar dt {
+        font-weight: bold;
+        color: rgb(var(--gray));
+      }
+
+      .dark #infobox-sidebar dt {
+        color: rgb(var(--gray));
+      }
+
+      #infobox-sidebar dd {
+        margin: 0 0 0.75rem;
+      }
+
+      #infobox-sidebar a {
+        color: var(--accent);
+      }
     </style>
   </head>
+
   <body>
     <Header />
+
     <main>
       <article>
-        {heroImage && <Image width={1020} height={510} src={heroImage} alt="" style="display:block;margin:0 auto;border-radius:12px;" />}
-        <div class="prose">
-          <div class="title">
-            <h1>{title}</h1>
-            <hr />
+        {heroImage && (
+          <div class="mb-8">
+            <Image
+              width={1020}
+              height={510}
+              src={heroImage}
+              alt=""
+              class="rounded-none shadow-sm w-full"
+            />
           </div>
+        )}
+
+        <header class="article-header fade-in-section">
+          <h1>{title}</h1>
+          {description && <p class="description">{description}</p>}
+        </header>
+
+        <div class="prose fade-in-section">
           <slot />
         </div>
       </article>
+
+      <!-- Foldable right sidebar infobox -->
+      <aside id="infobox-sidebar" class="fade-in-section">
+        <h3>Page Info</h3>
+        <dl>
+          <dt>Last Updated:</dt>
+          <dd>{lastDate}</dd>
+          <dt>By:</dt>
+          <dd>{lastAuthor}</dd>
+          <dt>Commit:</dt>
+          <dd><a href={commitUrl} target="_blank" rel="noopener noreferrer">{commitSha.slice(0, 7)}</a></dd>
+          <!-- Add more auto info here, e.g., from frontmatter -->
+          {Astro.props.tags && (
+            <>
+              <dt>Tags:</dt>
+              <dd>{Astro.props.tags.join(', ')}</dd>
+            </>
+          )}
+        </dl>
+      </aside>
     </main>
+
     <Footer />
+
+    <!-- Scripts -->
     <script>
+      // ────────────────────────────────────────────────
+      // Lenis smooth scrolling
+      // ────────────────────────────────────────────────
+      const lenis = new Lenis({
+        duration: 1.1,
+        easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+        smoothWheel: true,
+        smoothTouch: false,
+      });
+
+      function raf(time) {
+        lenis.raf(time);
+        requestAnimationFrame(raf);
+      }
+      requestAnimationFrame(raf);
+
+      // ────────────────────────────────────────────────
+      // IntersectionObserver fade-in
+      // ────────────────────────────────────────────────
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add('is-visible');
+              observer.unobserve(entry.target); // one-time animation
+            }
+          });
+        },
+        { threshold: 0.1, rootMargin: '0px 0px -10% 0px' }
+      );
+
+      document.querySelectorAll('.fade-in-section').forEach((el) => {
+        observer.observe(el);
+      });
+
+      // Re-observe after Astro page load / view transition
+      document.addEventListener('astro:page-load', () => {
+        document.querySelectorAll('.fade-in-section:not(.is-visible)').forEach((el) => {
+          observer.observe(el);
+        });
+      });
+
+      // ────────────────────────────────────────────────
+      // Sidebar toggle with Shift + \
+      // ────────────────────────────────────────────────
+      document.addEventListener('keydown', (e) => {
+        if (e.shiftKey && e.key === '\\') {
+          const sidebar = document.getElementById('infobox-sidebar');
+          if (sidebar) {
+            sidebar.classList.toggle('hidden');
+          }
+        }
+      });
+
+      // ────────────────────────────────────────────────
+      // Copy buttons (your previous logic kept)
+      // ────────────────────────────────────────────────
       function addCopyButtons() {
-        document.querySelectorAll('pre').forEach(pre => {
+        document.querySelectorAll('pre').forEach((pre) => {
           if (pre.parentNode.classList.contains('code-wrapper')) return;
-          
+
           const wrapper = document.createElement('div');
-          wrapper.className = 'code-wrapper';
+          wrapper.className = 'code-wrapper relative';
           pre.parentNode.insertBefore(wrapper, pre);
           wrapper.appendChild(pre);
 
           const btn = document.createElement('button');
-          btn.className = 'copy-btn';
-          btn.textContent = 'Copy';
+          btn.className =
+            'copy-btn absolute top-3 right-3 px-2.5 py-1 text-xs rounded transition-all';
+          btn.textContent = 'Copiar';
           btn.onclick = () => {
-            navigator.clipboard.writeText(pre.innerText);
-            btn.textContent = 'Copied!';
-            btn.classList.add('copied');
-            setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+            navigator.clipboard.writeText(pre.innerText.trim());
+            btn.textContent = 'Copiado';
+            setTimeout(() => {
+              btn.textContent = 'Copiar';
+            }, 1800);
           };
           wrapper.appendChild(btn);
         });
       }
-      document.addEventListener('astro:page-load', addCopyButtons);
+
       document.addEventListener('DOMContentLoaded', addCopyButtons);
+      document.addEventListener('astro:page-load', addCopyButtons);
     </script>
   </body>
 </html>
