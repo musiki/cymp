@@ -127,7 +127,7 @@ function renderClientSideDataviewJS(node, index, parent, command, config, file, 
   }
 
   const script = `${imports}
-(function() {
+(async function() {
   try {
   const container = document.getElementById('${id}');
   if (!container) return;
