@@ -257,25 +257,41 @@ try{
     tubeHalo = new THREE.Mesh(geoHalo, tubeHaloMat);
     scn.add(tube); scn.add(tubeHalo);
   }
-  function pushTail(p){ tailPts.unshift(p.clone()); if(tailPts.length>tailMax) tailPts.pop(); }
-  iTail.addEventListener('input',()=>{ tailMax=+iTail.value|0; tailPts.length=0; rebuildTubes(); });
-  iTubeR.addEventListener('input', rebuildTubes);
 
-  // -------- estado discreto NxNxN --------
-  let Ncur=+iN.value, Lhalf=Ncur/2;
-  let posDiscrete = new THREE.Vector3(0.5,0.5,0.5);
-  function clampToGrid(v,N){ const L=N/2; v.x=Math.max(-L+0.5,Math.min(L-0.5,v.x)); v.y=Math.max(-L+0.5,Math.min(L-0.5,v.y)); v.z=Math.max(-L+0.5,Math.min(L-0.5,v.z)); }
-  function resetGridState(N){ Ncur=N; Lhalf=N/2; posDiscrete.set(0.5,0.5,0.5); tailPts.length=0; rebuildTubes(); pl.distance=Math.max(14,N*2); }
-  function stepRandomWalk(){ const axis=(Math.random()*3|0), dir=Math.random()<0.5?-1:1; if(axis===0) posDiscrete.x+=dir; if(axis===1) posDiscrete.y+=dir; if(axis===2) posDiscrete.z+=dir; clampToGrid(posDiscrete,Ncur); }
-  const gridToWorld=(v)=>new THREE.Vector3(v.x,v.y,v.z);
 
-  // ======== AUDIO: creación LAZY en Play, sin nodos residuales ========
-  let audio = null; // guardo estado para limpiar
-  async function createAudio(){
-    // si hay uno previo, cerrarlo
-    if(audio){
-      try{
-        if(audio.running){ await stopAudio(true); } // hard stop
+    lbl('Mod f max (Hz)', iFmMax, v=>v),
+    lbl('Índice max (Hz)', iIMax, v=>v),
+
+    lbl('Reverb wet', iWet, v=>(+v).toFixed(2)),
+    lbl('Release (s)', iRel, v=>(+v).toFixed(2)),
+
+    lbl('Modo continuo', iCont),
+    lbl('Prob. de rest', iRestP, v=>(+v).toFixed(2)),
+    lbl('Persistencia', iPersist, v=>(+v).toFixed(2)),
+    lbl('Color de ruido', iNoise, v=>v),
+    lbl('Ducking auto', iDuck, v=>(+v).toFixed(2)),
+    lbl('Sens. color', iColorSens, v=>(+v).toFixed(2))
+  );
+
+  // ---------- canvas ----------
+  const W=r.clientWidth||640, H=460;
+  const stage=document.createElement('div');
+  stage.style.width='100%'; stage.style.height=H+'px'; stage.style.border='1px solid var(--text-muted)';
+  r.appendChild(stage);
+
+  // ---------- three ----------
+  await loadAny(['https://unpkg.com/three@0.149.0/build/three.min.js','https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js']);
+
+  const ren=new THREE.WebGLRenderer({antialias:true,alpha:true});
+  const w=stage.clientWidth||W; ren.setSize(w,H); stage.appendChild(ren.domElement);
+  ren.toneMapping=THREE.ACESFilmicToneMapping; ren.toneMappingExposure=1.05;
+
+  const scn=new THREE.Scene(); scn.background=new THREE.Color(0x060606);
+  const cam=new THREE.PerspectiveCamera(60,w/H,.1,2000);
+      d.addEventListener('wheel',e=>{ e.preventDefault(); this.s.radius=e.deltaY>0?Math.min(this.rmax,this.s.radius*this.zoom):Math.max(this.rmin,this.s.radius/this.zoom); this.upd(); },{passive:false});
+      this.upd();
+    }
+  const cam=new THREE.PerspectiveCamera(60,w/H,.1,2000);
         await audio.ctx.close();
       }catch(_){}
       audio=null;

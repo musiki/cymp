@@ -1,8 +1,8 @@
 filters:
   and:
-    - file.folder == "06-out/personas"
     - '!file.name.startsWith("t-")'
     - file.ext != "base"
+    - file.folder == "06 out/personas"
 views:
   - type: cards
     name: all

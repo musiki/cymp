@@ -80,7 +80,6 @@ turso db shell cymp-production
 
 ## Checklist Pre-Deployment
 
-- [ ] Cuenta Turso creada
 - [ ] Base de datos creada en Turso
 - [ ] Token generado
 - [ ] Variables de entorno configuradas en Vercel

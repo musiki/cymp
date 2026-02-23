@@ -76,6 +76,23 @@ options:
 explanation: "random(min, max) te permite definir el rango de valores posibles, dando control sobre la variación. Por ejemplo, random(100, 200) solo devolverá valores entre 100 y 200."
 ```
 
+## Cierre de sección
+
+```eval
+id: gen-art-u1-cierre
+type: mcc
+mode: self
+points: 1
+prompt: "Marca esta unidad como completada cuando hayas terminado la autoevaluación."
+summary: "Este paso habilita el registro de progreso de lectura y consolidación."
+objectives:
+  - "Distinguir arte generativo de producción manual."
+  - "Explicar uso de random() y randomSeed()."
+  - "Aplicar variación controlada con rangos."
+buttonLabel: "Marcar unidad como completada"
+successLabel: "Unidad marcada como completada"
+```
+
 ## Reflexión
 
 Ahora que has completado estas preguntas, piensa en:

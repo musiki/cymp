@@ -1,0 +1,336 @@
+---
+import BaseHead from '../../components/BaseHead.astro';
+import Header from '../../components/Header.astro';
+import Footer from '../../components/Footer.astro';
+
+const session = (Astro.locals as any).session;
+const currentUser = session?.user;
+const correctionConfigured = Boolean(import.meta.env.CORRECTION_API_URL && import.meta.env.CORRECTION_API_TOKEN);
+---
+
+<!doctype html>
+<html lang="es">
+  <head>
+    <BaseHead title="Demo Ollama" description="Prueba rápida del endpoint de corrección" />
+    <style>
+      .demo-wrap {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 1.5rem;
+      }
+
+      .panel {
+        border: 1px solid var(--c-border);
+        border-radius: 10px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        background: var(--c-bg);
+      }
+
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.92rem;
+        padding: 0.35rem 0.65rem;
+        border-radius: 999px;
+        margin-right: 0.5rem;
+      }
+
+      .status.ok {
+        background: #e8f6ec;
+        color: #176f35;
+      }
+
+      .status.bad {
+        background: #fdecec;
+        color: #8a1f1f;
+      }
+
+      .grid {
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: 1fr;
+      }
+
+      @media (min-width: 980px) {
+        .grid {
+          grid-template-columns: 1.2fr 1fr;
+        }
+      }
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+        margin-bottom: 0.85rem;
+      }
+
+      .field label {
+        font-weight: 600;
+      }
+
+      .field input,
+      .field textarea {
+        width: 100%;
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        background: var(--c-bg);
+        color: var(--c-fg);
+        padding: 0.7rem;
+        font-family: inherit;
+      }
+
+      .field textarea {
+        min-height: 180px;
+        resize: vertical;
+      }
+
+      .actions {
+        display: flex;
+        gap: 0.6rem;
+        flex-wrap: wrap;
+      }
+
+      button {
+        border: none;
+        border-radius: 8px;
+        padding: 0.65rem 1rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      button.primary {
+        background: var(--accent);
+        color: #fff;
+      }
+
+      button.secondary {
+        background: var(--c-bg-mute);
+        color: var(--c-fg);
+        border: 1px solid var(--c-border);
+      }
+
+      button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+
+      .hint {
+        font-size: 0.9rem;
+        color: var(--c-fg-dim);
+      }
+
+      .result-grid {
+        display: grid;
+        gap: 0.75rem;
+      }
+
+      .result-card {
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        padding: 0.75rem;
+        background: var(--c-bg-mute);
+      }
+
+      .result-title {
+        margin: 0 0 0.4rem 0;
+        font-size: 0.9rem;
+        color: var(--c-fg-dim);
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+
+      .result-body {
+        margin: 0;
+        line-height: 1.45;
+      }
+
+      pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        padding: 0.75rem;
+        background: #0f1720;
+        color: #d7e2ef;
+        overflow: auto;
+        max-height: 420px;
+      }
+
+      .warning {
+        border-left: 4px solid #f59e0b;
+        padding-left: 0.8rem;
+      }
+    </style>
+  </head>
+  <body>
+    <Header />
+    <main class="demo-wrap">
+      <h1>Demo rápido: API de corrección (Ollama)</h1>
+      <p class="hint">Prueba el endpoint puente <code>/api/ai/correct</code> con un texto real de estudiante.</p>
+
+      <section class="panel">
+        <span class:list={["status", currentUser?.email ? "ok" : "bad"]}>
+          {currentUser?.email ? '✓ Sesión activa' : '✗ Sin sesión'}
+        </span>
+        <span class:list={["status", correctionConfigured ? "ok" : "bad"]}>
+          {correctionConfigured ? '✓ Backend IA configurado' : '✗ Falta CORRECTION_API_URL/TOKEN'}
+        </span>
+        {!currentUser?.email && (
+          <p class="hint warning">Este demo usa un endpoint autenticado. Inicia sesión para ejecutar correcciones.</p>
+        )}
+      </section>
+
+      <section class="grid">
+        <article class="panel">
+          <div class="field">
+            <label for="texto">Texto del estudiante</label>
+            <textarea id="texto" placeholder="Escribe aquí el texto a corregir..."></textarea>
+          </div>
+
+          <div class="field">
+            <label for="rubrica">Rúbrica (opcional)</label>
+            <textarea id="rubrica" placeholder="Ej: Claridad de tesis; uso de evidencia; precisión conceptual" style="min-height: 90px;"></textarea>
+          </div>
+
+          <div class="field">
+            <label for="model">Modelo (opcional)</label>
+            <input id="model" placeholder="Ej: llama3.2:latest o llama3.1:latest" />
+          </div>
+
+          <div class="actions">
+            <button class="primary" id="run-btn">Probar corrección</button>
+            <button class="secondary" id="example-btn" type="button">Cargar ejemplo</button>
+            <button class="secondary" id="clear-btn" type="button">Limpiar</button>
+          </div>
+
+          <p class="hint" id="status-msg">Listo para enviar.</p>
+        </article>
+
+        <article class="panel">
+          <h2 style="margin-top: 0;">Resultado estructurado</h2>
+          <div id="result-cards" class="result-grid"></div>
+          <h3 style="margin-top: 1rem;">JSON crudo</h3>
+          <pre id="raw-json">(sin respuesta)</pre>
+        </article>
+      </section>
+    </main>
+    <Footer />
+
+    <script>
+      const textEl = document.getElementById('texto');
+      const rubricEl = document.getElementById('rubrica');
+      const modelEl = document.getElementById('model');
+      const runBtn = document.getElementById('run-btn');
+      const exampleBtn = document.getElementById('example-btn');
+      const clearBtn = document.getElementById('clear-btn');
+      const statusMsg = document.getElementById('status-msg');
+      const rawJson = document.getElementById('raw-json');
+      const resultCards = document.getElementById('result-cards');
+
+      const renderCards = (evaluation) => {
+        resultCards.innerHTML = '';
+        if (!evaluation) return;
+
+        const makeCard = (title, body) => {
+          const card = document.createElement('section');
+          card.className = 'result-card';
+
+          const h = document.createElement('h4');
+          h.className = 'result-title';
+          h.textContent = title;
+
+          const p = document.createElement('p');
+          p.className = 'result-body';
+          p.textContent = body || '—';
+
+          card.appendChild(h);
+          card.appendChild(p);
+          resultCards.appendChild(card);
+        };
+
+        makeCard('Resumen', evaluation.resumen);
+        makeCard('Tesis clara', evaluation.tesis?.clara ? 'Sí' : 'No');
+        makeCard('Explicación tesis', evaluation.tesis?.explicacion);
+        makeCard('Fortalezas', Array.isArray(evaluation.fortalezas) ? evaluation.fortalezas.join(' | ') : '—');
+        makeCard('Debilidades', Array.isArray(evaluation.debilidades) ? evaluation.debilidades.join(' | ') : '—');
+        makeCard('Sugerencia', evaluation.sugerencia);
+      };
+
+      const setBusy = (busy) => {
+        runBtn.disabled = busy;
+        runBtn.textContent = busy ? 'Procesando...' : 'Probar corrección';
+      };
+
+      const setStatus = (text) => {
+        statusMsg.textContent = text;
+      };
+
+      exampleBtn.addEventListener('click', () => {
+        textEl.value = 'La música generativa usa reglas y azar, pero me cuesta explicar cuándo el azar aporta creatividad y cuándo solo genera ruido conceptual. Creo que la semilla permite repetir procesos para analizar variaciones.';
+        rubricEl.value = 'Claridad de tesis; precisión conceptual; uso de ejemplos; propuesta de mejora.';
+        modelEl.value = DEFAULT_MODEL;
+        setStatus('Ejemplo cargado.');
+      });
+
+      clearBtn.addEventListener('click', () => {
+        textEl.value = '';
+        rubricEl.value = '';
+        modelEl.value = DEFAULT_MODEL;
+        rawJson.textContent = '(sin respuesta)';
+        resultCards.innerHTML = '';
+        setStatus('Formulario limpio.');
+      });
+
+      modelEl.value = DEFAULT_MODEL;
+
+      runBtn.addEventListener('click', async () => {
+        const texto = textEl.value.trim();
+        const rubrica = rubricEl.value.trim();
+        const model = modelEl.value.trim();
+
+        if (!texto) {
+          setStatus('Debes ingresar texto para evaluar.');
+          return;
+        }
+
+        setBusy(true);
+        setStatus('Enviando solicitud al backend...');
+
+        try {
+          const response = await fetch('/api/ai/correct', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              texto,
+              rubrica: rubrica || undefined,
+              model: model || undefined,
+            }),
+          });
+
+          const data = await response.json();
+          rawJson.textContent = JSON.stringify(data, null, 2);
+
+          if (!response.ok || !data?.ok) {
+            setStatus(`Error ${response.status}: revisa JSON crudo`);
+            renderCards(null);
+            return;
+          }
+
+          renderCards(data.evaluation || null);
+          setStatus('Corrección completada.');
+        } catch (error) {
+          rawJson.textContent = String(error);
+          renderCards(null);
+          setStatus('Fallo de red o backend no disponible.');
+        } finally {
+          setBusy(false);
+        }
+      });
+    </script>
+  </body>
+</html>
+      const DEFAULT_MODEL = 'llama3.2:latest';

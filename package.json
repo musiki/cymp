@@ -23,7 +23,6 @@
     "@astrojs/vercel": "^9.0.4",
     "@auth/core": "^0.37.4",
     "@supabase/supabase-js": "^2.91.0",
-    "astro": "^5.14.1",
     "auth-astro": "^4.2.0",
     "better-auth": "^1.4.3",
     "drizzle-orm": "^0.44.7",
@@ -48,6 +47,7 @@
   },
   "devDependencies": {
     "@astrojs/mdx": "^4.3.6",
+    "astro": "^5.17.3",
     "rehype-katex": "^7.0.1",
     "remark-math": "^6.0.0"
   },

@@ -2,7 +2,8 @@
 set -euo pipefail
 
 SRC="/Users/zztt/My Drive/Obsidian/cym/06-out"
-DST="/Users/zztt/My Drive/Obsidian/samples/cymp/src/content"
+DST="/Users/zztt/projects/26-musiki/src/content"
+
 
 SUFFIX=".md-old"
 

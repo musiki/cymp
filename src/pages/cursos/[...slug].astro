@@ -163,6 +163,48 @@ const isAssignment = currentEntry.data.type === 'assignment';
         opacity: 0.7;
         margin-left: 0.5rem;
       }
+
+      .page-progress[hidden] {
+        display: none;
+      }
+
+      .progress-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+      }
+
+      .progress-item {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.45rem 0.5rem;
+        border-radius: 6px;
+        background: var(--c-bg-mute);
+        font-size: 0.82rem;
+      }
+
+      .progress-dot {
+        width: 1rem;
+        height: 1rem;
+        border-radius: 999px;
+        border: 1px solid var(--c-border);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.7rem;
+        color: transparent;
+      }
+
+      .progress-item.is-complete .progress-dot {
+        background: #1f8f45;
+        border-color: #1f8f45;
+        color: #fff;
+      }
+
+      .progress-label {
+        line-height: 1.35;
+      }
       
       .content-area {
         border: 1px solid var(--c-border);
@@ -252,6 +294,11 @@ const isAssignment = currentEntry.data.type === 'assignment';
             </ul>
           </div>
         ))}
+
+        <div class="chapter page-progress" id="page-progress" hidden>
+          <div class="chapter-title">Progreso de esta página</div>
+          <ul class="lesson-list progress-list" id="page-progress-list"></ul>
+        </div>
       </aside>
 
       <!-- Main Content -->
@@ -279,215 +326,426 @@ const isAssignment = currentEntry.data.type === 'assignment';
     <Footer />
     
     <script>
-      // Global state for submissions
       let userSubmissions = {};
       let hasEvalBlocks = false;
+      const progressByEvalId = new Map();
 
-      // Load user's previous submissions
       async function loadUserSubmissions() {
         try {
           const response = await fetch('/api/submissions/my-submissions');
           const data = await response.json();
-          if (data.submissions) {
-            userSubmissions = data.submissions;
-            console.log('[MCQ] Loaded user submissions:', userSubmissions);
-          }
+          userSubmissions = data?.submissions || {};
         } catch (error) {
-          console.error('[MCQ] Error loading submissions:', error);
+          console.error('Error loading submissions:', error);
+          userSubmissions = {};
         }
       }
 
-      // Initialize eval blocks
-      document.addEventListener('DOMContentLoaded', async () => {
-        console.log('[MCQ] DOMContentLoaded fired');
-        
-        // Load previous submissions first
-        await loadUserSubmissions();
-        
-        const evalWrappers = document.querySelectorAll('.eval-block-wrapper');
-        console.log('[MCQ] Found wrappers:', evalWrappers.length);
-        
-        if (evalWrappers.length > 0) {
-          hasEvalBlocks = true;
-        }
-        
-        evalWrappers.forEach((wrapper, index) => {
-          console.log(`[MCQ] Processing wrapper ${index + 1}`);
-          try {
-            const rawData = wrapper.dataset.eval;
-            console.log('[MCQ] Raw data:', rawData);
-            
-            const evalData = JSON.parse(rawData.replace(/&apos;/g, "'"));
-            console.log('[MCQ] Parsed data:', evalData);
-            
-            if (evalData.type === 'mcq') {
-              console.log('[MCQ] Rendering MCQ...');
-              renderMCQ(wrapper, evalData);
-            } else {
-              console.log('[MCQ] Type is not mcq:', evalData.type);
-            }
-          } catch (error) {
-            console.error('[MCQ] Error processing wrapper:', error);
+      function parseEvalData(wrapper) {
+        try {
+          const b64 = wrapper.dataset.evalB64;
+          if (b64) {
+            const binary = atob(b64);
+            const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+            return JSON.parse(new TextDecoder().decode(bytes));
           }
-        });
 
-        // Add clear answers button if there are eval blocks and submissions
-        if (hasEvalBlocks && Object.keys(userSubmissions).length > 0) {
-          addClearAnswersButton();
+          // Legacy fallback for old parser payload.
+          const legacy = wrapper.dataset.eval;
+          if (legacy) return JSON.parse(legacy.replace(/&apos;/g, "'"));
+        } catch (error) {
+          console.error('Error parsing eval wrapper:', error);
         }
-      });
-      
-      function renderMCQ(wrapper, data) {
+
+        return null;
+      }
+
+      function getSubmission(evalId) {
+        return userSubmissions[evalId] || null;
+      }
+
+      function getSubmissionPayload(submission) {
+        if (!submission) return null;
+        return submission.answer ?? submission.payload ?? null;
+      }
+
+      function getPreviousMcqAnswer(submission) {
+        const payload = getSubmissionPayload(submission);
+        if (payload && typeof payload === 'object') return payload.answer;
+        return payload;
+      }
+
+      function isSubmissionCorrect(submission) {
+        const payload = getSubmissionPayload(submission);
+        if (payload && typeof payload === 'object' && typeof payload.isCorrect === 'boolean') {
+          return payload.isCorrect;
+        }
+        if (typeof submission?.score === 'number') return submission.score > 0;
+        return false;
+      }
+
+      function isCompletionSubmission(submission) {
+        const payload = getSubmissionPayload(submission);
+        if (!payload || typeof payload !== 'object') return false;
+
+        if (payload.type === 'mcc' && payload.completed === true) return true;
+        if (payload.completed === true) return true;
+
+        const nestedAnswer = payload.answer;
+        if (nestedAnswer && typeof nestedAnswer === 'object') {
+          if (nestedAnswer.type === 'mcc' && nestedAnswer.completed === true) return true;
+          if (nestedAnswer.completed === true) return true;
+        }
+
+        return false;
+      }
+
+      function buildProgressLabel(evalData, position) {
+        const preferred = (evalData.title || evalData.prompt || `${evalData.type} ${position + 1}`)
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        if (preferred.length <= 64) return preferred;
+        return `${preferred.slice(0, 61)}...`;
+      }
+
+      function registerProgress(evalData, position, isComplete = false) {
+        progressByEvalId.set(evalData.id, {
+          label: buildProgressLabel(evalData, position),
+          complete: Boolean(isComplete),
+        });
+        renderPageProgress();
+      }
+
+      function setProgressCompletion(evalId, isComplete) {
+        const existing = progressByEvalId.get(evalId);
+        if (!existing) return;
+        existing.complete = Boolean(isComplete);
+        progressByEvalId.set(evalId, existing);
+        renderPageProgress();
+      }
+
+      function renderPageProgress() {
+        const container = document.getElementById('page-progress');
+        const list = document.getElementById('page-progress-list');
+        if (!container || !list) return;
+
+        const entries = Array.from(progressByEvalId.entries());
+        if (entries.length === 0) {
+          container.hidden = true;
+          return;
+        }
+
+        container.hidden = false;
+        list.innerHTML = '';
+
+        entries.forEach(([evalId, item]) => {
+          const li = document.createElement('li');
+          li.className = 'progress-item';
+          if (item.complete) li.classList.add('is-complete');
+          li.dataset.evalId = evalId;
+
+          const dot = document.createElement('span');
+          dot.className = 'progress-dot';
+          dot.textContent = item.complete ? '✓' : '•';
+
+          const label = document.createElement('span');
+          label.className = 'progress-label';
+          label.textContent = item.label;
+
+          li.appendChild(dot);
+          li.appendChild(label);
+          list.appendChild(li);
+        });
+      }
+
+      function getPageContext() {
+        const pathParts = window.location.pathname.split('/').filter(Boolean);
+        return {
+          courseId: pathParts[1] || '',
+          pageSlug: pathParts.slice(1).join('/'),
+        };
+      }
+
+      async function saveSubmission({ evalId, answer, isCorrect }) {
+        try {
+          const { courseId, pageSlug } = getPageContext();
+          const response = await fetch('/api/eval/submit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              evalId,
+              answer,
+              isCorrect,
+              courseId,
+              pageSlug,
+            }),
+          });
+
+          if (!response.ok) return false;
+          await loadUserSubmissions();
+
+          if (hasEvalBlocks && Object.keys(userSubmissions).length > 0 && !document.getElementById('clear-answers-btn')) {
+            addClearAnswersButton();
+          }
+
+          return true;
+        } catch (error) {
+          console.error('Error saving submission:', error);
+          return false;
+        }
+      }
+
+      function renderMCQ(wrapper, data, position) {
+        const previousSubmission = getSubmission(data.id);
+        const previousAnswer = getPreviousMcqAnswer(previousSubmission);
+        const wasCorrect = isSubmissionCorrect(previousSubmission);
+
+        registerProgress(data, position, wasCorrect);
+
         const container = document.createElement('div');
         container.className = 'eval-block';
         container.dataset.evalId = data.id;
-        
-        // Check if there's a previous submission
-        const previousSubmission = userSubmissions[data.id];
-        
-        // Prompt
+        container.id = `eval-${data.id}`;
+
         const prompt = document.createElement('h4');
         prompt.className = 'eval-prompt';
         prompt.textContent = data.prompt;
         container.appendChild(prompt);
-        
-        // Form
+
         const form = document.createElement('form');
         form.className = 'mcq-form';
-        
-        // Options - parse correctly
+
         data.options.forEach((option, index) => {
+          const optionText = typeof option === 'string'
+            ? option.replace(/^\[(x|X|\s)\]\s*/, '')
+            : option.text;
+          const optionCorrect = typeof option === 'string'
+            ? /^\[(x|X)\]/.test(option.trim())
+            : Boolean(option.isCorrect);
+
           const label = document.createElement('label');
           label.className = 'mcq-option';
-          
+
           const input = document.createElement('input');
           input.type = 'radio';
           input.name = data.id;
-          input.value = index.toString();
-          
-          // Check if option starts with [x] or [ ]
-          const isCorrect = option.includes('[x]');
-          input.dataset.correct = isCorrect ? 'true' : 'false';
-          
-          // Restore previous answer
-          if (previousSubmission && previousSubmission.answer) {
-            const prevAnswer = typeof previousSubmission.answer === 'object' ? previousSubmission.answer.answer : previousSubmission.answer;
-            if (prevAnswer == index) {
-              input.checked = true;
-            }
+          input.value = String(index);
+          input.dataset.correct = optionCorrect ? 'true' : 'false';
+
+          if (String(previousAnswer) === String(index)) {
+            input.checked = true;
           }
-          
-          // Remove the checkbox markers from text
-          const text = option.replace(/\[(x| )\]\s*/, '');
+
           const span = document.createElement('span');
-          span.textContent = text;
-          
+          span.textContent = optionText;
+
           label.appendChild(input);
           label.appendChild(span);
           form.appendChild(label);
         });
-        
-        // Submit button
-        const button = document.createElement('button');
-        button.type = 'submit';
-        button.className = 'eval-submit';
-        button.textContent = 'Enviar Respuesta';
-        form.appendChild(button);
-        
+
+        const submitButton = document.createElement('button');
+        submitButton.type = 'submit';
+        submitButton.className = 'eval-submit';
+        submitButton.textContent = 'Enviar respuesta';
+        form.appendChild(submitButton);
         container.appendChild(form);
-        
-        // Feedback area
+
         const feedback = document.createElement('div');
         feedback.className = 'eval-feedback';
         feedback.style.display = 'none';
-        
+
         const message = document.createElement('p');
         message.className = 'feedback-message';
         feedback.appendChild(message);
-        
+
         if (data.explanation) {
           const explanation = document.createElement('p');
           explanation.className = 'feedback-explanation';
           explanation.textContent = data.explanation;
           feedback.appendChild(explanation);
         }
-        
+
         container.appendChild(feedback);
-        
-        // Show previous feedback if exists
-        if (previousSubmission && previousSubmission.answer) {
-          const wasCorrect = typeof previousSubmission.answer === 'object' ? previousSubmission.answer.isCorrect : false;
+
+        if (previousSubmission) {
           message.textContent = wasCorrect ? '✅ ¡Correcto!' : '❌ Incorrecto, intenta de nuevo';
           message.className = `feedback-message ${wasCorrect ? 'correct' : 'incorrect'}`;
           feedback.style.display = 'block';
-          
+
           if (wasCorrect) {
-            form.querySelectorAll('input').forEach(input => input.disabled = true);
-            button.disabled = true;
+            form.querySelectorAll('input').forEach((input) => {
+              input.disabled = true;
+            });
+            submitButton.disabled = true;
           }
         }
-        
-        // Handle submission
-        form.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          
+
+        form.addEventListener('submit', async (event) => {
+          event.preventDefault();
+
           const selected = form.querySelector('input:checked');
           if (!selected) {
             alert('Por favor selecciona una opción');
             return;
           }
-          
+
           const isCorrect = selected.dataset.correct === 'true';
-          
-          // Show feedback
           message.textContent = isCorrect ? '✅ ¡Correcto!' : '❌ Incorrecto, intenta de nuevo';
           message.className = `feedback-message ${isCorrect ? 'correct' : 'incorrect'}`;
           feedback.style.display = 'block';
-          
-          // Save to database
-          try {
-            // Extract courseId and slug from current URL
-            const pathParts = window.location.pathname.split('/').filter(Boolean);
-            const courseId = pathParts[1]; // /cursos/[courseId]/...
-            const pageSlug = pathParts.slice(1).join('/'); // courseId/path/to/page
-            
-            const response = await fetch('/api/eval/submit', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                evalId: data.id,
-                answer: selected.value,
-                isCorrect,
-                courseId: courseId,
-                pageSlug: pageSlug
-              })
-            });
-            
-            if (response.ok) {
-              // Reload submissions to update state
-              await loadUserSubmissions();
-              
-              // Show clear button if not already shown
-              if (hasEvalBlocks && Object.keys(userSubmissions).length > 0 && !document.getElementById('clear-answers-btn')) {
-                addClearAnswersButton();
-              }
-            }
-          } catch (error) {
-            console.error('Error saving submission:', error);
-          }
-          
-          // Disable form after correct answer
+
+          await saveSubmission({
+            evalId: data.id,
+            answer: selected.value,
+            isCorrect,
+          });
+
+          setProgressCompletion(data.id, isCorrect);
+
           if (isCorrect) {
-            form.querySelectorAll('input').forEach(input => input.disabled = true);
-            button.disabled = true;
+            form.querySelectorAll('input').forEach((input) => {
+              input.disabled = true;
+            });
+            submitButton.disabled = true;
           }
         });
-        
+
         wrapper.appendChild(container);
       }
 
+      function renderMCC(wrapper, data, position) {
+        const previousSubmission = getSubmission(data.id);
+        const isCompleted = isCompletionSubmission(previousSubmission);
+
+        registerProgress(data, position, isCompleted);
+
+        const container = document.createElement('div');
+        container.className = 'eval-block mcc-block';
+        container.dataset.evalId = data.id;
+        container.id = `eval-${data.id}`;
+
+        const prompt = document.createElement('h4');
+        prompt.className = 'eval-prompt';
+        prompt.textContent = data.prompt || 'Marca esta sección como completada.';
+        container.appendChild(prompt);
+
+        if (data.summary) {
+          const summary = document.createElement('p');
+          summary.className = 'mcc-summary';
+          summary.textContent = data.summary;
+          container.appendChild(summary);
+        }
+
+        if (Array.isArray(data.objectives) && data.objectives.length > 0) {
+          const goalsLabel = document.createElement('p');
+          goalsLabel.className = 'mcc-objectives-label';
+          goalsLabel.textContent = 'Al finalizar esta sección serás capaz de:';
+          container.appendChild(goalsLabel);
+
+          const list = document.createElement('ul');
+          list.className = 'mcc-objectives';
+          data.objectives.forEach((objective) => {
+            const li = document.createElement('li');
+            li.textContent = objective;
+            list.appendChild(li);
+          });
+          container.appendChild(list);
+        }
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'eval-submit mcc-submit';
+        button.textContent = isCompleted ? (data.successLabel || 'Sección completada') : (data.buttonLabel || 'Marcar como completado');
+        button.disabled = isCompleted;
+        container.appendChild(button);
+
+        const feedback = document.createElement('div');
+        feedback.className = 'eval-feedback';
+        feedback.style.display = isCompleted ? 'block' : 'none';
+        const message = document.createElement('p');
+        message.className = 'feedback-message correct';
+        message.textContent = data.successLabel || 'Sección completada';
+        feedback.appendChild(message);
+        container.appendChild(feedback);
+
+        button.addEventListener('click', async () => {
+          const saved = await saveSubmission({
+            evalId: data.id,
+            answer: {
+              type: 'mcc',
+              completed: true,
+              completedAt: new Date().toISOString(),
+            },
+            isCorrect: true,
+          });
+
+          if (!saved) {
+            alert('No se pudo guardar el estado de completado. Intenta nuevamente.');
+            return;
+          }
+
+          button.disabled = true;
+          button.textContent = data.successLabel || 'Sección completada';
+          message.textContent = data.successLabel || 'Sección completada';
+          feedback.style.display = 'block';
+          setProgressCompletion(data.id, true);
+        });
+
+        wrapper.appendChild(container);
+      }
+
+      function renderUnsupported(wrapper, data, position) {
+        registerProgress(data, position, false);
+
+        const container = document.createElement('div');
+        container.className = 'eval-block';
+        container.dataset.evalId = data.id;
+        container.id = `eval-${data.id}`;
+
+        const prompt = document.createElement('h4');
+        prompt.className = 'eval-prompt';
+        prompt.textContent = data.prompt || 'Actividad';
+        container.appendChild(prompt);
+
+        const notice = document.createElement('p');
+        notice.className = 'feedback-explanation';
+        notice.textContent = `Tipo de evaluación no soportado todavía: ${data.type}`;
+        container.appendChild(notice);
+
+        wrapper.appendChild(container);
+      }
+
+      document.addEventListener('DOMContentLoaded', async () => {
+        await loadUserSubmissions();
+
+        const evalWrappers = document.querySelectorAll('.eval-block-wrapper');
+        hasEvalBlocks = evalWrappers.length > 0;
+
+        evalWrappers.forEach((wrapper, index) => {
+          const evalData = parseEvalData(wrapper);
+          if (!evalData || !evalData.id || !evalData.type) return;
+
+          if (evalData.type === 'mcq') {
+            renderMCQ(wrapper, evalData, index);
+            return;
+          }
+
+          if (evalData.type === 'mcc') {
+            renderMCC(wrapper, evalData, index);
+            return;
+          }
+
+          renderUnsupported(wrapper, evalData, index);
+        });
+
+        if (hasEvalBlocks && Object.keys(userSubmissions).length > 0) {
+          addClearAnswersButton();
+        }
+      });
+      
       function addClearAnswersButton() {
-        // Check if button already exists
         if (document.getElementById('clear-answers-btn')) return;
         
         const contentArea = document.querySelector('.content-area');
@@ -505,7 +763,6 @@ const isAssignment = currentEntry.data.type === 'assignment';
         
         buttonContainer.appendChild(button);
         
-        // Insert before course navigation
         const courseNav = contentArea.querySelector('.course-nav');
         if (courseNav) {
           contentArea.insertBefore(buttonContainer, courseNav);
@@ -519,25 +776,22 @@ const isAssignment = currentEntry.data.type === 'assignment';
           return;
         }
         
-        // Get all eval IDs on this page
-        const evalIds = Object.keys(userSubmissions).filter(id => {
+        const evalIds = Object.keys(userSubmissions).filter((id) => {
           return document.querySelector(`[data-eval-id="${id}"]`) !== null;
         });
         
         if (evalIds.length === 0) return;
         
         try {
-          // Delete submissions for this page
           for (const evalId of evalIds) {
             const submission = userSubmissions[evalId];
-            if (submission && submission.id) {
+            if (submission?.id) {
               await fetch(`/api/submissions/${submission.id}`, {
                 method: 'DELETE',
               });
             }
           }
           
-          // Reload page to refresh all states
           window.location.reload();
         } catch (error) {
           console.error('Error clearing answers:', error);
@@ -625,6 +879,28 @@ const isAssignment = currentEntry.data.type === 'assignment';
         font-style: italic;
         color: var(--c-fg-dim);
         line-height: 1.6;
+      }
+      .mcc-block {
+        border-style: dashed;
+      }
+      .mcc-summary {
+        margin: 0 0 1rem 0;
+        color: var(--c-fg-dim);
+        line-height: 1.5;
+      }
+      .mcc-objectives-label {
+        margin: 0.2rem 0 0.6rem;
+        font-weight: 600;
+      }
+      .mcc-objectives {
+        margin: 0 0 0.6rem 1.2rem;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+      }
+      .mcc-submit {
+        min-width: 16rem;
       }
     </style>
   </body>
