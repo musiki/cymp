@@ -10,6 +10,7 @@ dist/
 # Environment variables
 .env
 .env*.local
+.vercel
 
 # Editor directories and files
 .history/
