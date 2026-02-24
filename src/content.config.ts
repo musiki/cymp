@@ -29,13 +29,18 @@ const cursos = defineCollection({
 	// Load all course content
 	loader: glob({ base: './src/content/cursos', pattern: '**/*.{md,mdx}' }),
 	schema: z.object({
-		// Course index fields
-		type: z.enum(['course', 'lesson', 'assignment']).optional(),
-		title: z.string(),
-		description: z.string().optional(),
-		instructor: z.string().optional(),
-		level: z.enum(['beginner', 'intermediate', 'advanced']).optional(),
-		duration: z.string().optional(),
+			// Course index fields
+			type: z.enum(['course', 'lesson', 'assignment']).optional(),
+			title: z.string(),
+			description: z.string().optional(),
+			// Allow one or many instructors while keeping backward compatibility.
+			instructor: z.union([z.string(), z.array(z.string())]).optional(),
+			instructors: z.union([z.string(), z.array(z.string())]).optional(),
+			// Academic year in bachelor context (e.g. "1er año", 2).
+			year: z.union([z.number(), z.string()]).optional(),
+			// Legacy compatibility while frontmatter migrates.
+			level: z.union([z.enum(['beginner', 'intermediate', 'advanced']), z.string()]).optional(),
+			duration: z.string().optional(),
 		public: z.boolean().optional().default(false),
 		coverImage: z.string().optional(),
 		tags: z.array(z.string()).optional(),

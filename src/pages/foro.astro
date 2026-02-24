@@ -1,0 +1,588 @@
+---
+export const prerender = false;
+
+import { getCollection } from 'astro:content';
+import BaseHead from '../components/BaseHead.astro';
+import Footer from '../components/Footer.astro';
+import Header from '../components/Header.astro';
+import {
+  createSupabaseServerClient,
+  ensureDbUserFromSession,
+  getForumCourseAccess,
+} from '../lib/forum-server';
+
+type CourseMeta = {
+  courseId: string;
+  title: string;
+};
+
+type ScopeStats = {
+  messageCount: number;
+  threadCount: number;
+  lastActivityAt: string | null;
+};
+
+type SidebarItem = {
+  id: string;
+  title: string;
+  href: string;
+  scopeKey: string;
+  totalMessages: number;
+  lastActivityAt: string | null;
+};
+
+function normalizeBoardSlug(value: unknown): string {
+  return String(value || '').trim().toLowerCase();
+}
+
+function pickNewestTimestamp(current: string | null, candidate: string | null): string | null {
+  if (!current) return candidate;
+  if (!candidate) return current;
+  const currentTs = new Date(current).getTime();
+  const candidateTs = new Date(candidate).getTime();
+  if (Number.isNaN(currentTs)) return candidate;
+  if (Number.isNaN(candidateTs)) return current;
+  return candidateTs > currentTs ? candidate : current;
+}
+
+function encodeSlugPath(value: unknown): string {
+  return String(value || '')
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+}
+
+const session = (Astro.locals as any).session;
+if (!session?.user?.email) {
+  return Astro.redirect('/login?redirect=/foro');
+}
+
+const allCourseEntries = await getCollection('cursos');
+const courses = allCourseEntries
+  .filter((entry) => entry.id.endsWith('/_index') || entry.id.endsWith('_index'))
+  .map((entry) => ({
+    courseId: entry.id.replace('/_index', ''),
+    title: String(entry.data?.title || entry.id.replace('/_index', '')),
+  })) as CourseMeta[];
+
+const supabase = createSupabaseServerClient({ requireServiceRole: true });
+const dbUser = await ensureDbUserFromSession(supabase, session);
+if (!dbUser) {
+  return Astro.redirect('/login?redirect=/foro');
+}
+
+const accessibleCourseChecks = await Promise.all(
+  courses.map(async (course) => {
+    try {
+      const access = await getForumCourseAccess(supabase, dbUser, course.courseId);
+      if (!access.canRead) return null;
+      return course;
+    } catch {
+      return null;
+    }
+  }),
+);
+
+const accessibleCourses = accessibleCourseChecks.filter(Boolean) as CourseMeta[];
+const requestUrl = new URL(Astro.request.url);
+const courseParam = String(requestUrl.searchParams.get('course') || '').trim();
+const activeCourse =
+  accessibleCourses.find((course) => course.courseId === courseParam) ||
+  accessibleCourses[0] ||
+  null;
+
+let mainForumItems: SidebarItem[] = [];
+let classForumItems: SidebarItem[] = [];
+let forumListError = '';
+
+if (activeCourse) {
+  const courseId = activeCourse.courseId;
+  const lessonEntries = allCourseEntries
+    .filter(
+      (entry) =>
+        entry.id.startsWith(`${courseId}/`) &&
+        !entry.id.endsWith('/_index') &&
+        !entry.id.endsWith('_index'),
+    )
+    .sort((a, b) => (Number(a.data?.order || 0) - Number(b.data?.order || 0)));
+
+  const lessons = lessonEntries.map((entry) => ({
+    lessonSlug: entry.id.replace(`${courseId}/`, ''),
+    title: String(entry.data?.title || entry.id.replace(`${courseId}/`, '')),
+  }));
+
+  let boardsRaw: any[] = [];
+  let threadsRaw: any[] = [];
+  let postsRaw: any[] = [];
+
+  try {
+    const { data: boardData, error: boardError } = await supabase
+      .from('ForumBoard')
+      .select('slug, title, isDefault, isArchived')
+      .eq('courseId', courseId)
+      .eq('isArchived', false)
+      .order('isDefault', { ascending: false })
+      .order('title', { ascending: true });
+
+    if (boardError) throw boardError;
+    boardsRaw = Array.isArray(boardData) ? boardData : [];
+
+    const { data: threadData, error: threadError } = await supabase
+      .from('ForumThread')
+      .select('id, lessonSlug, createdAt, updatedAt')
+      .eq('courseId', courseId)
+      .limit(2000);
+
+    if (threadError) throw threadError;
+    threadsRaw = Array.isArray(threadData) ? threadData : [];
+
+    const threadIds = threadsRaw
+      .map((thread) => String(thread?.id || '').trim())
+      .filter(Boolean);
+
+    if (threadIds.length > 0) {
+      const { data: postData, error: postError } = await supabase
+        .from('ForumPost')
+        .select('threadId, createdAt')
+        .in('threadId', threadIds)
+        .neq('status', 'deleted');
+
+      if (postError) throw postError;
+      postsRaw = Array.isArray(postData) ? postData : [];
+    }
+  } catch (error: any) {
+    console.error('Forum sidebar load error:', error?.message || error);
+    forumListError = 'No se pudo cargar el estado del foro.';
+  }
+
+  const threadStatsById = new Map<string, { messageCount: number; lastActivityAt: string | null }>();
+  for (const thread of threadsRaw) {
+    const threadId = String(thread?.id || '').trim();
+    if (!threadId) continue;
+    threadStatsById.set(threadId, {
+      messageCount: 0,
+      lastActivityAt: pickNewestTimestamp(
+        String(thread?.createdAt || '') || null,
+        String(thread?.updatedAt || '') || null,
+      ),
+    });
+  }
+
+  for (const post of postsRaw) {
+    const threadId = String(post?.threadId || '').trim();
+    if (!threadId || !threadStatsById.has(threadId)) continue;
+    const current = threadStatsById.get(threadId);
+    if (!current) continue;
+    current.messageCount += 1;
+    current.lastActivityAt = pickNewestTimestamp(
+      current.lastActivityAt,
+      String(post?.createdAt || '') || null,
+    );
+    threadStatsById.set(threadId, current);
+  }
+
+  const scopeStats = new Map<string, ScopeStats>();
+  for (const thread of threadsRaw) {
+    const threadId = String(thread?.id || '').trim();
+    const scopeKey = String(thread?.lessonSlug || '').trim();
+    if (!threadId || !scopeKey) continue;
+
+    const threadStats = threadStatsById.get(threadId) || {
+      messageCount: 0,
+      lastActivityAt: pickNewestTimestamp(
+        String(thread?.createdAt || '') || null,
+        String(thread?.updatedAt || '') || null,
+      ),
+    };
+
+    const currentScope = scopeStats.get(scopeKey) || {
+      messageCount: 0,
+      threadCount: 0,
+      lastActivityAt: null,
+    };
+    currentScope.messageCount += threadStats.messageCount;
+    currentScope.threadCount += 1;
+    currentScope.lastActivityAt = pickNewestTimestamp(
+      currentScope.lastActivityAt,
+      threadStats.lastActivityAt,
+    );
+    scopeStats.set(scopeKey, currentScope);
+  }
+
+  const boardBySlug = new Map<string, any>();
+  for (const board of boardsRaw) {
+    const slug = normalizeBoardSlug(board?.slug);
+    if (!slug) continue;
+    boardBySlug.set(slug, {
+      slug,
+      title: String(board?.title || slug),
+      isDefault: Boolean(board?.isDefault),
+    });
+  }
+
+  if (!boardBySlug.has('general')) {
+    boardBySlug.set('general', {
+      slug: 'general',
+      title: 'General',
+      isDefault: true,
+    });
+  }
+
+  const boards = Array.from(boardBySlug.values()).sort((a, b) => {
+    if (a.slug === 'general') return -1;
+    if (b.slug === 'general') return 1;
+    return a.title.localeCompare(b.title, 'es');
+  });
+
+  mainForumItems = boards.map((board) => {
+    const scope = `@board:${normalizeBoardSlug(board.slug)}`;
+    const stats = scopeStats.get(scope) || {
+      messageCount: 0,
+      threadCount: 0,
+      lastActivityAt: null,
+    };
+    return {
+      id: `board:${board.slug}`,
+      title: board.title,
+      href: `/cursos/${encodeSlugPath(courseId)}/foro?board=${encodeURIComponent(board.slug)}`,
+      scopeKey: `board:${courseId}:${normalizeBoardSlug(board.slug)}`,
+      totalMessages: stats.messageCount,
+      lastActivityAt: stats.lastActivityAt,
+    };
+  });
+
+  classForumItems = lessons.map((lesson) => {
+    const stats = scopeStats.get(lesson.lessonSlug) || {
+      messageCount: 0,
+      threadCount: 0,
+      lastActivityAt: null,
+    };
+    return {
+      id: `lesson:${lesson.lessonSlug}`,
+      title: lesson.title,
+      href: `/cursos/${encodeSlugPath(courseId)}/${encodeSlugPath(lesson.lessonSlug)}`,
+      scopeKey: `lesson:${courseId}:${lesson.lessonSlug}`,
+      totalMessages: stats.messageCount,
+      lastActivityAt: stats.lastActivityAt,
+    };
+  });
+}
+---
+
+<!doctype html>
+<html lang="es">
+  <head>
+    <BaseHead title="Foro" description="Navegador global de foros por curso y clase" />
+    <style>
+      .forum-shell {
+        max-width: 1300px;
+        margin: 0 auto;
+        padding: 1.25rem;
+        display: grid;
+        gap: 1.25rem;
+        grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+      }
+
+      .forum-sidebar {
+        border: 1px solid var(--c-border);
+        border-radius: 14px;
+        padding: 1rem;
+        background: var(--c-bg);
+        position: sticky;
+        top: 1.25rem;
+        height: fit-content;
+      }
+
+      .forum-sidebar-top {
+        margin-bottom: 1rem;
+      }
+
+      .forum-sidebar-top label {
+        display: block;
+        margin-bottom: 0.35rem;
+        font-size: 0.75rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--c-fg-dim);
+      }
+
+      .forum-course-select {
+        width: 100%;
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        background: var(--c-bg);
+        color: var(--c-fg);
+        padding: 0.5rem 0.6rem;
+      }
+
+      .forum-sidebar-title {
+        margin: 0.9rem 0 0.45rem 0;
+        color: var(--c-fg-dim);
+        font-size: 0.76rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        font-variant: all-small-caps;
+      }
+
+      .forum-divider {
+        border: 0;
+        border-top: 1px solid var(--c-border);
+        margin: 0.9rem 0;
+      }
+
+      .forum-nav-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 0.3rem;
+      }
+
+      .forum-nav-link {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.65rem;
+        border-radius: 10px;
+        border: 1px solid color-mix(in srgb, var(--c-border) 78%, transparent);
+        background: color-mix(in srgb, var(--c-bg) 86%, var(--c-bg-mute) 14%);
+        padding: 0.48rem 0.58rem;
+        text-decoration: none;
+        color: var(--c-fg);
+      }
+
+      .forum-nav-link:hover {
+        text-decoration: none;
+        border-color: color-mix(in srgb, var(--accent) 35%, var(--c-border) 65%);
+      }
+
+      .forum-nav-label {
+        min-width: 0;
+        font-size: 0.87rem;
+        line-height: 1.3;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .forum-nav-counts {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        flex-shrink: 0;
+      }
+
+      .forum-count-total,
+      .forum-count-unread {
+        min-width: 2ch;
+        text-align: right;
+        font-size: 0.76rem;
+        font-weight: 700;
+      }
+
+      .forum-count-total {
+        color: #1f8f4d;
+      }
+
+      .forum-count-unread {
+        color: #c53631;
+      }
+
+      .forum-count-unread.is-zero {
+        opacity: 0.4;
+      }
+
+      .forum-main {
+        border: 1px solid var(--c-border);
+        border-radius: 14px;
+        padding: 1rem 1.1rem;
+        background: var(--c-bg);
+      }
+
+      .forum-main h1 {
+        margin: 0 0 0.3rem 0;
+        font-size: 1.35rem;
+      }
+
+      .forum-main p {
+        margin: 0;
+        color: var(--c-fg-dim);
+      }
+
+      .forum-panel-help {
+        margin-top: 0.9rem;
+        border: 1px dashed var(--c-border);
+        border-radius: 10px;
+        padding: 0.75rem 0.8rem;
+        color: var(--c-fg-dim);
+        font-size: 0.88rem;
+        line-height: 1.45;
+      }
+
+      .forum-error {
+        margin-top: 0.8rem;
+        border-radius: 8px;
+        border: 1px solid #e0a8a5;
+        background: #fbe8e7;
+        color: #9a2c29;
+        padding: 0.55rem 0.65rem;
+        font-size: 0.84rem;
+      }
+
+      @media (max-width: 980px) {
+        .forum-shell {
+          grid-template-columns: 1fr;
+        }
+
+        .forum-sidebar {
+          position: static;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <Header />
+    <main class="forum-shell">
+      <aside class="forum-sidebar">
+        <div class="forum-sidebar-top">
+          <form method="get">
+            <label for="forum-course-select">Curso</label>
+            <select
+              id="forum-course-select"
+              name="course"
+              class="forum-course-select"
+              onchange="this.form.requestSubmit()"
+              disabled={accessibleCourses.length === 0}
+            >
+              {accessibleCourses.length === 0 ? (
+                <option value="">Sin cursos con acceso</option>
+              ) : (
+                accessibleCourses.map((course) => (
+                  <option value={course.courseId} selected={activeCourse?.courseId === course.courseId}>
+                    {course.title}
+                  </option>
+                ))
+              )}
+            </select>
+          </form>
+        </div>
+
+        <h3 class="forum-sidebar-title">MAIN</h3>
+        <ul class="forum-nav-list">
+          {mainForumItems.length === 0 ? (
+            <li class="forum-nav-link">
+              <span class="forum-nav-label">No hay foros principales</span>
+            </li>
+          ) : (
+            mainForumItems.map((item) => (
+              <li>
+                <a
+                  href={item.href}
+                  class="forum-nav-link"
+                  data-forum-scope-key={item.scopeKey}
+                  data-forum-total={item.totalMessages}
+                  data-forum-last-activity={item.lastActivityAt || ''}
+                >
+                  <span class="forum-nav-label">{item.title}</span>
+                  <span class="forum-nav-counts">
+                    <span class="forum-count-total" title="mensajes totales">{item.totalMessages}</span>
+                    <span class="forum-count-unread" title="mensajes no leídos">0</span>
+                  </span>
+                </a>
+              </li>
+            ))
+          )}
+        </ul>
+
+        <hr class="forum-divider" />
+
+        <h3 class="forum-sidebar-title">ON CLASSES</h3>
+        <ul class="forum-nav-list">
+          {classForumItems.length === 0 ? (
+            <li class="forum-nav-link">
+              <span class="forum-nav-label">No hay foros de clase</span>
+            </li>
+          ) : (
+            classForumItems.map((item) => (
+              <li>
+                <a
+                  href={item.href}
+                  class="forum-nav-link"
+                  data-forum-scope-key={item.scopeKey}
+                  data-forum-total={item.totalMessages}
+                  data-forum-last-activity={item.lastActivityAt || ''}
+                >
+                  <span class="forum-nav-label">{item.title}</span>
+                  <span class="forum-nav-counts">
+                    <span class="forum-count-total" title="mensajes totales">{item.totalMessages}</span>
+                    <span class="forum-count-unread" title="mensajes no leídos">0</span>
+                  </span>
+                </a>
+              </li>
+            ))
+          )}
+        </ul>
+      </aside>
+
+      <section class="forum-main">
+        <h1>Foro</h1>
+        {activeCourse ? (
+          <p>Navegador de foros para <strong>{activeCourse.title}</strong>.</p>
+        ) : (
+          <p>No tienes cursos con acceso a foro en este momento.</p>
+        )}
+        <div class="forum-panel-help">
+          Verde: total de mensajes por foro. Rojo: mensajes no leídos desde tu última lectura.
+        </div>
+        {forumListError && <p class="forum-error">{forumListError}</p>}
+      </section>
+    </main>
+    <Footer />
+
+    <script is:inline>
+      const FORUM_READ_PREFIX = 'forum:read:';
+
+      function parseForumReadState(value) {
+        if (!value) return null;
+        try {
+          return JSON.parse(value);
+        } catch {
+          return null;
+        }
+      }
+
+      function computeUnreadCount(totalMessages, storedState) {
+        const total = Number(totalMessages);
+        if (!Number.isFinite(total) || total <= 0) return 0;
+
+        if (!storedState || typeof storedState !== 'object') {
+          return total;
+        }
+
+        const seen = Number(storedState.messageTotal);
+        if (!Number.isFinite(seen) || seen < 0) return total;
+        return Math.max(0, total - seen);
+      }
+
+      function refreshForumUnreadBadges() {
+        const links = document.querySelectorAll('[data-forum-scope-key]');
+        links.forEach((link) => {
+          const scopeKey = link.getAttribute('data-forum-scope-key') || '';
+          const total = Number(link.getAttribute('data-forum-total') || '0');
+          const unreadNode = link.querySelector('.forum-count-unread');
+          if (!scopeKey || !unreadNode) return;
+
+          const storedRaw = localStorage.getItem(FORUM_READ_PREFIX + scopeKey);
+          const storedState = parseForumReadState(storedRaw);
+          const unread = computeUnreadCount(total, storedState);
+
+          unreadNode.textContent = String(unread);
+          unreadNode.classList.toggle('is-zero', unread === 0);
+        });
+      }
+
+      document.addEventListener('DOMContentLoaded', refreshForumUnreadBadges);
+      window.addEventListener('storage', refreshForumUnreadBadges);
+    </script>
+  </body>
+</html>

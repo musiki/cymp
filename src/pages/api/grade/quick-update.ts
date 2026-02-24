@@ -26,36 +26,56 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   try {
     const body = await request.json();
-    const { submissionId, score } = body;
+    const { submissionId, score, feedback } = body;
     
-    if (!submissionId || score === undefined || score === null) {
+    if (!submissionId) {
       return new Response(JSON.stringify({ error: 'Missing required fields' }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
       });
     }
 
-    const numericScore = parseFloat(score);
-    
-    if (isNaN(numericScore) || numericScore < 0 || numericScore > 10) {
-      return new Response(JSON.stringify({ error: 'Invalid score (must be 0-10)' }), {
+    const hasScore = !(score === undefined || score === null || score === '');
+    const hasFeedback = typeof feedback === 'string';
+
+    if (!hasScore && !hasFeedback) {
+      return new Response(JSON.stringify({ error: 'Nothing to update' }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
       });
     }
 
-    // Update the submission
+    const updatePayload: Record<string, unknown> = {};
+    let numericScore: number | null = null;
+
+    if (hasScore) {
+      numericScore = parseFloat(score);
+      if (isNaN(numericScore) || numericScore < 0 || numericScore > 10) {
+        return new Response(JSON.stringify({ error: 'Invalid score (must be 0-10)' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      updatePayload.score = numericScore;
+      updatePayload.gradedAt = new Date();
+    }
+
+    if (hasFeedback) {
+      const normalizedFeedback = String(feedback).trim();
+      updatePayload.feedback = normalizedFeedback || null;
+    }
+
+    // Update submission fields in one call
     const { error } = await supabase.from('Submission')
-      .update({
-        score: numericScore,
-        gradedAt: new Date(),
-      }).eq('id', submissionId);
+      .update(updatePayload)
+      .eq('id', submissionId);
 
     if (error) throw error;
 
     return new Response(JSON.stringify({ 
       success: true,
-      score: numericScore 
+      score: numericScore,
+      feedback: hasFeedback ? (String(feedback).trim() || null) : undefined,
     }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },

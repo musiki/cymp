@@ -7,12 +7,24 @@ import Header from '../../components/Header.astro';
 import Footer from '../../components/Footer.astro';
 import { createClient } from '@supabase/supabase-js';
 
-const { slug } = Astro.params;
-if (!slug) return Astro.redirect('/cursos');
+const rawSlug = Astro.params.slug;
+if (!rawSlug) return Astro.redirect('/cursos');
+
+const slug = rawSlug
+  .split('/')
+  .map((segment) => {
+    try {
+      return decodeURIComponent(segment);
+    } catch {
+      return segment;
+    }
+  })
+  .join('/');
 
 // Parse the slug to get course and optional path
 const parts = slug.split('/');
 const courseSlug = parts[0];
+const isCourseForumPage = parts.length === 2 && parts[1] === 'foro';
 
 // Get the course index
 const courseIndex = await getEntry('cursos', `${courseSlug}/_index`);
@@ -41,6 +53,9 @@ const chapters = allLessons.reduce((acc, lesson) => {
 let currentEntry;
 if (parts.length === 1) {
   // Show course overview
+  currentEntry = courseIndex;
+} else if (isCourseForumPage) {
+  // Show course forum hub
   currentEntry = courseIndex;
 } else {
   // Show specific lesson
@@ -79,6 +94,9 @@ if (parts.length === 1) {
 
 const { Content } = await render(currentEntry);
 const isAssignment = currentEntry.data.type === 'assignment';
+const isLessonPage = parts.length > 1 && !isCourseForumPage;
+const lessonSlug = isLessonPage ? parts.slice(1).join('/') : '';
+const hasSessionUser = Boolean(session?.user?.email);
 ---
 
 <!doctype html>
@@ -92,10 +110,10 @@ const isAssignment = currentEntry.data.type === 'assignment';
       .course-container {
         display: grid;
         grid-template-columns: 280px 1fr;
-        gap: 2rem;
+        gap: 2.25rem;
         max-width: 1400px;
         margin: 0 auto;
-        padding: 2rem;
+        padding: clamp(1rem, 1.8vw, 2rem);
       }
       
       .sidebar {
@@ -174,6 +192,46 @@ const isAssignment = currentEntry.data.type === 'assignment';
         gap: 0.4rem;
       }
 
+      .progress-meter {
+        margin-bottom: 0.75rem;
+        padding: 0.55rem 0.6rem;
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        background: var(--c-bg-mute);
+      }
+
+      .progress-meter[hidden] {
+        display: none;
+      }
+
+      .progress-meter-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 0.5rem;
+        font-size: 0.78rem;
+        margin-bottom: 0.45rem;
+      }
+
+      .progress-meter-header strong {
+        font-size: 0.84rem;
+      }
+
+      .progress-track {
+        width: 100%;
+        height: 0.45rem;
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--c-border) 45%, transparent);
+        overflow: hidden;
+      }
+
+      .progress-fill {
+        width: 0%;
+        height: 100%;
+        background: linear-gradient(90deg, #14823a, #35b95f);
+        transition: width 220ms ease;
+      }
+
       .progress-item {
         display: flex;
         align-items: center;
@@ -209,8 +267,39 @@ const isAssignment = currentEntry.data.type === 'assignment';
       .content-area {
         border: 1px solid var(--c-border);
         border-radius: 8px;
-        padding: 2rem;
+        padding: clamp(1.15rem, 2.2vw, 2.5rem);
         background: var(--c-bg);
+      }
+
+      .content-area > :not(.course-nav) {
+        max-width: 76ch;
+        margin-left: auto;
+        margin-right: auto;
+      }
+
+      .content-area > :is(h1, h2, h3, h4) {
+        margin-top: calc(2.45rem + 1.2em);
+        margin-bottom: 0.9rem;
+        line-height: 1.24;
+      }
+
+      .content-area > :is(h5, h6) {
+        margin-top: 2.45rem;
+        margin-bottom: 0.9rem;
+        line-height: 1.24;
+      }
+
+      .content-area > :is(p, ul, ol, pre, blockquote, figure, table, .eval-block-wrapper) {
+        margin-top: 1.15rem;
+        margin-bottom: 1.15rem;
+      }
+
+      .content-area > p + p {
+        margin-top: 0.9rem;
+      }
+
+      .content-area > :first-child {
+        margin-top: 0 !important;
       }
       
       .assignment-badge {
@@ -226,7 +315,7 @@ const isAssignment = currentEntry.data.type === 'assignment';
       .course-nav {
         display: flex;
         justify-content: space-between;
-        margin-top: 2rem;
+        margin-top: 2.5rem;
         padding-top: 2rem;
         border-top: 1px solid var(--c-border);
       }
@@ -249,12 +338,491 @@ const isAssignment = currentEntry.data.type === 'assignment';
         cursor: not-allowed;
       }
 
+      .lesson-forum {
+        --forum-bg-main: color-mix(in srgb, var(--c-bg-mute) 84%, #f2f5f7 16%);
+        --forum-bg-panel: rgba(128, 128, 128, 0.109);
+        --forum-bg-subtle: color-mix(in srgb, var(--c-bg-mute) 70%, var(--c-bg) 30%);
+        --forum-text-primary: var(--c-fg);
+        --forum-text-secondary: var(--c-fg-dim);
+        --forum-border-soft: color-mix(in srgb, var(--c-border) 84%, transparent);
+        --forum-border-strong: color-mix(in srgb, var(--c-border) 92%, var(--c-fg-dim) 8%);
+        --forum-accent: var(--accent);
+        --forum-role-instructor: color-mix(in srgb, var(--accent) 78%, #2f5d8c 22%);
+        --forum-role-op: #2e8b57;
+        margin-top: 3rem;
+        max-width: none;
+        border: 1px solid var(--forum-border-soft);
+        border-radius: 12px;
+        background: var(--forum-bg-main);
+        padding: 1.15rem;
+      }
+
+      .content-area > .lesson-forum {
+        max-width: none;
+        margin-left: 0;
+        margin-right: 0;
+      }
+
+      .lesson-forum-header {
+        margin-bottom: 1rem;
+      }
+
+      .lesson-forum-title {
+        margin: 0 0 0.35rem 0;
+        font-size: 1.15rem;
+      }
+
+      .lesson-forum-subtitle {
+        margin: 0;
+        color: var(--forum-text-secondary);
+        font-size: 0.9rem;
+      }
+
+      .forum-board-toolbar {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.65rem;
+        margin-bottom: 0.8rem;
+      }
+
+      .forum-board-toolbar label {
+        font-size: 0.82rem;
+        color: var(--forum-text-secondary);
+      }
+
+      .forum-select {
+        min-width: min(360px, 100%);
+        border: 1px solid var(--forum-border-strong);
+        background: var(--forum-bg-panel);
+        color: var(--forum-text-primary);
+        border-radius: 8px;
+        padding: 0.5rem 0.6rem;
+        font-size: 0.87rem;
+      }
+
+      .forum-grid {
+        display: grid;
+        grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+        gap: 1rem;
+      }
+
+      .forum-panel {
+        border: 1px solid var(--forum-border-soft);
+        border-radius: 10px;
+        background: var(--forum-bg-panel);
+        padding: 0.9rem;
+      }
+
+      .forum-panel-title {
+        margin: 0 0 0.7rem 0;
+        font-size: 0.98rem;
+      }
+
+      .forum-form {
+        display: grid;
+        gap: 0.6rem;
+        margin-bottom: 0.85rem;
+      }
+
+      .forum-form[hidden] {
+        display: none;
+      }
+
+      .forum-field,
+      .forum-textarea {
+        width: 100%;
+        border: 1px solid var(--forum-border-strong);
+        background: var(--forum-bg-panel);
+        color: var(--forum-text-primary);
+        border-radius: 8px;
+        padding: 0.58rem 0.7rem;
+        font-size: 0.91rem;
+      }
+
+      .forum-field:focus-visible,
+      .forum-textarea:focus-visible,
+      .forum-select:focus-visible {
+        outline: 2px solid color-mix(in srgb, var(--forum-accent) 34%, transparent);
+        outline-offset: 1px;
+      }
+
+      .forum-textarea {
+        resize: vertical;
+        min-height: 84px;
+        line-height: 1.6;
+      }
+
+      .forum-form-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+      }
+
+      .forum-secondary-btn,
+      .forum-form .nav-button {
+        border-radius: 7px;
+        padding: 0.46rem 0.74rem;
+        font-size: 0.81rem;
+      }
+
+      .forum-secondary-btn {
+        border: 1px solid var(--forum-border-strong);
+        background: var(--forum-bg-panel);
+        color: var(--forum-text-primary);
+        cursor: pointer;
+      }
+
+      .forum-secondary-btn[hidden] {
+        display: none;
+      }
+
+      .forum-thread-list,
+      .forum-post-list {
+        display: grid;
+        gap: 0.58rem;
+        max-height: 580px;
+        overflow: auto;
+        overflow-x: hidden;
+      }
+
+      .forum-thread-item {
+        width: 100%;
+        text-align: left;
+        border: 1px solid var(--forum-border-soft);
+        border-radius: 8px;
+        background: var(--forum-bg-panel);
+        color: var(--forum-text-primary);
+        padding: 0.62rem 0.74rem;
+        cursor: pointer;
+        transition: background 0.15s ease, border-color 0.15s ease;
+      }
+
+      .forum-thread-item:hover {
+        background: var(--forum-bg-subtle);
+        border-color: var(--forum-border-strong);
+      }
+
+      .forum-thread-item.active {
+        border-color: color-mix(in srgb, var(--forum-accent) 42%, var(--forum-border-strong));
+        background: color-mix(in srgb, var(--forum-accent) 8%, var(--forum-bg-panel));
+      }
+
+      .forum-thread-top {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.6rem;
+      }
+
+      .forum-thread-title {
+        display: block;
+        font-weight: 600;
+        font-size: 0.9rem;
+        line-height: 1.35;
+      }
+
+      .forum-thread-activity {
+        font-size: 0.73rem;
+        color: var(--forum-text-secondary);
+        white-space: nowrap;
+      }
+
+      .forum-thread-meta {
+        margin-top: 0.35rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 0.7rem;
+        font-size: 0.76rem;
+        color: var(--forum-text-secondary);
+      }
+
+      .forum-thread-author,
+      .forum-thread-stats {
+        white-space: nowrap;
+      }
+
+      .forum-post {
+        border: 1px solid var(--forum-border-soft);
+        background: var(--forum-bg-panel);
+        border-radius: 9px;
+        display: grid;
+        grid-template-columns: 128px minmax(0, 1fr);
+        gap: 0.95rem;
+        padding: 0.78rem;
+        --forum-post-body-size: 0.95rem;
+        --forum-post-meta-size: 0.66rem;
+      }
+
+      .forum-post-op {
+        border-left: 4px solid var(--forum-role-op);
+        padding-left: 0.58rem;
+      }
+
+      .forum-post-reply {
+        border-left: 2px solid var(--forum-border-soft);
+      }
+
+      .forum-post-identity {
+        display: grid;
+        align-content: flex-start;
+        gap: 0.28rem;
+      }
+
+      .forum-post-avatar {
+        width: 12px;
+        height: 12px;
+        aspect-ratio: 1 / 1;
+        border-radius: 999px;
+        border: 1px solid var(--forum-border-soft);
+        background: var(--forum-bg-subtle);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.42rem;
+        font-weight: 600;
+        color: var(--forum-text-primary);
+        vertical-align: middle;
+        object-fit: cover;
+        object-position: center;
+        overflow: hidden;
+        clip-path: circle(50% at 50% 50%);
+        flex-shrink: 0;
+        line-height: 1;
+      }
+
+      .forum-post-name {
+        font-size: var(--forum-post-meta-size);
+        line-height: 1.2;
+        font-weight: 600;
+      }
+
+      .forum-post-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.3rem;
+      }
+
+      .forum-role-badge {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 0.1rem 0.42rem;
+        font-size: 0.67rem;
+        line-height: 1.4;
+        border: 1px solid var(--forum-border-soft);
+        color: var(--forum-text-secondary);
+        background: var(--forum-bg-subtle);
+      }
+
+      .forum-role-badge.instructor {
+        background: color-mix(in srgb, var(--forum-role-instructor) 20%, var(--forum-bg-panel));
+        border-color: color-mix(in srgb, var(--forum-role-instructor) 40%, var(--forum-border-soft));
+        color: color-mix(in srgb, var(--forum-role-instructor) 78%, #1f3550);
+      }
+
+      .forum-role-badge.op {
+        background: color-mix(in srgb, var(--forum-role-op) 14%, var(--forum-bg-panel));
+        border-color: color-mix(in srgb, var(--forum-role-op) 34%, var(--forum-border-soft));
+        color: color-mix(in srgb, var(--forum-role-op) 68%, #1d4f35);
+      }
+
+      .forum-post-main {
+        min-width: 0;
+      }
+
+      .forum-post-header {
+        display: flex;
+        justify-content: flex-end;
+        margin-bottom: 0.38rem;
+        font-size: var(--forum-post-meta-size);
+      }
+
+      .forum-post-date {
+        color: var(--forum-text-secondary);
+        font-size: var(--forum-post-meta-size);
+      }
+
+      .forum-post-body {
+        font-size: var(--forum-post-body-size);
+        line-height: 1.62;
+        max-width: 100%;
+        min-width: 0;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
+
+      .forum-post-body > :first-child {
+        margin-top: 0;
+      }
+
+      .forum-post-body > :last-child {
+        margin-bottom: 0;
+      }
+
+      .forum-post-body :where(p, ul, ol, pre, blockquote, table, .callout, .mermaid, .katex-display, .lily-score) {
+        margin: 0 0 0.7rem 0;
+        max-width: 100%;
+      }
+
+      .forum-post-body pre {
+        overflow: auto;
+        background: var(--forum-bg-subtle);
+        border: 1px solid var(--forum-border-soft);
+        border-radius: 7px;
+        padding: 0.62rem;
+        max-width: 100%;
+      }
+
+      .forum-post-body code {
+        font-size: 0.84em;
+      }
+
+      .forum-post-body blockquote {
+        border-left: 3px solid var(--forum-border-strong);
+        padding-left: 0.7rem;
+        color: var(--forum-text-secondary);
+      }
+
+      .forum-post-body table {
+        width: 100%;
+        display: block;
+        overflow-x: auto;
+        max-width: 100%;
+        border-collapse: collapse;
+      }
+
+      .forum-post-body th,
+      .forum-post-body td {
+        border: 1px solid var(--forum-border-soft);
+        padding: 0.35rem 0.45rem;
+        text-align: left;
+      }
+
+      .forum-post-body .mermaid {
+        overflow-x: auto;
+      }
+
+      .forum-post-actions {
+        margin-top: 0.58rem;
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        flex-wrap: wrap;
+      }
+
+      .forum-post-reply-btn,
+      .forum-post-edit-btn {
+        border: 1px solid var(--forum-border-soft);
+        background: var(--forum-bg-subtle);
+        color: var(--forum-text-primary);
+        border-radius: 6px;
+        padding: 0.24rem 0.52rem;
+        cursor: pointer;
+        font-size: 0.74rem;
+      }
+
+      .forum-post-reply-btn:disabled,
+      .forum-post-edit-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      .forum-edit-form {
+        margin-top: 0.55rem;
+      }
+
+      .forum-edit-textarea {
+        min-height: 11.6rem;
+      }
+
+      .forum-reply-target {
+        margin: 0;
+        padding: 0.5rem 0.6rem;
+        border: 1px dashed var(--forum-border-strong);
+        border-radius: 7px;
+        background: var(--forum-bg-panel);
+        font-size: 0.8rem;
+      }
+
+      .forum-empty {
+        margin: 0;
+        padding: 0.7rem;
+        border: 1px dashed var(--forum-border-soft);
+        border-radius: 7px;
+        color: var(--forum-text-secondary);
+        font-size: 0.85rem;
+        background: var(--forum-bg-panel);
+      }
+
+      .forum-status {
+        margin: 0 0 0.8rem 0;
+        font-size: 0.83rem;
+        padding: 0.55rem 0.6rem;
+        border-radius: 7px;
+        border: 1px solid var(--forum-border-soft);
+        background: var(--forum-bg-panel);
+      }
+
+      .forum-status[hidden] {
+        display: none;
+      }
+
+      .forum-status.error {
+        border-color: #f44336;
+        color: #b3261e;
+      }
+
+      .forum-login-cta {
+        border: 1px dashed var(--forum-border-soft);
+        border-radius: 8px;
+        background: var(--forum-bg-panel);
+        padding: 1rem;
+        font-size: 0.92rem;
+      }
+      
       @media (max-width: 968px) {
         .course-container {
           grid-template-columns: 1fr;
         }
         .sidebar {
           position: static;
+        }
+        .course-nav {
+          flex-direction: column;
+          gap: 0.75rem;
+        }
+        .nav-button {
+          text-align: center;
+        }
+        .forum-grid {
+          grid-template-columns: 1fr;
+        }
+        .forum-post {
+          grid-template-columns: 1fr;
+          gap: 0.7rem;
+        }
+        .forum-post-identity {
+          grid-template-columns: auto 1fr;
+          align-items: center;
+          column-gap: 0.65rem;
+          row-gap: 0.2rem;
+        }
+        .forum-post-avatar {
+          grid-row: span 2;
+        }
+        .forum-post-badges {
+          grid-column: 2;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .forum-thread-top,
+        .forum-thread-meta {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 0.2rem;
         }
       }
     </style>
@@ -268,6 +836,16 @@ const isAssignment = currentEntry.data.type === 'assignment';
           <a href={`/cursos/${courseSlug}`} style="text-decoration: none; color: inherit;">
             {courseIndex.data.title}
           </a>
+        </div>
+
+        <div class="chapter">
+          <ul class="lesson-list">
+            <li class="lesson-item">
+              <a href={`/cursos/${courseSlug}/foro`} class:list={['lesson-link', { active: isCourseForumPage }]}>
+                Foro del curso
+              </a>
+            </li>
+          </ul>
         </div>
         
         {Object.entries(chapters).map(([chapterName, lessons]) => (
@@ -297,6 +875,15 @@ const isAssignment = currentEntry.data.type === 'assignment';
 
         <div class="chapter page-progress" id="page-progress" hidden>
           <div class="chapter-title">Progreso de esta página</div>
+          <div class="progress-meter" id="mcc-progress-meter" hidden>
+            <div class="progress-meter-header">
+              <span>Lectura (MCC)</span>
+              <strong id="mcc-progress-percent">0%</strong>
+            </div>
+            <div class="progress-track" aria-hidden="true">
+              <div class="progress-fill" id="mcc-progress-fill"></div>
+            </div>
+          </div>
           <ul class="lesson-list progress-list" id="page-progress-list"></ul>
         </div>
       </aside>
@@ -316,6 +903,114 @@ const isAssignment = currentEntry.data.type === 'assignment';
             <p><em>Nota: Las respuestas se guardarán en una próxima actualización. Por ahora, puedes trabajar en el ejercicio localmente.</em></p>
           </div>
         )}
+
+        {(isLessonPage || isCourseForumPage) && (
+          <section
+            class="lesson-forum"
+            id="lesson-forum"
+            data-course-id={courseSlug}
+            data-lesson-slug={lessonSlug}
+            data-forum-mode={isCourseForumPage ? 'board' : 'lesson'}
+            data-initial-board-slug={isCourseForumPage ? 'general' : ''}
+            data-has-session={hasSessionUser ? 'true' : 'false'}
+          >
+            <div class="lesson-forum-header">
+              <h3 class="lesson-forum-title">{isCourseForumPage ? 'Foro del curso' : 'Foro de esta lección'}</h3>
+              <p class="lesson-forum-subtitle">
+                {isCourseForumPage
+                  ? 'Foro general del curso y foros alternativos creados por docentes.'
+                  : 'Preguntas, respuestas y discusión entre estudiantes del curso.'}
+              </p>
+            </div>
+
+            {hasSessionUser ? (
+              <>
+                <p id="forum-status" class="forum-status" hidden></p>
+                {isCourseForumPage && (
+                  <div class="forum-board-toolbar">
+                    <label for="forum-board-select">Foro activo</label>
+                    <select id="forum-board-select" class="forum-select"></select>
+                  </div>
+                )}
+                <div class="forum-grid">
+                  <section class="forum-panel forum-thread-column">
+                    {isCourseForumPage && (
+                      <form id="forum-new-board-form" class="forum-form" hidden>
+                        <input id="forum-board-title" class="forum-field" type="text" maxlength="90" placeholder="Nombre del foro alternativo" required />
+                        <input id="forum-board-description" class="forum-field" type="text" maxlength="260" placeholder="Descripción opcional" />
+                        <div class="forum-form-actions">
+                          <button
+                            type="submit"
+                            class="forum-secondary-btn forum-action-btn forum-action-f"
+                            data-tooltip="Crear foro alternativo"
+                            aria-label="Crear foro alternativo"
+                            title="Crear foro alternativo"
+                          >F</button>
+                        </div>
+                      </form>
+                    )}
+
+                    <section id="forum-new-thread" class="forum-new-thread forum-thread-item">
+                      <h4 class="forum-panel-title">Crear hilo</h4>
+                      <form id="forum-new-thread-form" class="forum-form">
+                        <input id="forum-thread-title" class="forum-field" type="text" maxlength="140" placeholder="Título del hilo" required />
+                        <textarea id="forum-thread-body" class="forum-textarea" maxlength="4000" placeholder="Escribe el primer mensaje..." required></textarea>
+                        <div class="forum-form-actions">
+                          <button
+                            type="submit"
+                            class="forum-action-btn forum-action-h"
+                            data-tooltip="Publicar hilo"
+                            aria-label="Publicar hilo"
+                            title="Publicar hilo"
+                          >H</button>
+                        </div>
+                      </form>
+                    </section>
+
+                    <div id="forum-thread-list" class="forum-thread-list">
+                      <p class="forum-empty">Cargando hilos...</p>
+                    </div>
+                  </section>
+
+                  <section id="forum-thread-stage" class="forum-panel forum-thread-stage" hidden>
+                    <div id="forum-post-list" class="forum-post-list">
+                      <p class="forum-empty">Selecciona un hilo para ver los mensajes.</p>
+                    </div>
+
+                    <form id="forum-reply-form" class="forum-form" hidden>
+                      <p id="forum-reply-target" class="forum-reply-target" hidden></p>
+                      <input id="forum-parent-post-id" type="hidden" />
+                      <textarea id="forum-reply-body" class="forum-textarea" maxlength="4000" placeholder="Responder al hilo..." required></textarea>
+                      <div class="forum-form-actions">
+                        <button
+                          type="submit"
+                          class="forum-action-btn forum-action-p"
+                          data-tooltip="Publicar respuesta"
+                          aria-label="Publicar respuesta"
+                          title="Publicar respuesta"
+                        >P</button>
+                        <button
+                          type="button"
+                          id="forum-cancel-reply"
+                          class="forum-secondary-btn forum-action-btn forum-action-c"
+                          data-tooltip="Cancelar respuesta"
+                          aria-label="Cancelar respuesta"
+                          title="Cancelar respuesta"
+                          hidden
+                        >C</button>
+                      </div>
+                    </form>
+                  </section>
+                </div>
+              </>
+            ) : (
+              <div class="forum-login-cta">
+                Inicia sesión para ver y participar del foro de esta lección.
+                <a href={`/login?redirect=/cursos/${slug}`} class="nav-button" style="margin-left: 0.6rem;">Iniciar sesión</a>
+              </div>
+            )}
+          </section>
+        )}
         
         <div class="course-nav">
           <a href="/cursos" class="nav-button">← Volver a cursos</a>
@@ -329,6 +1024,18 @@ const isAssignment = currentEntry.data.type === 'assignment';
       let userSubmissions = {};
       let hasEvalBlocks = false;
       const progressByEvalId = new Map();
+      const forumState = {
+        courseId: '',
+        mode: 'lesson',
+        lessonSlug: '',
+        boardSlug: '',
+        boards: [],
+        threads: [],
+        selectedThreadId: '',
+        canWrite: false,
+        canManageBoards: false,
+      };
+      let evalMathRendererPromise = null;
 
       async function loadUserSubmissions() {
         try {
@@ -360,6 +1067,84 @@ const isAssignment = currentEntry.data.type === 'assignment';
         return null;
       }
 
+      function loadScriptOnce(src, marker) {
+        return new Promise((resolve, reject) => {
+          const existing = document.querySelector(`script[${marker}]`);
+          if (existing) {
+            if (existing.dataset.loaded === 'true') {
+              resolve();
+              return;
+            }
+            existing.addEventListener('load', () => resolve(), { once: true });
+            existing.addEventListener('error', () => reject(new Error(`Failed to load ${src}`)), { once: true });
+            return;
+          }
+
+          const script = document.createElement('script');
+          script.src = src;
+          script.defer = true;
+          script.setAttribute(marker, 'true');
+          script.addEventListener('load', () => {
+            script.dataset.loaded = 'true';
+            resolve();
+          }, { once: true });
+          script.addEventListener('error', () => reject(new Error(`Failed to load ${src}`)), { once: true });
+          document.head.appendChild(script);
+        });
+      }
+
+      async function ensureEvalMathRenderer() {
+        if (typeof window.renderMathInElement === 'function') {
+          return window.renderMathInElement;
+        }
+
+        if (evalMathRendererPromise) return evalMathRendererPromise;
+
+        evalMathRendererPromise = (async () => {
+          if (!window.katex || typeof window.katex.render !== 'function') {
+            await loadScriptOnce(
+              'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js',
+              'data-eval-katex',
+            );
+          }
+
+          if (typeof window.renderMathInElement !== 'function') {
+            await loadScriptOnce(
+              'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js',
+              'data-eval-katex-auto-render',
+            );
+          }
+
+          return window.renderMathInElement;
+        })().catch((error) => {
+          console.error('Failed to initialize eval math renderer:', error);
+          return null;
+        });
+
+        return evalMathRendererPromise;
+      }
+
+      function renderEvalMath(container) {
+        if (!container) return;
+
+        ensureEvalMathRenderer()
+          .then((renderMathInElement) => {
+            if (typeof renderMathInElement !== 'function') return;
+            renderMathInElement(container, {
+              delimiters: [
+                { left: '$$', right: '$$', display: true },
+                { left: '$', right: '$', display: false },
+              ],
+              throwOnError: false,
+              strict: 'ignore',
+              ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+            });
+          })
+          .catch((error) => {
+            console.error('Eval math render error:', error);
+          });
+      }
+
       function getSubmission(evalId) {
         return userSubmissions[evalId] || null;
       }
@@ -373,6 +1158,16 @@ const isAssignment = currentEntry.data.type === 'assignment';
         const payload = getSubmissionPayload(submission);
         if (payload && typeof payload === 'object') return payload.answer;
         return payload;
+      }
+
+      function toAnswerArray(answer) {
+        if (Array.isArray(answer)) {
+          return answer
+            .map((value) => String(value))
+            .filter((value) => value.length > 0);
+        }
+        if (answer === undefined || answer === null || answer === '') return [];
+        return [String(answer)];
       }
 
       function isSubmissionCorrect(submission) {
@@ -413,6 +1208,7 @@ const isAssignment = currentEntry.data.type === 'assignment';
         progressByEvalId.set(evalData.id, {
           label: buildProgressLabel(evalData, position),
           complete: Boolean(isComplete),
+          type: evalData.type || 'unknown',
         });
         renderPageProgress();
       }
@@ -428,6 +1224,9 @@ const isAssignment = currentEntry.data.type === 'assignment';
       function renderPageProgress() {
         const container = document.getElementById('page-progress');
         const list = document.getElementById('page-progress-list');
+        const meter = document.getElementById('mcc-progress-meter');
+        const meterFill = document.getElementById('mcc-progress-fill');
+        const meterPercent = document.getElementById('mcc-progress-percent');
         if (!container || !list) return;
 
         const entries = Array.from(progressByEvalId.entries());
@@ -438,6 +1237,19 @@ const isAssignment = currentEntry.data.type === 'assignment';
 
         container.hidden = false;
         list.innerHTML = '';
+
+        const mccEntries = entries.filter(([, item]) => item.type === 'mcc');
+        if (meter && meterFill && meterPercent) {
+          if (mccEntries.length === 0) {
+            meter.hidden = true;
+          } else {
+            const completedCount = mccEntries.filter(([, item]) => item.complete).length;
+            const percent = Math.round((completedCount / mccEntries.length) * 100);
+            meter.hidden = false;
+            meterFill.style.width = `${percent}%`;
+            meterPercent.textContent = `${percent}%`;
+          }
+        }
 
         entries.forEach(([evalId, item]) => {
           const li = document.createElement('li');
@@ -467,7 +1279,7 @@ const isAssignment = currentEntry.data.type === 'assignment';
         };
       }
 
-      async function saveSubmission({ evalId, answer, isCorrect }) {
+      async function saveSubmission({ evalId, answer, isCorrect, meta = {} }) {
         try {
           const { courseId, pageSlug } = getPageContext();
           const response = await fetch('/api/eval/submit', {
@@ -477,6 +1289,11 @@ const isAssignment = currentEntry.data.type === 'assignment';
               evalId,
               answer,
               isCorrect,
+              payload: {
+                answer,
+                isCorrect,
+                ...(meta && typeof meta === 'object' ? meta : {}),
+              },
               courseId,
               pageSlug,
             }),
@@ -499,7 +1316,17 @@ const isAssignment = currentEntry.data.type === 'assignment';
       function renderMCQ(wrapper, data, position) {
         const previousSubmission = getSubmission(data.id);
         const previousAnswer = getPreviousMcqAnswer(previousSubmission);
+        const previousAnswers = toAnswerArray(previousAnswer);
         const wasCorrect = isSubmissionCorrect(previousSubmission);
+        const allowsMultiple = Boolean(data.allowMultiple);
+        const allowEdit = Boolean(data.allowEdit);
+        const correctOptionIndexes = data.options.reduce((acc, option, index) => {
+          const optionCorrect = typeof option === 'string'
+            ? /^\[(x|X)\]/.test(option.trim())
+            : Boolean(option.isCorrect);
+          if (optionCorrect) acc.push(String(index));
+          return acc;
+        }, []);
 
         registerProgress(data, position, wasCorrect);
 
@@ -512,6 +1339,20 @@ const isAssignment = currentEntry.data.type === 'assignment';
         prompt.className = 'eval-prompt';
         prompt.textContent = data.prompt;
         container.appendChild(prompt);
+
+        if (allowsMultiple) {
+          const modeHint = document.createElement('p');
+          modeHint.className = 'feedback-explanation';
+          modeHint.textContent = 'Selecciona todas las opciones correctas.';
+          container.appendChild(modeHint);
+        }
+
+        if (allowEdit) {
+          const editableHint = document.createElement('p');
+          editableHint.className = 'feedback-explanation';
+          editableHint.textContent = 'Puedes editar y reenviar tu respuesta.';
+          container.appendChild(editableHint);
+        }
 
         const form = document.createElement('form');
         form.className = 'mcq-form';
@@ -528,12 +1369,12 @@ const isAssignment = currentEntry.data.type === 'assignment';
           label.className = 'mcq-option';
 
           const input = document.createElement('input');
-          input.type = 'radio';
-          input.name = data.id;
+          input.type = allowsMultiple ? 'checkbox' : 'radio';
+          input.name = allowsMultiple ? `${data.id}[]` : data.id;
           input.value = String(index);
           input.dataset.correct = optionCorrect ? 'true' : 'false';
 
-          if (String(previousAnswer) === String(index)) {
+          if (previousAnswers.includes(String(index))) {
             input.checked = true;
           }
 
@@ -548,7 +1389,7 @@ const isAssignment = currentEntry.data.type === 'assignment';
         const submitButton = document.createElement('button');
         submitButton.type = 'submit';
         submitButton.className = 'eval-submit';
-        submitButton.textContent = 'Enviar respuesta';
+        submitButton.textContent = previousSubmission && allowEdit ? 'Guardar cambios' : 'Enviar respuesta';
         form.appendChild(submitButton);
         container.appendChild(form);
 
@@ -574,7 +1415,7 @@ const isAssignment = currentEntry.data.type === 'assignment';
           message.className = `feedback-message ${wasCorrect ? 'correct' : 'incorrect'}`;
           feedback.style.display = 'block';
 
-          if (wasCorrect) {
+          if (wasCorrect && !allowEdit) {
             form.querySelectorAll('input').forEach((input) => {
               input.disabled = true;
             });
@@ -585,34 +1426,61 @@ const isAssignment = currentEntry.data.type === 'assignment';
         form.addEventListener('submit', async (event) => {
           event.preventDefault();
 
-          const selected = form.querySelector('input:checked');
-          if (!selected) {
-            alert('Por favor selecciona una opción');
+          const selectedInputs = Array.from(form.querySelectorAll('input:checked'));
+          if (selectedInputs.length === 0) {
+            alert(allowsMultiple ? 'Selecciona al menos una opción.' : 'Por favor selecciona una opción');
             return;
           }
 
-          const isCorrect = selected.dataset.correct === 'true';
+          const selectedValues = selectedInputs.map((input) => String(input.value));
+          const normalizedSelected = Array.from(new Set(selectedValues)).sort();
+          const normalizedCorrect = Array.from(new Set(correctOptionIndexes)).sort();
+          const isCorrect = normalizedSelected.length === normalizedCorrect.length
+            && normalizedSelected.every((value, idx) => value === normalizedCorrect[idx]);
+          const selectedOptionTexts = normalizedSelected
+            .map((selectedIndex) => {
+              const idx = Number(selectedIndex);
+              const option = data.options[idx];
+              if (typeof option === 'string') return option.replace(/^\[(x|X|\s)\]\s*/, '').trim();
+              return String(option?.text || '').trim();
+            })
+            .filter(Boolean);
+
           message.textContent = isCorrect ? '✅ ¡Correcto!' : '❌ Incorrecto, intenta de nuevo';
           message.className = `feedback-message ${isCorrect ? 'correct' : 'incorrect'}`;
           feedback.style.display = 'block';
 
-          await saveSubmission({
+          const saved = await saveSubmission({
             evalId: data.id,
-            answer: selected.value,
+            answer: allowsMultiple ? normalizedSelected : normalizedSelected[0],
             isCorrect,
+            meta: {
+              answerText: selectedOptionTexts.join(' | '),
+              answerOptions: selectedOptionTexts,
+              answerIndexes: normalizedSelected,
+              selectionMode: allowsMultiple ? 'multiple' : 'single',
+            },
           });
+
+          if (!saved) {
+            alert('No se pudo guardar tu respuesta. Intenta nuevamente.');
+            return;
+          }
 
           setProgressCompletion(data.id, isCorrect);
 
-          if (isCorrect) {
+          if (isCorrect && !allowEdit) {
             form.querySelectorAll('input').forEach((input) => {
               input.disabled = true;
             });
             submitButton.disabled = true;
+          } else if (allowEdit) {
+            submitButton.textContent = 'Guardar cambios';
           }
         });
 
         wrapper.appendChild(container);
+        renderEvalMath(container);
       }
 
       function renderMCC(wrapper, data, position) {
@@ -694,6 +1562,7 @@ const isAssignment = currentEntry.data.type === 'assignment';
         });
 
         wrapper.appendChild(container);
+        renderEvalMath(container);
       }
 
       function renderUnsupported(wrapper, data, position) {
@@ -715,9 +1584,1480 @@ const isAssignment = currentEntry.data.type === 'assignment';
         container.appendChild(notice);
 
         wrapper.appendChild(container);
+        renderEvalMath(container);
+      }
+
+      function formatForumDate(value) {
+        if (!value) return 'sin fecha';
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) return 'sin fecha';
+        return parsed.toLocaleString('es-ES', {
+          day: '2-digit',
+          month: '2-digit',
+          year: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+      }
+
+      async function initLessonForum() {
+        const forumRoot = document.getElementById('lesson-forum');
+        if (!forumRoot) return;
+
+        const hasSession = forumRoot.dataset.hasSession === 'true';
+        if (!hasSession) return;
+
+        forumState.courseId = forumRoot.dataset.courseId || '';
+        forumState.mode = forumRoot.dataset.forumMode === 'board' ? 'board' : 'lesson';
+        forumState.lessonSlug = forumRoot.dataset.lessonSlug || '';
+        forumState.boardSlug = forumRoot.dataset.initialBoardSlug || 'general';
+        forumState.boards = [];
+        forumState.canManageBoards = false;
+
+        if (forumState.mode === 'board') {
+          const boardQueryParam = new URL(window.location.href).searchParams.get('board');
+          const normalizedBoardParam = String(boardQueryParam || '').trim().toLowerCase();
+          if (normalizedBoardParam) {
+            forumState.boardSlug = normalizedBoardParam;
+          }
+        }
+
+        if (!forumState.courseId) return;
+        if (forumState.mode === 'lesson' && !forumState.lessonSlug) return;
+
+        const statusEl = document.getElementById('forum-status');
+        const threadListEl = document.getElementById('forum-thread-list');
+        const newThreadContainer = document.getElementById('forum-new-thread');
+        const newThreadForm = document.getElementById('forum-new-thread-form');
+        const threadTitleInput = document.getElementById('forum-thread-title');
+        const threadBodyInput = document.getElementById('forum-thread-body');
+        const threadStageEl = document.getElementById('forum-thread-stage');
+        const postListEl = document.getElementById('forum-post-list');
+        const replyForm = document.getElementById('forum-reply-form');
+        const replyBodyInput = document.getElementById('forum-reply-body');
+        const parentPostInput = document.getElementById('forum-parent-post-id');
+        const replyTargetEl = document.getElementById('forum-reply-target');
+        const cancelReplyBtn = document.getElementById('forum-cancel-reply');
+        const boardSelect = document.getElementById('forum-board-select');
+        const newBoardForm = document.getElementById('forum-new-board-form');
+        const boardTitleInput = document.getElementById('forum-board-title');
+        const boardDescriptionInput = document.getElementById('forum-board-description');
+
+        if (
+          !statusEl ||
+          !threadListEl ||
+          !newThreadForm ||
+          !threadTitleInput ||
+          !threadBodyInput ||
+          !threadStageEl ||
+          !postListEl ||
+          !replyForm ||
+          !replyBodyInput ||
+          !parentPostInput ||
+          !replyTargetEl ||
+          !cancelReplyBtn
+        ) {
+          return;
+        }
+
+        let latestPostRequestToken = 0;
+        let forumMermaidPromise = null;
+        let forumHighlighterPromise = null;
+        const FORUM_READ_PREFIX = 'forum:read:';
+        const forumEditorLanguageAliases = {
+          js: 'javascript',
+          javascript: 'javascript',
+          ts: 'typescript',
+          typescript: 'typescript',
+          jsx: 'javascript',
+          tsx: 'typescript',
+          py: 'python',
+          python: 'python',
+          bash: 'bash',
+          sh: 'bash',
+          zsh: 'bash',
+          fish: 'bash',
+          shell: 'bash',
+          html: 'xml',
+          xml: 'xml',
+          md: 'markdown',
+          markdown: 'markdown',
+          math: 'latex',
+          mathjax: 'latex',
+          tex: 'latex',
+          latex: 'latex',
+          lily: 'lisp',
+          lilypond: 'lisp',
+          ly: 'lisp',
+          mermaid: 'plaintext',
+        };
+
+        function setForumStatus(message, tone = 'info') {
+          if (!message) {
+            statusEl.hidden = true;
+            statusEl.textContent = '';
+            statusEl.classList.remove('error');
+            return;
+          }
+
+          statusEl.hidden = false;
+          statusEl.textContent = message;
+          statusEl.classList.toggle('error', tone === 'error');
+        }
+
+        function getForumScopeStorageKey() {
+          if (!forumState.courseId) return '';
+          if (forumState.mode === 'board') {
+            const normalizedBoard = String(forumState.boardSlug || 'general').trim().toLowerCase();
+            return `board:${forumState.courseId}:${normalizedBoard}`;
+          }
+          if (!forumState.lessonSlug) return '';
+          return `lesson:${forumState.courseId}:${forumState.lessonSlug}`;
+        }
+
+        function getForumScopeMessageTotal() {
+          return (forumState.threads || []).reduce((sum, thread) => {
+            const messageCount = Number(thread?.messageCount);
+            if (Number.isFinite(messageCount) && messageCount >= 0) {
+              return sum + messageCount;
+            }
+            const postCount = Number(thread?.postCount);
+            if (Number.isFinite(postCount) && postCount >= 0) {
+              return sum + postCount;
+            }
+            return sum;
+          }, 0);
+        }
+
+        function markForumScopeAsRead() {
+          const scopeKey = getForumScopeStorageKey();
+          if (!scopeKey) return;
+
+          try {
+            localStorage.setItem(
+              FORUM_READ_PREFIX + scopeKey,
+              JSON.stringify({
+                messageTotal: getForumScopeMessageTotal(),
+                readAt: new Date().toISOString(),
+              }),
+            );
+          } catch (error) {
+            console.error('Forum read-state storage error:', error);
+          }
+        }
+
+        function getForumScopePayload() {
+          if (forumState.mode === 'board') {
+            return { boardSlug: forumState.boardSlug };
+          }
+          return { lessonSlug: forumState.lessonSlug };
+        }
+
+        function escapeHtml(value) {
+          return String(value || '')
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#39;');
+        }
+
+        function getForumBodyHtml(post) {
+          if (typeof post?.bodyHtml === 'string' && post.bodyHtml.trim().length > 0) {
+            return post.bodyHtml;
+          }
+
+          const plain = escapeHtml(post?.body || '').replaceAll('\n', '<br />');
+          return `<p>${plain}</p>`;
+        }
+
+        function normalizeForumEditorLanguage(rawLanguage) {
+          const normalized = String(rawLanguage || '').trim().toLowerCase();
+          if (!normalized) return 'plaintext';
+          return forumEditorLanguageAliases[normalized] || normalized;
+        }
+
+        function ensureForumHighlighter() {
+          if (window.hljs?.highlight) {
+            return Promise.resolve(window.hljs);
+          }
+
+          if (forumHighlighterPromise) return forumHighlighterPromise;
+
+          forumHighlighterPromise = loadScriptOnce(
+            'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js',
+            'data-forum-hljs-loader',
+          )
+            .then(() => window.hljs || null)
+            .catch((error) => {
+              console.error('Forum highlighter loader error:', error);
+              return null;
+            });
+
+          return forumHighlighterPromise;
+        }
+
+        function renderForumEditorHighlight(source, language, hljs) {
+          const text = String(source || '');
+          const normalizedLanguage = normalizeForumEditorLanguage(language);
+
+          if (hljs?.highlight && hljs.getLanguage?.(normalizedLanguage)) {
+            try {
+              return hljs.highlight(text, { language: normalizedLanguage, ignoreIllegals: true }).value;
+            } catch (error) {
+              console.error('Forum editor highlight error:', error);
+            }
+          }
+
+          return escapeHtml(text);
+        }
+
+        function buildForumEditorOverlayHtml(source, hljs) {
+          const text = String(source || '');
+          if (!text) return '';
+
+          const parts = [];
+          const fenceRegex = /```([A-Za-z0-9_+-]*)[ \t]*\n([\s\S]*?)```/g;
+          let lastIndex = 0;
+          let match;
+
+          while ((match = fenceRegex.exec(text)) !== null) {
+            const markdownChunk = text.slice(lastIndex, match.index);
+            if (markdownChunk) {
+              parts.push(renderForumEditorHighlight(markdownChunk, 'markdown', hljs));
+            }
+
+            const rawLanguage = String(match[1] || '').trim().toLowerCase();
+            const codeBody = match[2] || '';
+            const normalizedLanguage = normalizeForumEditorLanguage(rawLanguage);
+            const openingFence = `\`\`\`${rawLanguage}\n`;
+            parts.push(`<span class="forum-editor-fence">${escapeHtml(openingFence)}</span>`);
+            parts.push(renderForumEditorHighlight(codeBody, normalizedLanguage, hljs));
+            parts.push('<span class="forum-editor-fence">```</span>');
+
+            lastIndex = fenceRegex.lastIndex;
+          }
+
+          const trailingChunk = text.slice(lastIndex);
+          if (trailingChunk) {
+            parts.push(renderForumEditorHighlight(trailingChunk, 'markdown', hljs));
+          }
+
+          let html = parts.join('');
+          if (!html) {
+            html = escapeHtml(text);
+          }
+          if (text.endsWith('\n')) {
+            html += '\n';
+          }
+
+          return html;
+        }
+
+        function replaceForumTextareaSelection(textarea, nextText, start, end, cursorStart, cursorEnd = cursorStart) {
+          const value = textarea.value || '';
+          textarea.value = `${value.slice(0, start)}${nextText}${value.slice(end)}`;
+          textarea.setSelectionRange(cursorStart, cursorEnd);
+          textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
+        function attachForumTypingHelpers(textarea) {
+          if (!textarea || textarea.dataset.forumTypingEnhanced === 'true') return;
+          textarea.dataset.forumTypingEnhanced = 'true';
+
+          const openerPairs = {
+            '(': ')',
+            '[': ']',
+            '{': '}',
+            '"': '"',
+            "'": "'",
+            '`': '`',
+          };
+          const closers = new Set(Object.values(openerPairs));
+
+          textarea.addEventListener('keydown', (event) => {
+            const start = textarea.selectionStart ?? 0;
+            const end = textarea.selectionEnd ?? 0;
+            const value = textarea.value || '';
+
+            if (event.key === 'Tab' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+              event.preventDefault();
+              replaceForumTextareaSelection(textarea, '  ', start, end, start + 2);
+              return;
+            }
+
+            if (
+              event.key === 'Enter' &&
+              !event.metaKey &&
+              !event.ctrlKey &&
+              !event.altKey &&
+              !event.shiftKey &&
+              start === end
+            ) {
+              const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+              const line = value.slice(lineStart, start);
+              if (/^```[A-Za-z0-9_+-]*\s*$/.test(line)) {
+                event.preventDefault();
+                replaceForumTextareaSelection(textarea, '\n\n```', start, end, start + 1);
+                return;
+              }
+            }
+
+            if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+            if (closers.has(event.key) && start === end && value.slice(start, start + 1) === event.key) {
+              event.preventDefault();
+              textarea.setSelectionRange(start + 1, start + 1);
+              return;
+            }
+
+            const closer = openerPairs[event.key];
+            if (!closer) return;
+
+            if ((event.key === '"' || event.key === "'") && start === end) {
+              const prevChar = value.slice(Math.max(0, start - 1), start);
+              const nextChar = value.slice(start, start + 1);
+              if (/[A-Za-z0-9_]/.test(prevChar) || /[A-Za-z0-9_]/.test(nextChar)) {
+                return;
+              }
+            }
+
+            event.preventDefault();
+            const selection = value.slice(start, end);
+            const wrapped = `${event.key}${selection}${closer}`;
+            if (selection) {
+              replaceForumTextareaSelection(textarea, wrapped, start, end, start + 1, start + 1 + selection.length);
+              return;
+            }
+
+            replaceForumTextareaSelection(textarea, wrapped, start, end, start + 1);
+          });
+        }
+
+        function attachForumEditor(textarea) {
+          if (!textarea || textarea.dataset.forumEditorEnhanced === 'true') return;
+          textarea.dataset.forumEditorEnhanced = 'true';
+
+          attachForumTypingHelpers(textarea);
+
+          const parent = textarea.parentElement;
+          if (!parent) return;
+
+          const shell = document.createElement('div');
+          shell.className = 'forum-editor-shell';
+
+          const overlay = document.createElement('pre');
+          overlay.className = 'forum-editor-overlay hljs language-markdown';
+          overlay.setAttribute('aria-hidden', 'true');
+
+          const overlayCode = document.createElement('code');
+          overlayCode.className = 'forum-editor-overlay-code';
+          overlay.appendChild(overlayCode);
+
+          parent.insertBefore(shell, textarea);
+          shell.appendChild(overlay);
+          textarea.classList.add('forum-editor-input');
+          shell.appendChild(textarea);
+
+          let renderToken = 0;
+          const syncOverlayScroll = () => {
+            overlay.scrollTop = textarea.scrollTop;
+            overlay.scrollLeft = textarea.scrollLeft;
+          };
+
+          const refreshOverlay = async () => {
+            const nextToken = ++renderToken;
+            const text = textarea.value || '';
+            const hasContent = text.length > 0;
+            shell.classList.toggle('is-empty', !hasContent);
+            if (!hasContent) {
+              overlayCode.innerHTML = '';
+              syncOverlayScroll();
+              return;
+            }
+
+            const hljs = await ensureForumHighlighter();
+            if (nextToken !== renderToken) return;
+            overlayCode.innerHTML = buildForumEditorOverlayHtml(text, hljs);
+            syncOverlayScroll();
+          };
+
+          textarea.addEventListener('input', refreshOverlay);
+          textarea.addEventListener('scroll', syncOverlayScroll);
+          textarea.addEventListener('keyup', syncOverlayScroll);
+          textarea.addEventListener('click', syncOverlayScroll);
+          refreshOverlay();
+        }
+
+        function isForumPostEdited(post) {
+          if (!post?.createdAt || !post?.updatedAt) return false;
+          const createdAt = new Date(post.createdAt);
+          const updatedAt = new Date(post.updatedAt);
+          if (Number.isNaN(createdAt.getTime()) || Number.isNaN(updatedAt.getTime())) return false;
+          return Math.abs(updatedAt.getTime() - createdAt.getTime()) > 1000;
+        }
+
+        function getForumInitials(name) {
+          const cleaned = String(name || '').trim();
+          if (!cleaned) return 'U';
+          const parts = cleaned.split(/\s+/).filter(Boolean);
+          if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+          return `${parts[0][0] || ''}${parts[1][0] || ''}`.toUpperCase();
+        }
+
+        function createForumAvatar(authorName, authorImage) {
+          const createFallback = () => {
+            const fallback = document.createElement('span');
+            fallback.className = 'forum-post-avatar';
+            fallback.textContent = getForumInitials(authorName);
+            return fallback;
+          };
+
+          const imageUrl = typeof authorImage === 'string' ? authorImage.trim() : '';
+          if (!imageUrl) return createFallback();
+
+          const img = document.createElement('img');
+          img.className = 'forum-post-avatar';
+          img.src = imageUrl;
+          img.alt = '';
+          img.loading = 'lazy';
+          img.decoding = 'async';
+          img.referrerPolicy = 'no-referrer';
+          img.addEventListener('error', () => {
+            const replacement = createFallback();
+            img.replaceWith(replacement);
+          }, { once: true });
+
+          return img;
+        }
+
+        function ensureForumMermaid() {
+          if (window.mermaid?.run) {
+            return Promise.resolve(window.mermaid);
+          }
+
+          if (forumMermaidPromise) return forumMermaidPromise;
+
+          forumMermaidPromise = new Promise((resolve) => {
+            const existing = document.querySelector('script[data-forum-mermaid-loader="true"]');
+            if (existing) {
+              existing.addEventListener('load', () => resolve(window.mermaid || null), { once: true });
+              existing.addEventListener('error', () => resolve(null), { once: true });
+              return;
+            }
+
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js';
+            script.defer = true;
+            script.dataset.forumMermaidLoader = 'true';
+            script.onload = () => resolve(window.mermaid || null);
+            script.onerror = () => resolve(null);
+            document.head.appendChild(script);
+          });
+
+          return forumMermaidPromise;
+        }
+
+        function renderForumMermaid(container) {
+          const nodes = Array.from(container.querySelectorAll('.mermaid'));
+          if (nodes.length === 0) return;
+
+          ensureForumMermaid()
+            .then((mermaid) => {
+              if (!mermaid?.run) return;
+              try {
+                mermaid.initialize({ startOnLoad: false, theme: 'default' });
+                mermaid.run({ nodes });
+              } catch (error) {
+                console.error('Forum mermaid render error:', error);
+              }
+            })
+            .catch((error) => {
+              console.error('Forum mermaid loader error:', error);
+            });
+        }
+
+        function getSelectedThread() {
+          return forumState.threads.find((thread) => thread.id === forumState.selectedThreadId) || null;
+        }
+
+        function moveThreadStageNodes(target) {
+          if (!target) return;
+          target.appendChild(postListEl);
+          target.appendChild(replyForm);
+        }
+
+        function mountThreadStage() {
+          moveThreadStageNodes(threadStageEl);
+        }
+
+        function mountThreadPanel(panel) {
+          moveThreadStageNodes(panel);
+        }
+
+        function setThreadLoadingState() {
+          postListEl.innerHTML = '<p class="forum-empty">Cargando mensajes...</p>';
+        }
+
+        function clearReplyTarget() {
+          parentPostInput.value = '';
+          replyTargetEl.textContent = '';
+          replyTargetEl.hidden = true;
+          cancelReplyBtn.hidden = true;
+          replyBodyInput.placeholder = 'Responder al hilo...';
+        }
+
+        function setReplyTarget(postId, authorName) {
+          parentPostInput.value = postId;
+          replyTargetEl.hidden = false;
+          replyTargetEl.textContent = `Responder a ${authorName || 'usuario'}`;
+          cancelReplyBtn.hidden = false;
+          replyBodyInput.placeholder = `Responder a ${authorName || 'usuario'}...`;
+          replyBodyInput.focus();
+        }
+
+        function updateReplyFormVisibility(canReply) {
+          if (!forumState.selectedThreadId || !canReply) {
+            replyForm.hidden = true;
+            clearReplyTarget();
+            return;
+          }
+
+          replyForm.hidden = false;
+        }
+
+        function renderThreadList() {
+          if (forumState.selectedThreadId && !forumState.threads.some((thread) => thread.id === forumState.selectedThreadId)) {
+            forumState.selectedThreadId = '';
+          }
+
+          mountThreadStage();
+          threadListEl.innerHTML = '';
+
+          if (forumState.threads.length === 0) {
+            const empty = document.createElement('p');
+            empty.className = 'forum-empty';
+            empty.textContent = forumState.mode === 'board'
+              ? 'Todavía no hay hilos en este foro.'
+              : 'Todavía no hay hilos en esta lección.';
+            threadListEl.appendChild(empty);
+            return;
+          }
+
+          forumState.threads.forEach((thread) => {
+            const isActive = thread.id === forumState.selectedThreadId;
+
+            const item = document.createElement('article');
+            item.className = 'forum-thread-item';
+            if (isActive) item.classList.add('active');
+
+            const toggle = document.createElement('button');
+            toggle.type = 'button';
+            toggle.className = 'forum-thread-toggle';
+            toggle.setAttribute('aria-expanded', isActive ? 'true' : 'false');
+
+            const top = document.createElement('div');
+            top.className = 'forum-thread-top';
+
+            const title = document.createElement('span');
+            title.className = 'forum-thread-title';
+            title.textContent = thread.title;
+
+            const messageCount = Number.isFinite(thread.messageCount)
+              ? Math.max(0, Number(thread.messageCount))
+              : (Number.isFinite(thread.postCount) ? Math.max(0, Number(thread.postCount)) : 0);
+            const replyCount = Number.isFinite(thread.replyCount)
+              ? Math.max(0, Number(thread.replyCount))
+              : Math.max(messageCount - 1, 0);
+
+            const caret = document.createElement('span');
+            caret.className = 'forum-thread-caret';
+            caret.textContent = isActive ? '▾' : '▸';
+
+            const counts = document.createElement('span');
+            counts.className = 'forum-thread-counts';
+
+            const messageChip = document.createElement('span');
+            messageChip.className = 'forum-thread-count forum-thread-count-messages';
+            messageChip.textContent = String(messageCount);
+            messageChip.dataset.tooltip = 'mensajes';
+            messageChip.title = 'mensajes';
+            counts.appendChild(messageChip);
+
+            const replyChip = document.createElement('span');
+            replyChip.className = 'forum-thread-count forum-thread-count-replies';
+            replyChip.textContent = String(replyCount);
+            replyChip.dataset.tooltip = 'respuestas';
+            replyChip.title = 'respuestas';
+            counts.appendChild(replyChip);
+
+            const trailing = document.createElement('span');
+            trailing.className = 'forum-thread-trailing';
+            trailing.appendChild(counts);
+            trailing.appendChild(caret);
+
+            top.appendChild(title);
+            top.appendChild(trailing);
+
+            const divider = document.createElement('hr');
+            divider.className = 'forum-thread-divider';
+
+            const meta = document.createElement('div');
+            meta.className = 'forum-thread-meta';
+            const lastActivity = formatForumDate(thread.lastActivityAt || thread.updatedAt || thread.createdAt);
+            const author = document.createElement('span');
+            author.className = 'forum-thread-author';
+            author.textContent = thread.createdByName || 'Usuario';
+            const stats = document.createElement('span');
+            stats.className = 'forum-thread-date';
+            stats.textContent = lastActivity;
+            meta.appendChild(author);
+            meta.appendChild(stats);
+
+            toggle.appendChild(top);
+            toggle.appendChild(divider);
+            toggle.appendChild(meta);
+            toggle.addEventListener('click', async () => {
+              const nextThreadId = forumState.selectedThreadId === thread.id ? '' : thread.id;
+              forumState.selectedThreadId = nextThreadId;
+              clearReplyTarget();
+
+              if (nextThreadId) {
+                setThreadLoadingState();
+              }
+
+              renderThreadList();
+              if (nextThreadId) {
+                await loadPosts(nextThreadId);
+              } else {
+                renderPosts([], false, false);
+              }
+            });
+
+            const inlinePanel = document.createElement('div');
+            inlinePanel.className = 'forum-thread-inline-panel';
+            inlinePanel.hidden = !isActive;
+            if (isActive) {
+              mountThreadPanel(inlinePanel);
+            }
+
+            item.appendChild(toggle);
+            item.appendChild(inlinePanel);
+            threadListEl.appendChild(item);
+          });
+        }
+
+        function renderPosts(posts, canReply, canVote) {
+          postListEl.innerHTML = '';
+          updateReplyFormVisibility(canReply);
+
+          if (!forumState.selectedThreadId) {
+            const empty = document.createElement('p');
+            empty.className = 'forum-empty';
+            empty.textContent = 'Selecciona un hilo para ver los mensajes.';
+            postListEl.appendChild(empty);
+            return;
+          }
+
+          const visiblePosts = Array.isArray(posts)
+            ? posts.filter((post) => String(post?.status || '').toLowerCase() !== 'deleted')
+            : [];
+
+          if (visiblePosts.length === 0) {
+            const empty = document.createElement('p');
+            empty.className = 'forum-empty';
+            empty.textContent = 'Este hilo todavía no tiene mensajes.';
+            postListEl.appendChild(empty);
+            return;
+          }
+
+          const postsById = new Map(visiblePosts.map((post) => [post.id, post]));
+          const childrenByParent = new Map();
+
+          visiblePosts.forEach((post) => {
+            const parentKey = post.parentPostId && postsById.has(post.parentPostId) ? post.parentPostId : 'root';
+            if (!childrenByParent.has(parentKey)) childrenByParent.set(parentKey, []);
+            childrenByParent.get(parentKey).push(post);
+          });
+
+          const fragment = document.createDocumentFragment();
+          const rootPosts = childrenByParent.get('root') || [];
+          const opPostId = rootPosts[0]?.id || visiblePosts[0]?.id || '';
+
+          const appendChildren = (parentId, depth) => {
+            const children = childrenByParent.get(parentId) || [];
+            children.forEach((post) => {
+              const card = document.createElement('article');
+              card.className = 'forum-post';
+              if (depth > 0) {
+                card.classList.add('forum-post-reply');
+                card.style.marginLeft = `${Math.min(depth, 2) * 0.72}rem`;
+              }
+              if (post.id === opPostId) {
+                card.classList.add('forum-post-op');
+              }
+              const normalizedRole = String(post.authorRole || '').trim().toLowerCase();
+              if (normalizedRole === 'teacher') {
+                card.classList.add('forum-post-role-instructor');
+              } else if (normalizedRole === 'student') {
+                card.classList.add('forum-post-role-student');
+              }
+
+              const identity = document.createElement('aside');
+              identity.className = 'forum-post-identity';
+
+              const authorName = post.authorName || 'Usuario';
+              const avatar = createForumAvatar(authorName, post.authorImage);
+              identity.appendChild(avatar);
+
+              const author = document.createElement('span');
+              author.className = 'forum-post-name';
+              author.textContent = authorName;
+              identity.appendChild(author);
+
+              const main = document.createElement('div');
+              main.className = 'forum-post-main';
+
+              const header = document.createElement('div');
+              header.className = 'forum-post-header';
+
+              const date = document.createElement('span');
+              date.className = 'forum-post-date';
+              const createdLabel = formatForumDate(post.createdAt);
+              if (isForumPostEdited(post)) {
+                date.textContent = `${createdLabel} • editado ${formatForumDate(post.updatedAt)}`;
+              } else {
+                date.textContent = createdLabel;
+              }
+
+              header.appendChild(date);
+              main.appendChild(header);
+
+              const body = document.createElement('div');
+              body.className = 'forum-post-body';
+              body.innerHTML = getForumBodyHtml(post);
+              main.appendChild(body);
+
+              const canEditPost = Boolean(post.canEdit);
+              const canDeletePost = Boolean(post.canDelete);
+              const canVotePost = Boolean(canVote);
+              if (canReply || canEditPost || canDeletePost || canVotePost) {
+                const actions = document.createElement('div');
+                actions.className = 'forum-post-actions';
+
+                let replyButton = null;
+                let reactionButtons = [];
+                if (canReply) {
+                  replyButton = document.createElement('button');
+                  replyButton.type = 'button';
+                  replyButton.className = 'forum-post-reply-btn forum-action-btn forum-action-r';
+                  replyButton.textContent = 'R';
+                  replyButton.dataset.tooltip = 'Responder';
+                  replyButton.title = 'Responder';
+                  replyButton.setAttribute('aria-label', 'Responder');
+                  replyButton.addEventListener('click', () => {
+                    setReplyTarget(post.id, post.authorName || 'usuario');
+                  });
+                  actions.appendChild(replyButton);
+                }
+
+                if (canVotePost) {
+                  const reactionGroup = document.createElement('div');
+                  reactionGroup.className = 'forum-post-reactions';
+
+                  const reactionDefs = [
+                    { value: 1, key: 'useful', icon: '👍', label: 'Útil', className: 'forum-post-reaction-useful' },
+                    { value: 2, key: 'clarifies', icon: '💡', label: 'Aclara', className: 'forum-post-reaction-clarifies' },
+                    { value: 3, key: 'reference', icon: '📎', label: 'Referencia valiosa', className: 'forum-post-reaction-reference' },
+                  ];
+
+                  const initialCounts = (post && typeof post.reactionCounts === 'object' && post.reactionCounts)
+                    ? post.reactionCounts
+                    : null;
+                  const reactionCounts = {
+                    useful: Math.max(0, Number(initialCounts?.useful) || 0),
+                    clarifies: Math.max(0, Number(initialCounts?.clarifies) || 0),
+                    reference: Math.max(0, Number(initialCounts?.reference) || 0),
+                  };
+
+                  let currentMyReaction = Number(post?.myReaction ?? post?.myVote ?? 0);
+                  if (currentMyReaction !== 1 && currentMyReaction !== 2 && currentMyReaction !== 3) {
+                    currentMyReaction = 0;
+                  }
+
+                  const reactionCountEls = {};
+                  const buttonByReactionValue = new Map();
+
+                  const applyReactionState = () => {
+                    reactionDefs.forEach((def) => {
+                      const button = buttonByReactionValue.get(def.value);
+                      if (!button) return;
+
+                      const isActive = currentMyReaction === def.value;
+                      button.classList.toggle('is-active', isActive);
+                      button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+
+                      const countEl = reactionCountEls[def.key];
+                      if (countEl) {
+                        countEl.textContent = String(Math.max(0, Number(reactionCounts[def.key]) || 0));
+                      }
+                    });
+                  };
+
+                  const submitReaction = async (nextReaction) => {
+                    if (!canVotePost) return;
+
+                    reactionButtons.forEach((button) => {
+                      button.disabled = true;
+                    });
+
+                    try {
+                      const response = await fetch(`/api/forum/posts/${encodeURIComponent(post.id)}/vote`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ value: nextReaction }),
+                      });
+                      const payload = await response.json().catch(() => ({}));
+                      if (!response.ok) {
+                        throw new Error(payload?.error || 'No se pudo registrar la reacción.');
+                      }
+
+                      const payloadCounts = payload?.reactionCounts;
+                      if (payloadCounts && typeof payloadCounts === 'object') {
+                        reactionCounts.useful = Math.max(0, Number(payloadCounts.useful) || 0);
+                        reactionCounts.clarifies = Math.max(0, Number(payloadCounts.clarifies) || 0);
+                        reactionCounts.reference = Math.max(0, Number(payloadCounts.reference) || 0);
+                      }
+
+                      const nextMyReaction = Number(payload?.myReaction ?? payload?.myVote ?? 0);
+                      if (nextMyReaction === 1 || nextMyReaction === 2 || nextMyReaction === 3) {
+                        currentMyReaction = nextMyReaction;
+                      } else {
+                        currentMyReaction = 0;
+                      }
+
+                      applyReactionState();
+                    } catch (error) {
+                      console.error('Forum reaction error:', error);
+                      setForumStatus(error?.message || 'No se pudo registrar la reacción.', 'error');
+                    } finally {
+                      reactionButtons.forEach((button) => {
+                        button.disabled = false;
+                      });
+                    }
+                  };
+
+                  reactionDefs.forEach((def) => {
+                    const reactionItem = document.createElement('div');
+                    reactionItem.className = 'forum-post-reaction-item';
+
+                    const reactionButton = document.createElement('button');
+                    reactionButton.type = 'button';
+                    reactionButton.className = `forum-post-reaction-btn forum-action-btn ${def.className}`;
+                    reactionButton.textContent = def.icon;
+                    reactionButton.dataset.tooltip = def.label;
+                    reactionButton.title = def.label;
+                    reactionButton.setAttribute('aria-label', def.label);
+                    reactionButton.setAttribute('aria-pressed', 'false');
+                    reactionButton.addEventListener('click', () => {
+                      submitReaction(currentMyReaction === def.value ? 0 : def.value);
+                    });
+
+                    const countEl = document.createElement('span');
+                    countEl.className = 'forum-post-reaction-count';
+                    reactionCountEls[def.key] = countEl;
+
+                    buttonByReactionValue.set(def.value, reactionButton);
+                    reactionButtons.push(reactionButton);
+
+                    reactionItem.appendChild(reactionButton);
+                    reactionItem.appendChild(countEl);
+                    reactionGroup.appendChild(reactionItem);
+                  });
+
+                  applyReactionState();
+                  actions.appendChild(reactionGroup);
+                }
+
+                let editButton = null;
+                let deleteButton = null;
+                let editContainer = null;
+                let editTextarea = null;
+                let saveEditButton = null;
+                let cancelEditButton = null;
+
+                function setEditMode(isEditing) {
+                  if (!editContainer || !editTextarea || !editButton) return;
+                  editContainer.hidden = !isEditing;
+                  body.hidden = isEditing;
+                  editButton.hidden = isEditing;
+                  if (replyButton) replyButton.disabled = isEditing;
+                  reactionButtons.forEach((button) => {
+                    button.disabled = isEditing;
+                  });
+                  if (deleteButton) deleteButton.disabled = isEditing;
+
+                  if (isEditing) {
+                    editTextarea.value = post.body || '';
+                    editTextarea.focus();
+                    editTextarea.setSelectionRange(editTextarea.value.length, editTextarea.value.length);
+                  }
+                }
+
+                if (canEditPost) {
+                  editButton = document.createElement('button');
+                  editButton.type = 'button';
+                  editButton.className = 'forum-post-edit-btn forum-action-btn forum-action-e';
+                  editButton.textContent = 'E';
+                  editButton.dataset.tooltip = 'Editar';
+                  editButton.title = 'Editar';
+                  editButton.setAttribute('aria-label', 'Editar');
+                  editButton.addEventListener('click', () => {
+                    setEditMode(true);
+                  });
+                  actions.appendChild(editButton);
+
+                  editContainer = document.createElement('div');
+                  editContainer.className = 'forum-edit-form';
+                  editContainer.hidden = true;
+
+                  editTextarea = document.createElement('textarea');
+                  editTextarea.className = 'forum-textarea forum-edit-textarea';
+                  editTextarea.maxLength = 4000;
+                  editTextarea.placeholder = 'Edita tu mensaje...';
+                  editTextarea.addEventListener('keydown', (event) => {
+                    if (event.key !== 'Enter') return;
+                    if (!(event.metaKey || event.ctrlKey)) return;
+                    event.preventDefault();
+                    if (saveEditButton) saveEditButton.click();
+                  });
+                  editContainer.appendChild(editTextarea);
+                  attachForumEditor(editTextarea);
+
+                  const editActions = document.createElement('div');
+                  editActions.className = 'forum-form-actions';
+
+                  saveEditButton = document.createElement('button');
+                  saveEditButton.type = 'button';
+                  saveEditButton.className = 'forum-secondary-btn';
+                  saveEditButton.textContent = 'Guardar';
+                  saveEditButton.addEventListener('click', async () => {
+                    if (!editTextarea) return;
+
+                    const nextBody = editTextarea.value.trim();
+                    if (!nextBody) {
+                      setForumStatus('El mensaje no puede quedar vacío.', 'error');
+                      return;
+                    }
+
+                    if (saveEditButton) saveEditButton.disabled = true;
+                    if (cancelEditButton) cancelEditButton.disabled = true;
+
+                    try {
+                      const response = await fetch(`/api/forum/posts/${encodeURIComponent(post.id)}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          body: nextBody,
+                        }),
+                      });
+
+                      const payload = await response.json().catch(() => ({}));
+                      if (!response.ok) {
+                        throw new Error(payload?.error || 'No se pudo editar el mensaje.');
+                      }
+
+                      setForumStatus('Mensaje actualizado.', 'info');
+                      await loadPosts(forumState.selectedThreadId);
+                    } catch (error) {
+                      console.error('Forum post edit error:', error);
+                      setForumStatus(error?.message || 'No se pudo editar el mensaje.', 'error');
+                    } finally {
+                      if (saveEditButton) saveEditButton.disabled = false;
+                      if (cancelEditButton) cancelEditButton.disabled = false;
+                    }
+                  });
+                  editActions.appendChild(saveEditButton);
+
+                  cancelEditButton = document.createElement('button');
+                  cancelEditButton.type = 'button';
+                  cancelEditButton.className = 'forum-secondary-btn';
+                  cancelEditButton.textContent = 'Cancelar';
+                  cancelEditButton.addEventListener('click', () => {
+                    setEditMode(false);
+                  });
+                  editActions.appendChild(cancelEditButton);
+
+                  editContainer.appendChild(editActions);
+                }
+
+                if (canDeletePost) {
+                  deleteButton = document.createElement('button');
+                  deleteButton.type = 'button';
+                  deleteButton.className = 'forum-post-delete-btn forum-action-btn forum-action-b';
+                  deleteButton.textContent = 'B';
+                  deleteButton.dataset.tooltip = 'Borrar';
+                  deleteButton.title = 'Borrar';
+                  deleteButton.setAttribute('aria-label', 'Borrar');
+                  deleteButton.addEventListener('click', async () => {
+                    if (!confirm('¿Seguro que quieres borrar este mensaje?')) return;
+
+                    if (deleteButton) deleteButton.disabled = true;
+                    if (editButton) editButton.disabled = true;
+                    if (replyButton) replyButton.disabled = true;
+
+                    try {
+                      const response = await fetch(`/api/forum/posts/${encodeURIComponent(post.id)}`, {
+                        method: 'DELETE',
+                      });
+
+                      const payload = await response.json().catch(() => ({}));
+                      if (!response.ok) {
+                        throw new Error(payload?.error || 'No se pudo borrar el mensaje.');
+                      }
+
+                      setForumStatus('Mensaje borrado.', 'info');
+                      await loadThreads({ preserveSelection: true });
+                    } catch (error) {
+                      console.error('Forum post delete error:', error);
+                      setForumStatus(error?.message || 'No se pudo borrar el mensaje.', 'error');
+                    } finally {
+                      if (deleteButton) deleteButton.disabled = false;
+                      if (editButton) editButton.disabled = false;
+                      if (replyButton) replyButton.disabled = false;
+                    }
+                  });
+                  actions.appendChild(deleteButton);
+                }
+
+                main.appendChild(actions);
+
+                if (editContainer) {
+                  main.appendChild(editContainer);
+                }
+              }
+
+              card.appendChild(identity);
+              card.appendChild(main);
+              fragment.appendChild(card);
+              appendChildren(post.id, depth + 1);
+            });
+          };
+
+          appendChildren('root', 0);
+          postListEl.appendChild(fragment);
+          renderForumMermaid(postListEl);
+        }
+
+        async function loadPosts(threadId) {
+          if (!threadId) {
+            renderPosts([], false, false);
+            return;
+          }
+
+          const requestToken = ++latestPostRequestToken;
+          try {
+            const response = await fetch(`/api/forum/threads/${encodeURIComponent(threadId)}/posts`);
+            const payload = await response.json().catch(() => ({}));
+
+            if (requestToken !== latestPostRequestToken) return;
+
+            if (!response.ok) {
+              throw new Error(payload?.error || 'No se pudieron cargar los mensajes del hilo.');
+            }
+
+            renderPosts(payload.posts || [], Boolean(payload.canReply), Boolean(payload.canVote));
+          } catch (error) {
+            console.error('Forum load posts error:', error);
+            renderPosts([], false, false);
+            setForumStatus(error?.message || 'No se pudieron cargar los mensajes del hilo.', 'error');
+          }
+        }
+
+        async function loadBoards({ preferredSlug = '' } = {}) {
+          if (forumState.mode !== 'board') return;
+
+          const url = new URL('/api/forum/boards', window.location.origin);
+          url.searchParams.set('courseId', forumState.courseId);
+
+          const response = await fetch(url.toString());
+          const payload = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            throw new Error(payload?.error || 'No se pudieron cargar los foros del curso.');
+          }
+
+          forumState.boards = Array.isArray(payload.boards) ? payload.boards : [];
+          forumState.canManageBoards = Boolean(payload.canManageBoards);
+
+          if (newBoardForm) {
+            newBoardForm.hidden = !forumState.canManageBoards;
+          }
+
+          if (!boardSelect) return;
+
+          boardSelect.innerHTML = '';
+          forumState.boards.forEach((board) => {
+            const normalizedSlug = String(board?.slug || '').trim().toLowerCase();
+            if (!normalizedSlug) return;
+            const option = document.createElement('option');
+            option.value = normalizedSlug;
+            option.textContent = board.title;
+            boardSelect.appendChild(option);
+          });
+
+          const slugs = forumState.boards
+            .map((board) => String(board?.slug || '').trim().toLowerCase())
+            .filter(Boolean);
+          const targetSlug = preferredSlug || forumState.boardSlug;
+          if (targetSlug && slugs.includes(targetSlug)) {
+            forumState.boardSlug = targetSlug;
+          } else {
+            forumState.boardSlug = slugs[0] || '';
+          }
+
+          boardSelect.value = forumState.boardSlug;
+        }
+
+        async function loadThreads({ preserveSelection = true } = {}) {
+          const url = new URL('/api/forum/threads', window.location.origin);
+          url.searchParams.set('courseId', forumState.courseId);
+
+          const scopePayload = getForumScopePayload();
+          if (scopePayload.lessonSlug) {
+            url.searchParams.set('lessonSlug', scopePayload.lessonSlug);
+          }
+          if (scopePayload.boardSlug) {
+            url.searchParams.set('boardSlug', scopePayload.boardSlug);
+          }
+
+          const previousThreadId = forumState.selectedThreadId;
+
+          try {
+            const response = await fetch(url.toString());
+            const payload = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+              throw new Error(payload?.error || 'No se pudieron cargar los hilos del foro.');
+            }
+
+            forumState.threads = Array.isArray(payload.threads) ? payload.threads : [];
+            forumState.canWrite = Boolean(payload.canWrite);
+
+            newThreadForm.hidden = !forumState.canWrite;
+            if (newThreadContainer) newThreadContainer.hidden = !forumState.canWrite;
+
+            if (preserveSelection && previousThreadId && forumState.threads.some((thread) => thread.id === previousThreadId)) {
+              forumState.selectedThreadId = previousThreadId;
+            } else {
+              forumState.selectedThreadId = forumState.threads[0]?.id || '';
+            }
+
+            renderThreadList();
+
+            if (forumState.selectedThreadId) {
+              setThreadLoadingState();
+              await loadPosts(forumState.selectedThreadId);
+            } else {
+              renderPosts([], false, false);
+            }
+
+            if (!forumState.canWrite) {
+              setForumStatus('Puedes leer este foro, pero necesitas inscripción para publicar.', 'info');
+            } else {
+              setForumStatus('');
+            }
+
+            markForumScopeAsRead();
+          } catch (error) {
+            console.error('Forum load threads error:', error);
+            forumState.threads = [];
+            forumState.selectedThreadId = '';
+            forumState.canWrite = false;
+            newThreadForm.hidden = true;
+            if (newThreadContainer) newThreadContainer.hidden = true;
+            renderThreadList();
+            renderPosts([], false, false);
+            setForumStatus(error?.message || 'No se pudieron cargar los hilos del foro.', 'error');
+          }
+        }
+
+        if (boardSelect) {
+          boardSelect.addEventListener('change', async () => {
+            forumState.boardSlug = boardSelect.value || '';
+            forumState.selectedThreadId = '';
+            const nextUrl = new URL(window.location.href);
+            if (forumState.boardSlug) {
+              nextUrl.searchParams.set('board', forumState.boardSlug);
+            } else {
+              nextUrl.searchParams.delete('board');
+            }
+            window.history.replaceState({}, '', `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+            await loadThreads({ preserveSelection: false });
+          });
+        }
+
+        if (newBoardForm && boardTitleInput && boardDescriptionInput) {
+          newBoardForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (!forumState.canManageBoards) return;
+
+            const title = boardTitleInput.value.trim();
+            const description = boardDescriptionInput.value.trim();
+            if (title.length < 3) {
+              setForumStatus('El nombre del foro alternativo debe tener al menos 3 caracteres.', 'error');
+              return;
+            }
+
+            const submitButton = newBoardForm.querySelector('button[type="submit"]');
+            if (submitButton) submitButton.disabled = true;
+
+            try {
+              const response = await fetch('/api/forum/boards', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  courseId: forumState.courseId,
+                  title,
+                  description,
+                }),
+              });
+
+              const payload = await response.json().catch(() => ({}));
+              if (!response.ok) {
+                throw new Error(payload?.error || 'No se pudo crear el foro alternativo.');
+              }
+
+              boardTitleInput.value = '';
+              boardDescriptionInput.value = '';
+
+              const newSlug = payload?.board?.slug || '';
+              await loadBoards({ preferredSlug: newSlug });
+              await loadThreads({ preserveSelection: false });
+              setForumStatus('Foro alternativo creado.', 'info');
+            } catch (error) {
+              console.error('Forum create board error:', error);
+              setForumStatus(error?.message || 'No se pudo crear el foro alternativo.', 'error');
+            } finally {
+              if (submitButton) submitButton.disabled = false;
+            }
+          });
+        }
+
+        function bindSubmitShortcut(input, form) {
+          if (!input || !form) return;
+          input.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter') return;
+            if (!(event.metaKey || event.ctrlKey)) return;
+            event.preventDefault();
+            form.requestSubmit();
+          });
+        }
+
+        attachForumEditor(threadBodyInput);
+        attachForumEditor(replyBodyInput);
+
+        bindSubmitShortcut(threadBodyInput, newThreadForm);
+        bindSubmitShortcut(replyBodyInput, replyForm);
+
+        newThreadForm.addEventListener('submit', async (event) => {
+          event.preventDefault();
+          if (!forumState.canWrite) return;
+
+          const title = threadTitleInput.value.trim();
+          const body = threadBodyInput.value.trim();
+
+          if (title.length < 3) {
+            setForumStatus('El título debe tener al menos 3 caracteres.', 'error');
+            return;
+          }
+
+          if (!body) {
+            setForumStatus('Escribe el primer mensaje del hilo.', 'error');
+            return;
+          }
+
+          const submitButton = newThreadForm.querySelector('button[type="submit"]');
+          if (submitButton) submitButton.disabled = true;
+
+          try {
+            const response = await fetch('/api/forum/threads', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                courseId: forumState.courseId,
+                ...getForumScopePayload(),
+                title,
+                body,
+              }),
+            });
+
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              throw new Error(payload?.error || 'No se pudo crear el hilo.');
+            }
+
+            threadTitleInput.value = '';
+            threadBodyInput.value = '';
+            setForumStatus('Hilo publicado.', 'info');
+
+            await loadThreads({ preserveSelection: false });
+          } catch (error) {
+            console.error('Forum create thread error:', error);
+            setForumStatus(error?.message || 'No se pudo crear el hilo.', 'error');
+          } finally {
+            if (submitButton) submitButton.disabled = false;
+          }
+        });
+
+        cancelReplyBtn.addEventListener('click', () => {
+          clearReplyTarget();
+        });
+
+        replyForm.addEventListener('submit', async (event) => {
+          event.preventDefault();
+
+          if (!forumState.selectedThreadId) return;
+
+          const replyBody = replyBodyInput.value.trim();
+          if (!replyBody) {
+            setForumStatus('Escribe una respuesta antes de publicar.', 'error');
+            return;
+          }
+
+          const submitButton = replyForm.querySelector('button[type="submit"]');
+          if (submitButton) submitButton.disabled = true;
+
+          try {
+            const response = await fetch(
+              `/api/forum/threads/${encodeURIComponent(forumState.selectedThreadId)}/posts`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  body: replyBody,
+                  parentPostId: parentPostInput.value || null,
+                }),
+              },
+            );
+
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              throw new Error(payload?.error || 'No se pudo publicar la respuesta.');
+            }
+
+            replyBodyInput.value = '';
+            clearReplyTarget();
+            setForumStatus('Respuesta publicada.', 'info');
+            await loadThreads({ preserveSelection: true });
+          } catch (error) {
+            console.error('Forum create post error:', error);
+            setForumStatus(error?.message || 'No se pudo publicar la respuesta.', 'error');
+          } finally {
+            if (submitButton) submitButton.disabled = false;
+          }
+        });
+
+        if (forumState.mode === 'board') {
+          try {
+            await loadBoards();
+          } catch (error) {
+            setForumStatus(error?.message || 'No se pudo cargar la lista de foros del curso.', 'error');
+            if (newThreadForm) newThreadForm.hidden = true;
+            if (newThreadContainer) newThreadContainer.hidden = true;
+            return;
+          }
+
+          if (!forumState.boardSlug) {
+            setForumStatus('No hay foros configurados para este curso.', 'error');
+            if (newThreadForm) newThreadForm.hidden = true;
+            if (newThreadContainer) newThreadContainer.hidden = true;
+            return;
+          }
+        }
+
+        await loadThreads({ preserveSelection: false });
+      }
+
+      const LEGACY_OBSIDIAN_AUDIO_REGEX = /\.(mp3|wav|ogg|m4a|aac|flac)$/i;
+      const legacyAudioResolveCache = new Map();
+
+      function getLegacyAudioNameFromAnchor(anchor) {
+        if (!anchor) return '';
+
+        const text = (anchor.textContent || '').trim();
+        if (LEGACY_OBSIDIAN_AUDIO_REGEX.test(text)) {
+          return text;
+        }
+
+        const hrefAttr = anchor.getAttribute('href') || '';
+        if (!hrefAttr) return '';
+
+        try {
+          const parsed = new URL(hrefAttr, window.location.origin);
+          const rawPath = decodeURIComponent(parsed.pathname || '');
+          const basename = rawPath.split('/').filter(Boolean).pop() || '';
+          if (LEGACY_OBSIDIAN_AUDIO_REGEX.test(basename)) {
+            return basename;
+          }
+        } catch {
+          const fallbackBase = decodeURIComponent(hrefAttr).split('/').filter(Boolean).pop() || '';
+          if (LEGACY_OBSIDIAN_AUDIO_REGEX.test(fallbackBase)) {
+            return fallbackBase;
+          }
+        }
+
+        return '';
+      }
+
+      async function resolveLegacyAudioName(name) {
+        const key = String(name || '').trim();
+        if (!key) return '';
+        if (legacyAudioResolveCache.has(key)) return legacyAudioResolveCache.get(key);
+
+        try {
+          const response = await fetch(`/api/content-media/resolve?name=${encodeURIComponent(key)}`);
+          const payload = await response.json().catch(() => ({}));
+          const resolved = response.ok && typeof payload?.url === 'string' ? payload.url : '';
+          legacyAudioResolveCache.set(key, resolved);
+          return resolved;
+        } catch (error) {
+          console.error('Legacy audio resolve error:', error);
+          legacyAudioResolveCache.set(key, '');
+          return '';
+        }
+      }
+
+      async function upgradeLegacyObsidianAudioLinks() {
+        const contentArea = document.querySelector('.content-area');
+        if (!contentArea) return;
+
+        const anchors = Array.from(contentArea.querySelectorAll('a'));
+        if (!anchors.length) return;
+
+        for (const anchor of anchors) {
+          if (anchor.closest('#lesson-forum')) continue;
+          if (anchor.dataset.audioUpgraded === 'true') continue;
+
+          const audioName = getLegacyAudioNameFromAnchor(anchor);
+          if (!audioName) continue;
+
+          const resolvedUrl = await resolveLegacyAudioName(audioName);
+          if (!resolvedUrl) continue;
+
+          const audio = document.createElement('audio');
+          audio.className = 'obsidian-audio-embed obsidian-media-embed';
+          audio.controls = true;
+          audio.preload = 'metadata';
+          audio.src = resolvedUrl;
+
+          anchor.dataset.audioUpgraded = 'true';
+          anchor.replaceWith(audio);
+        }
       }
 
       document.addEventListener('DOMContentLoaded', async () => {
+        await upgradeLegacyObsidianAudioLinks();
         await loadUserSubmissions();
 
         const evalWrappers = document.querySelectorAll('.eval-block-wrapper');
@@ -743,6 +3083,8 @@ const isAssignment = currentEntry.data.type === 'assignment';
         if (hasEvalBlocks && Object.keys(userSubmissions).length > 0) {
           addClearAnswersButton();
         }
+
+        await initLessonForum();
       });
       
       function addClearAnswersButton() {

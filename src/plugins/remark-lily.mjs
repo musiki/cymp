@@ -13,7 +13,8 @@ export default function remarkLily() {
     }
 
     visit(tree, 'code', (node, index, parent) => {
-      if (node.lang !== 'lily') return;
+      const lang = String(node.lang || '').trim().toLowerCase();
+      if (lang !== 'lily' && lang !== 'lilypond' && lang !== 'ly') return;
 
       const code = node.value;
       // Create a hash of the code to use as filename

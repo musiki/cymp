@@ -4,6 +4,9 @@ import BaseHead from '../components/BaseHead.astro';
 import Footer from '../components/Footer.astro';
 import Header from '../components/Header.astro';
 import { createClient } from '@supabase/supabase-js';
+import { getResultIcon, getSubmissionAnswerText, getSubmissionResultState } from '../lib/submission-table';
+import { getEvalOptionMap } from '../lib/eval-option-map';
+import '../styles/theme.css';
 
 // --- AUTHENTICATION ---
 const session = Astro.locals.session as any;
@@ -16,16 +19,53 @@ if (!currentUser?.email) {
 // Initialize Supabase
 const supabase = createClient(import.meta.env.SUPABASE_URL, import.meta.env.SUPABASE_KEY);
 
-// Get user details from DB to check role using email
-let { data: users } = await supabase.from('User').select('*').eq('email', currentUser.email);
-let dbUser = users?.[0];
+const sessionEmail = String(currentUser.email || '').trim();
+const normalizedSessionEmail = sessionEmail.toLowerCase();
+
+const normalizeRole = (value) => String(value || '').trim().toLowerCase();
+
+async function resolveDashboardUserByEmail(email, normalizedEmail) {
+  const { data, error } = await supabase
+    .from('User')
+    .select('*')
+    .ilike('email', normalizedEmail)
+    .order('updatedAt', { ascending: false })
+    .order('createdAt', { ascending: false });
+
+  if (error) throw error;
+
+  const rows = Array.isArray(data) ? data : [];
+  if (rows.length === 0) return { user: null, rows: [] };
+  if (rows.length === 1) return { user: rows[0], rows };
+
+  // Prefer exact-case email match first, then normalized match, then most recently updated row.
+  const exactCaseRows = rows.filter((row) => String(row?.email || '').trim() === email);
+  if (exactCaseRows.length > 0) return { user: exactCaseRows[0], rows };
+
+  const normalizedRows = rows.filter(
+    (row) => String(row?.email || '').trim().toLowerCase() === normalizedEmail
+  );
+  if (normalizedRows.length > 0) return { user: normalizedRows[0], rows };
+
+  return { user: rows[0], rows };
+}
+
+let dbUser = null;
+let matchedUsers = [];
+try {
+  const resolved = await resolveDashboardUserByEmail(sessionEmail, normalizedSessionEmail);
+  dbUser = resolved.user;
+  matchedUsers = resolved.rows;
+} catch (userResolveError) {
+  console.error('Error resolving dashboard user:', userResolveError);
+}
 
 // If user doesn't exist in DB, create them (first login)
 if (!dbUser) {
   const { data: newUsers, error } = await supabase.from('User').insert([{
     id: crypto.randomUUID(),
-    email: currentUser.email,
-    name: currentUser.name || currentUser.email,
+    email: normalizedSessionEmail,
+    name: currentUser.name || normalizedSessionEmail,
     emailVerified: true,
     image: currentUser.image || null,
     role: 'student', // Default role
@@ -40,11 +80,51 @@ if (!dbUser) {
   if (!dbUser) {
     return Astro.redirect('/login?redirect=/dashboard');
   }
+
+  matchedUsers = [dbUser];
 }
 
-const isTeacher = dbUser.role === 'teacher';
+const dashboardUserIds = Array.from(
+  new Set(
+    (matchedUsers.length > 0 ? matchedUsers : [dbUser])
+      .map((row) => row?.id)
+      .filter(Boolean)
+  )
+);
 
-import '../styles/theme.css';
+let hasTeacherEnrollment = false;
+if (dashboardUserIds.length > 0) {
+  const { data: teacherEnrollments, error: teacherEnrollmentError } = await supabase
+    .from('Enrollment')
+    .select('userId')
+    .in('userId', dashboardUserIds)
+    .eq('roleInCourse', 'teacher')
+    .limit(1);
+
+  if (teacherEnrollmentError) {
+    console.error('Error resolving teacher enrollment for dashboard user:', teacherEnrollmentError);
+  } else {
+    hasTeacherEnrollment = Array.isArray(teacherEnrollments) && teacherEnrollments.length > 0;
+  }
+}
+
+const hasTeacherRole = (matchedUsers.length > 0 ? matchedUsers : [dbUser]).some(
+  (row) => normalizeRole(row?.role) === 'teacher'
+);
+const isTeacher = hasTeacherRole || hasTeacherEnrollment;
+
+if (isTeacher && normalizeRole(dbUser?.role) !== 'teacher') {
+  const teacherRow = matchedUsers.find((row) => normalizeRole(row?.role) === 'teacher');
+  if (teacherRow) {
+    dbUser = teacherRow;
+  } else if (dashboardUserIds.length > 0) {
+    const preferredTeacherEnrollmentId = dashboardUserIds[0];
+    const enrollmentMatchedUser = matchedUsers.find((row) => row?.id === preferredTeacherEnrollmentId);
+    if (enrollmentMatchedUser) {
+      dbUser = enrollmentMatchedUser;
+    }
+  }
+}
 
 // --- TEACHER DASHBOARD ---
 let allUsers, allEnrollments, allSubmissions, allAssignments;
@@ -53,7 +133,7 @@ if (isTeacher) {
   // Query all data for teacher view
   const { data: u } = await supabase.from('User').select('*'); allUsers = u || [];
   const { data: e } = await supabase.from('Enrollment').select('*'); allEnrollments = e || [];
-  const { data: s } = await supabase.from('Submission').select('*'); allSubmissions = s || [];
+  const { data: s } = await supabase.from('Submission').select('*').order('submittedAt', { ascending: false }); allSubmissions = s || [];
   const { data: a } = await supabase.from('Assignment').select('*'); allAssignments = a || [];
 }
 
@@ -61,18 +141,43 @@ if (isTeacher) {
 let studentAssignments: any[] = [];
 let studentSubmissions: any[] = [];
 
-if (!isTeacher) {
-  const { data: a } = await supabase.from('Assignment').select('id, courseId'); studentAssignments = a || [];
-  const { data: s } = await supabase.from('Submission').select('*').eq('userId', dbUser.id).order('submittedAt', { ascending: false }); studentSubmissions = s || [];
+let enrollmentQuery = supabase.from('Enrollment').select('courseId');
+if (dashboardUserIds.length > 1) {
+  enrollmentQuery = enrollmentQuery.in('userId', dashboardUserIds);
+} else {
+  enrollmentQuery = enrollmentQuery.eq('userId', dbUser.id);
 }
-
-const { data: userEnrollmentsData } = await supabase
-  .from('Enrollment')
-  .select('courseId')
-  .eq('userId', dbUser.id);
+const { data: userEnrollmentsData } = await enrollmentQuery;
 
 const userEnrollments = userEnrollmentsData || [];
 const enrolledCourseIds = userEnrollments.map((e: any) => e.courseId);
+
+if (!isTeacher) {
+  if (enrolledCourseIds.length > 0) {
+    const { data: a } = await supabase
+      .from('Assignment')
+      .select('id, courseId, slug')
+      .in('courseId', enrolledCourseIds);
+    studentAssignments = a || [];
+  }
+
+  let studentSubmissionQuery = supabase
+    .from('Submission')
+    .select('*')
+    .order('submittedAt', { ascending: false });
+  if (dashboardUserIds.length > 1) {
+    studentSubmissionQuery = studentSubmissionQuery.in('userId', dashboardUserIds);
+  } else {
+    studentSubmissionQuery = studentSubmissionQuery.eq('userId', dbUser.id);
+  }
+
+  const { data: s } = await studentSubmissionQuery;
+  studentSubmissions = s || [];
+}
+
+const studentAssignmentById = new Map<string, any>(
+  (studentAssignments || []).map((assignment: any) => [assignment.id, assignment]),
+);
 
 // --- LOAD COURSES FROM FILES ---
 // Use import.meta.glob for robust file finding in production/Vercel
@@ -100,16 +205,105 @@ const courseEntries = Object.entries(courseFiles).map(([filepath, module]: any) 
       : (fm.tags ? String(fm.tags).split(',').map(s => s.trim()) : [])
   };
 }).filter(Boolean);
+
+const evalOptionMap = await getEvalOptionMap();
+const assignmentById = new Map<string, any>(
+  (allAssignments || []).map((assignment: any) => {
+    const fallbackOptions = evalOptionMap.get(assignment.id);
+    return [assignment.id, fallbackOptions ? { ...assignment, options: fallbackOptions } : assignment];
+  }),
+);
+for (const [evalId, options] of evalOptionMap.entries()) {
+  if (!assignmentById.has(evalId)) {
+    assignmentById.set(evalId, { id: evalId, options });
+  }
+}
+const recentTeacherSubmissions = isTeacher ? [...(allSubmissions || [])].sort((a: any, b: any) => {
+  return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
+}) : [];
+
+const formatSubmissionDate = (value: string | null | undefined) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString('es-ES', {
+    day: '2-digit',
+    month: '2-digit',
+    year: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+const decodeUriSafe = (value: string | null | undefined) => {
+  if (!value) return '';
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
 ---
 
 <html lang="es">
   <head>
-    <BaseHead title={isTeacher ? "Panel de Administración" : "Mis Cursos"} description="Plataforma de aprendizaje" />
+    <BaseHead title={isTeacher ? "Panel de Administración" : "Panel de Estudiante"} description="Plataforma de aprendizaje" />
     <meta charset="utf-8" />
     <script src="https://cdn.zinggrid.com/zinggrid.min.js" defer></script>
     <style is:inline>
       .wrap { max-width: 1200px; margin: 0 auto; padding: 1rem; }
       .group-title { margin-top: 3rem; margin-bottom: 1rem; border-bottom: 1px solid var(--c-border); padding-bottom: 0.5rem; }
+      .student-section { margin-bottom: 2.25rem; }
+      .student-profile-card {
+        border: 1px solid var(--c-border);
+        border-radius: 10px;
+        background: var(--c-bg);
+        padding: 1rem;
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 0.85rem;
+        align-items: center;
+      }
+      .student-profile-avatar {
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 1px solid var(--c-border);
+      }
+      .student-profile-fallback {
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        border: 1px solid var(--c-border);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        background: var(--c-bg-mute);
+      }
+      .student-profile-name {
+        margin: 0;
+        font-size: 1rem;
+      }
+      .student-profile-meta {
+        margin: 0.2rem 0 0 0;
+        color: var(--c-fg-dim);
+        font-size: 0.84rem;
+        display: grid;
+        gap: 0.2rem;
+      }
+      .student-profile-note {
+        margin: 0.6rem 0 0 0;
+        color: var(--c-fg-dim);
+        font-size: 0.8rem;
+      }
+      .student-empty {
+        color: var(--c-fg-dim);
+        border: 1px dashed var(--c-border);
+        border-radius: 8px;
+        padding: 0.8rem;
+      }
       .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
       .card { border: 1px solid var(--c-border); border-radius: 8px; overflow: hidden; background: var(--c-bg); display: flex; flex-direction: column; text-decoration: none; color: var(--c-fg); position: relative; }
       .card:hover { border-color: var(--c-link); }
@@ -145,6 +339,148 @@ const courseEntries = Object.entries(courseFiles).map(([filepath, module]: any) 
       .tab { padding: 0.75rem 1.5rem; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -2px; font-weight: 500; transition: all 0.2s; }
       .tab:hover { background: var(--c-bg-mute); }
       .tab.active { border-bottom-color: var(--c-link); color: var(--c-link); }
+      .result-icon { font-size: 1rem; font-weight: 700; line-height: 1; display: inline-flex; align-items: center; justify-content: center; min-width: 1rem; }
+      .result-icon.correct { color: #1f8f45; }
+      .result-icon.incorrect { color: #c62828; }
+      .result-icon.pending { color: #8b9098; }
+      .quick-score-input {
+        width: 64px;
+        padding: 0.3rem 0.45rem;
+        text-align: center;
+        border: 1px solid var(--c-border);
+        border-radius: 6px;
+        background: var(--c-bg);
+        color: var(--c-fg);
+        font-size: 0.86rem;
+      }
+      .quick-feedback-input {
+        width: min(100%, 320px);
+        padding: 0.35rem 0.5rem;
+        border: 1px solid var(--c-border);
+        border-radius: 6px;
+        background: var(--c-bg);
+        color: var(--c-fg);
+        font-size: 0.84rem;
+      }
+      .quick-saving { border-color: #f59e0b !important; }
+      .quick-success { border-color: #16a34a !important; }
+      .quick-error { border-color: #dc2626 !important; }
+      .teacher-courses-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 0.85rem;
+      }
+      .teacher-course-card {
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        padding: 0.8rem;
+        background: var(--c-bg);
+      }
+      .teacher-course-card h3 {
+        margin: 0 0 0.45rem 0;
+        font-size: 1rem;
+      }
+      .teacher-course-meta {
+        margin: 0;
+        display: grid;
+        gap: 0.25rem;
+        font-size: 0.84rem;
+        color: var(--c-fg-dim);
+      }
+      .fold-shortcuts,
+      .course-grades-shortcuts {
+        margin: 0 0 0.8rem 0;
+        padding: 0.6rem 0.7rem;
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        background: var(--c-bg-mute);
+        font-size: 0.82rem;
+      }
+      .fold-shortcuts kbd,
+      .course-grades-shortcuts kbd {
+        border: 1px solid var(--c-border);
+        border-bottom-width: 2px;
+        border-radius: 4px;
+        padding: 0.05rem 0.35rem;
+        font-size: 0.75rem;
+        background: var(--c-bg);
+      }
+      .fold-node {
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        background: var(--c-bg);
+      }
+      .fold-node + .fold-node {
+        margin-top: 0.7rem;
+      }
+      .fold-header {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        padding: 0.55rem 0.65rem;
+        border: none;
+        background: var(--c-bg-mute);
+        color: var(--c-fg);
+        text-align: left;
+        cursor: pointer;
+        border-radius: 7px 7px 0 0;
+        font-size: 0.88rem;
+      }
+      .fold-node[data-fold-level="1"] > .fold-header {
+        font-weight: 700;
+      }
+      .fold-node[data-fold-level="2"] > .fold-header {
+        font-weight: 600;
+      }
+      .fold-children {
+        padding: 0.65rem;
+      }
+      .fold-node.is-collapsed > .fold-children {
+        display: none;
+      }
+      .fold-toggle-icon {
+        width: 1rem;
+        text-align: center;
+        font-size: 0.82rem;
+        color: var(--c-fg-dim);
+      }
+      .fold-node.is-collapsed .fold-toggle-icon {
+        transform: rotate(-90deg);
+      }
+      .fold-student-summary {
+        margin-left: auto;
+        font-size: 0.8rem;
+        color: var(--c-fg-dim);
+      }
+      .student-assignment-table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .student-assignment-table th,
+      .student-assignment-table td {
+        border-bottom: 1px solid var(--c-border);
+        padding: 0.45rem;
+        text-align: center;
+      }
+      .student-assignment-table th {
+        font-size: 0.77rem;
+        font-weight: 600;
+        color: var(--c-fg-dim);
+      }
+      .student-assignment-table td:first-child,
+      .student-assignment-table th:first-child {
+        text-align: left;
+      }
+      .fold-level-2 {
+        margin-left: 0.4rem;
+      }
+      .fold-level-3 {
+        margin-left: 0.4rem;
+      }
+      .fold-level-4 {
+        margin-left: 0.4rem;
+      }
     </style>
   </head>
   <body>
@@ -152,7 +488,7 @@ const courseEntries = Object.entries(courseFiles).map(([filepath, module]: any) 
     <main class="wrap">
       {isTeacher ? (
         <>
-          <h1>👨‍🏫 Panel de Administración</h1>
+          <h1>Panel de Administración</h1>
           <p>Gestión de usuarios, inscripciones y calificaciones</p>
 
           <div class="tabs">
@@ -163,7 +499,7 @@ const courseEntries = Object.entries(courseFiles).map(([filepath, module]: any) 
           </div>
 
           <div id="users-content">
-            <h2>📋 Lista de Usuarios</h2>
+            <h2>Lista de Usuarios</h2>
             <table class="admin-table">
               <thead>
                 <tr>
@@ -224,7 +560,7 @@ const courseEntries = Object.entries(courseFiles).map(([filepath, module]: any) 
           </div>
 
           <div id="enrollments-content" style="display: none;">
-            <h2>📚 Inscripciones por Curso</h2>
+            <h2>Inscripciones por Curso</h2>
             
             {courseEntries.map((course: any) => {
               const courseEnrollments = allEnrollments.filter((e: any) => e.courseId === course.courseId);
@@ -282,56 +618,224 @@ const courseEntries = Object.entries(courseFiles).map(([filepath, module]: any) 
           </div>
 
           <div id="submissions-content" style="display: none;">
-            <h2>📝 Entregas Recientes</h2>
-            <table class="admin-table">
-              <thead>
-                <tr>
-                  <th>Usuario</th>
-                  <th>Tarea</th>
-                  <th>Intentos</th>
-                  <th>Fecha</th>
-                  <th>Estado</th>
-                  <th>Calificación</th>
-                  <th>Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {allSubmissions && allSubmissions.map((sub:any) => {
-                  const submitter = allUsers && allUsers.find((u:any) => u.id === sub.userId);
-                  return (
-                    <tr>
-                      <td>{submitter?.name || 'Usuario desconocido'}</td>
-                      <td style="font-size: 0.85rem;">{sub.assignmentId}</td>
-                      <td style="text-align: center;">{sub.attempts}</td>
-                      <td style="font-size: 0.85rem;">
-                        {new Date(sub.submittedAt).toLocaleDateString('es-ES')}
-                      </td>
-                      <td>
-                        {sub.gradedAt ? (
-                          <span class="status-graded">✓ Calificada</span>
-                        ) : (
-                          <span class="status-pending">⏳ Pendiente</span>
-                        )}
-                      </td>
-                      <td style="text-align: center; font-weight: 600;">
-                        {sub.score !== null ? `${sub.score}/10` : '-'}
-                      </td>
-                      <td>
-                        <a href={`/admin/grade/${sub.id}`} class="grade-link">
-                          {sub.gradedAt ? 'Ver' : 'Calificar'}
-                        </a>
-                      </td>
-                    </tr>
+            <h2>Entregas Recientes</h2>
+            <p class="fold-shortcuts">
+              <strong>Atajos:</strong>
+              <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>↑</kbd> fold all,
+              <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>↓</kbd> unfold all,
+              <kbd>⌘</kbd> + <kbd>↑</kbd> fold un nivel,
+              <kbd>⌘</kbd> + <kbd>↓</kbd> unfold un nivel.
+            </p>
+
+            {(() => {
+              if (recentTeacherSubmissions.length === 0) {
+                return <p>No hay entregas recientes.</p>;
+              }
+
+              const groupedByCourse = recentTeacherSubmissions.reduce((acc: any, sub: any) => {
+                const assignment = assignmentById.get(sub.assignmentId);
+                const assignmentSlug = String(assignment?.slug || sub.assignmentId || '');
+                const rawParts = assignmentSlug.replace(/^\/+/, '').split('/').filter(Boolean);
+                const decodedParts = rawParts.map((part: string) => decodeUriSafe(part));
+                const decodedCourseId = decodeUriSafe(assignment?.courseId || decodedParts[0] || 'sin-curso');
+
+                let relativeParts = decodedParts;
+                if (decodedCourseId && relativeParts[0] === decodedCourseId) {
+                  relativeParts = relativeParts.slice(1);
+                } else if (!assignment?.courseId && relativeParts.length > 1) {
+                  relativeParts = relativeParts.slice(1);
+                }
+
+                const noteKey = relativeParts[relativeParts.length - 1] || decodeUriSafe(sub.assignmentId);
+                const folderKey = relativeParts[0] || 'general';
+                const h1Key = relativeParts.length > 2 ? relativeParts.slice(1, -1).join(' / ') : '';
+
+                if (!acc[decodedCourseId]) acc[decodedCourseId] = {};
+                if (!acc[decodedCourseId][folderKey]) {
+                  acc[decodedCourseId][folderKey] = { notes: {}, h1Groups: {} };
+                }
+
+                if (h1Key) {
+                  if (!acc[decodedCourseId][folderKey].h1Groups[h1Key]) {
+                    acc[decodedCourseId][folderKey].h1Groups[h1Key] = { notes: {} };
+                  }
+                  if (!acc[decodedCourseId][folderKey].h1Groups[h1Key].notes[noteKey]) {
+                    acc[decodedCourseId][folderKey].h1Groups[h1Key].notes[noteKey] = [];
+                  }
+                  acc[decodedCourseId][folderKey].h1Groups[h1Key].notes[noteKey].push(sub);
+                } else {
+                  if (!acc[decodedCourseId][folderKey].notes[noteKey]) {
+                    acc[decodedCourseId][folderKey].notes[noteKey] = [];
+                  }
+                  acc[decodedCourseId][folderKey].notes[noteKey].push(sub);
+                }
+
+                return acc;
+              }, {});
+
+              return Object.entries(groupedByCourse).map(([courseId, folderGroups]: [string, any]) => {
+                const courseSubmissions = Object.values(folderGroups).flatMap((folderGroup: any) => {
+                  const directNotes = Object.values(folderGroup.notes || {}).flat();
+                  const nestedH1 = Object.values(folderGroup.h1Groups || {}).flatMap((h1Group: any) =>
+                    Object.values(h1Group.notes || {}).flat(),
                   );
-                })}
-              </tbody>
-            </table>
+                  return [...directNotes, ...nestedH1];
+                }) as any[];
+                const coursePending = courseSubmissions.filter((submission: any) => !submission.gradedAt).length;
+
+                const renderNoteSection = (noteKey: string, noteSubmissions: any[], foldLevel: number) => {
+                  const pendingNote = noteSubmissions.filter((submission: any) => !submission.gradedAt).length;
+                  return (
+                    <section
+                      class:list={['fold-node', foldLevel === 3 ? 'fold-level-3' : '', foldLevel >= 4 ? 'fold-level-4' : '']}
+                      data-fold-level={foldLevel}
+                      data-fold-node
+                      data-fold-scope="submissions"
+                      style="margin-bottom: 0.5rem;"
+                    >
+                      <button type="button" class="fold-header" data-fold-toggle>
+                        <span class="fold-toggle-icon">▾</span>
+                        <span>📝 {decodeUriSafe(noteKey)}</span>
+                        <span class="fold-student-summary">{noteSubmissions.length} respuestas • {pendingNote} pendientes</span>
+                      </button>
+                      <div class="fold-children">
+                        <table class="admin-table" style="margin-top: 0;">
+                          <thead>
+                            <tr>
+                              <th>Usuario</th>
+                              <th>Tarea</th>
+                              <th>Entrega</th>
+                              <th>Respuesta</th>
+                              <th>Resultado</th>
+                              <th>Punto (x/10)</th>
+                              <th>Retroalimentación</th>
+                              <th>Acciones</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {noteSubmissions.map((sub: any) => {
+                              const submitter = allUsers && allUsers.find((u: any) => u.id === sub.userId);
+                              const resultState = getSubmissionResultState(sub);
+                              const answerText = getSubmissionAnswerText(sub, assignmentById);
+                              const assignment = assignmentById.get(sub.assignmentId);
+                              const assignmentSlug = assignment?.slug || sub.assignmentId;
+                              const assignmentLabel = decodeUriSafe(assignmentSlug.split('/').pop() || assignmentSlug);
+
+                              return (
+                                <tr>
+                                  <td>{submitter?.name || 'Usuario desconocido'}</td>
+                                  <td style="font-size: 0.85rem;" title={assignmentSlug}>{assignmentLabel}</td>
+                                  <td style="font-size: 0.85rem;">{formatSubmissionDate(sub.submittedAt)}</td>
+                                  <td style="max-width: 320px; font-size: 0.84rem;">{answerText}</td>
+                                  <td style="text-align: center;">
+                                    <span class:list={['result-icon', resultState]}>{getResultIcon(resultState)}</span>
+                                  </td>
+                                  <td style="text-align: center;">
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      max="10"
+                                      step="0.1"
+                                      value={sub.score !== null && sub.score !== undefined ? sub.score : ''}
+                                      placeholder="-"
+                                      class="quick-score-input"
+                                      data-submission-id={sub.id}
+                                    />
+                                  </td>
+                                  <td>
+                                    <input
+                                      type="text"
+                                      class="quick-feedback-input"
+                                      data-submission-id={sub.id}
+                                      value={sub.feedback || ''}
+                                      placeholder="Enter para guardar"
+                                    />
+                                  </td>
+                                  <td>
+                                    <a href={`/admin/grade/${sub.id}`} class="grade-link">
+                                      {sub.gradedAt ? 'Ver' : 'Calificar'}
+                                    </a>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  );
+                };
+
+                return (
+                  <section class="fold-node" data-fold-level="1" data-fold-node data-fold-scope="submissions" style="margin-bottom: 0.85rem;">
+                    <button type="button" class="fold-header" data-fold-toggle>
+                      <span class="fold-toggle-icon">▾</span>
+                      <span>📚 {decodeUriSafe(courseId)}</span>
+                      <span class="fold-student-summary">{courseSubmissions.length} entregas • {coursePending} pendientes</span>
+                    </button>
+                    <div class="fold-children">
+                      {Object.entries(folderGroups).map(([folderKey, folderGroup]: [string, any]) => {
+                        const folderSubmissions = [
+                          ...Object.values(folderGroup.notes || {}).flat(),
+                          ...Object.values(folderGroup.h1Groups || {}).flatMap((h1Group: any) =>
+                            Object.values(h1Group.notes || {}).flat(),
+                          ),
+                        ] as any[];
+                        const pendingFolder = folderSubmissions.filter((submission: any) => !submission.gradedAt).length;
+
+                        return (
+                          <section class="fold-node fold-level-2" data-fold-level="2" data-fold-node data-fold-scope="submissions" style="margin-bottom: 0.55rem;">
+                            <button type="button" class="fold-header" data-fold-toggle>
+                              <span class="fold-toggle-icon">▾</span>
+                              <span>📁 {decodeUriSafe(folderKey)}</span>
+                              <span class="fold-student-summary">{folderSubmissions.length} entregas • {pendingFolder} pendientes</span>
+                            </button>
+                            <div class="fold-children">
+                              {Object.entries(folderGroup.notes || {}).map(([noteKey, noteSubmissions]: [string, any]) =>
+                                renderNoteSection(noteKey, noteSubmissions as any[], 3),
+                              )}
+
+                              {Object.entries(folderGroup.h1Groups || {}).map(([h1Key, h1Group]: [string, any]) => {
+                                const h1Submissions = Object.values(h1Group.notes || {}).flat() as any[];
+                                const h1Pending = h1Submissions.filter((submission: any) => !submission.gradedAt).length;
+
+                                return (
+                                  <section class="fold-node fold-level-3" data-fold-level="3" data-fold-node data-fold-scope="submissions" style="margin-bottom: 0.5rem;">
+                                    <button type="button" class="fold-header" data-fold-toggle>
+                                      <span class="fold-toggle-icon">▾</span>
+                                      <span># {decodeUriSafe(h1Key)}</span>
+                                      <span class="fold-student-summary">{h1Submissions.length} respuestas • {h1Pending} pendientes</span>
+                                    </button>
+                                    <div class="fold-children">
+                                      {Object.entries(h1Group.notes || {}).map(([noteKey, noteSubmissions]: [string, any]) =>
+                                        renderNoteSection(noteKey, noteSubmissions as any[], 4),
+                                      )}
+                                    </div>
+                                  </section>
+                                );
+                              })}
+                            </div>
+                          </section>
+                        );
+                      })}
+                    </div>
+                  </section>
+                );
+              });
+            })()}
           </div>
 
           <div id="course-grades-content" style="display: none;">
-            <h2>📊 Entregas por Curso</h2>
+            <h2>Entregas por Curso</h2>
+            <p class="course-grades-shortcuts">
+              <strong>Atajos:</strong>
+              <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>↑</kbd> fold all,
+              <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>↓</kbd> unfold all,
+              <kbd>⌘</kbd> + <kbd>↑</kbd> fold un nivel,
+              <kbd>⌘</kbd> + <kbd>↓</kbd> unfold un nivel.
+            </p>
+
             {allEnrollments && allSubmissions && allUsers && allAssignments && (() => {
-              // Group by course
               const courseGroups = allEnrollments.reduce((acc: any, enroll: any) => {
                 if (!acc[enroll.courseId]) acc[enroll.courseId] = [];
                 acc[enroll.courseId].push(enroll);
@@ -339,119 +843,155 @@ const courseEntries = Object.entries(courseFiles).map(([filepath, module]: any) 
               }, {});
 
               return Object.entries(courseGroups).map(([courseId, enrolls]: [string, any]) => {
-                // Get all assignments for this course using Assignment table
-                const courseAssignments = allAssignments.filter((a: any) => a.courseId === courseId);
-                const assignmentIds = courseAssignments.map((a: any) => a.id).sort();
-                
-                // Get submissions for these assignments
-                const courseSubmissions = allSubmissions.filter((s: any) => 
-                  assignmentIds.includes(s.assignmentId)
-                );
-                
-                // Group assignments by page/article using Assignment.slug
+                const courseAssignments = allAssignments.filter((assignment: any) => assignment.courseId === courseId);
+                const assignmentIds = courseAssignments.map((assignment: any) => assignment.id).sort();
+                const courseSubmissions = allSubmissions.filter((submission: any) => assignmentIds.includes(submission.assignmentId));
+
                 const assignmentsByPage = courseAssignments.reduce((acc: any, assignment: any) => {
-                  // Use the slug field to group (e.g., "ejemplo-generative-art/01-conceptos-basicos/03-autoevaluacion")
                   const page = assignment.slug.replace(`${courseId}/`, '') || 'other';
                   if (!acc[page]) acc[page] = [];
-                  acc[page].push(assignment.id);
+                  acc[page].push(assignment);
                   return acc;
                 }, {});
-                
-                // Get students enrolled in this course (not teachers)
+
                 const students = enrolls
-                  .filter((e: any) => e.roleInCourse === 'student')
-                  .map((e: any) => allUsers.find((u: any) => u.id === e.userId))
+                  .filter((enrollment: any) => enrollment.roleInCourse === 'student')
+                  .map((enrollment: any) => allUsers.find((user: any) => user.id === enrollment.userId))
                   .filter(Boolean);
 
                 if (students.length === 0) return null;
 
-                return (
-                  <div style="margin-bottom: 3rem;">
-                    <h3 style="margin-bottom: 1rem; padding: 0.75rem; background: var(--c-bg-mute); border-radius: 6px;">
-                      📚 {courseId}
-                    </h3>
-                    <div style="overflow-x: auto;">
-                      <table class="admin-table grades-table" style="min-width: 800px;">
-                        <thead>
-                          <tr>
-                            <th rowspan="2" style="position: sticky; left: 0; background: var(--c-bg-mute); z-index: 2; vertical-align: bottom;">Estudiante</th>
-                            {Object.entries(assignmentsByPage).map(([page, assigns]: [string, any]) => (
-                              <th colspan={assigns.length} style="text-align: center; border-bottom: 1px solid var(--c-border); background: var(--c-bg-mute);">
-                                {page}
-                              </th>
-                            ))}
-                            <th rowspan="2" style="text-align: center; background: var(--c-bg-mute); vertical-align: bottom;">Promedio</th>
-                          </tr>
-                          <tr>
-                            {Object.entries(assignmentsByPage).map(([page, assigns]: [string, any]) => 
-                              assigns.map((assignId: string) => {
-                                const shortId = assignId.split('/').pop() || assignId;
-                                return (
-                                  <th style="min-width: 70px; text-align: center; font-size: 0.75rem; padding: 0.5rem; background: var(--c-bg-mute);">
-                                    {shortId}
-                                  </th>
-                                );
-                              })
-                            )}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {students.map((student: any) => {
-                            const studentSubs = courseSubmissions.filter((s: any) => s.userId === student.id);
-                            const scores = assignmentIds.map((assignId: string) => {
-                              const sub = studentSubs.find((s: any) => s.assignmentId === assignId);
-                              return sub?.score !== null && sub?.score !== undefined ? parseFloat(sub.score) : null;
-                            });
-                            const validScores = scores.filter((s: any) => s !== null) as number[];
-                            const average = validScores.length > 0 
-                              ? (validScores.reduce((a: number, b: number) => a + b, 0) / validScores.length).toFixed(1)
-                              : '-';
+                const totalPending = courseSubmissions.filter((submission: any) => !submission.gradedAt).length;
 
-                            return (
-                              <tr>
-                                <td style="position: sticky; left: 0; background: var(--c-bg); font-weight: 600; z-index: 1;">
-                                  {student.name}
-                                </td>
-                                {assignmentIds.map((assignId: string) => {
-                                  const sub = studentSubs.find((s: any) => s.assignmentId === assignId);
-                                  return (
-                                    <td style="text-align: center; padding: 0.25rem;" class="grade-cell">
-                                      {sub ? (
-                                        <input
-                                          type="number"
-                                          min="0"
-                                          max="10"
-                                          step="0.1"
-                                          value={sub.score !== null && sub.score !== undefined ? sub.score : ''}
-              placeholder="-"
-                                          data-submission-id={sub.id}
-                                          data-student-name={student.name}
-                                          data-assignment-id={assignId}
-                                          class="grade-input"
-                                          style="width: 60px; padding: 0.25rem; text-align: center; border: 1px solid var(--c-border); border-radius: 4px; background: var(--c-bg); font-size: 0.9rem;"
-                                        />
-                                      ) : (
-                                        <span style="color: var(--c-fg-dim); font-size: 0.85rem;">-</span>
-                                      )}
-                                    </td>
-                                  );
-                                })}
-                                <td style="text-align: center; font-weight: 700; background: var(--c-bg-mute); font-size: 1.1rem;" class="average-cell">
-                                  {average}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                return (
+                  <section class="fold-node" data-fold-level="1" data-fold-node data-fold-scope="course-grades" style="margin-bottom: 0.9rem;">
+                    <button type="button" class="fold-header" data-fold-toggle>
+                      <span class="fold-toggle-icon">▾</span>
+                      <span>📚 {decodeUriSafe(courseId)}</span>
+                      <span class="fold-student-summary">{students.length} estudiantes • {totalPending} pendientes</span>
+                    </button>
+                    <div class="fold-children">
+                      {Object.entries(assignmentsByPage).map(([page, assignmentsForPage]: [string, any]) => {
+                        const pageAssignmentIds = assignmentsForPage.map((assignment: any) => assignment.id);
+
+                        return (
+                          <section class="fold-node fold-level-2" data-fold-level="2" data-fold-node data-fold-scope="course-grades" style="margin-bottom: 0.55rem;">
+                            <button type="button" class="fold-header" data-fold-toggle>
+                              <span class="fold-toggle-icon">▾</span>
+                              <span>📄 {decodeUriSafe(page)}</span>
+                              <span class="fold-student-summary">{assignmentsForPage.length} entregas</span>
+                            </button>
+                            <div class="fold-children">
+                              {students.map((student: any) => {
+                                const studentSubmissions = courseSubmissions.filter((submission: any) =>
+                                  submission.userId === student.id && pageAssignmentIds.includes(submission.assignmentId),
+                                );
+
+                                const studentScores = studentSubmissions
+                                  .map((submission: any) =>
+                                    submission.score !== null && submission.score !== undefined ? Number(submission.score) : null,
+                                  )
+                                  .filter((score: any) => score !== null) as number[];
+
+                                const average = studentScores.length > 0
+                                  ? (studentScores.reduce((sum: number, score: number) => sum + score, 0) / studentScores.length).toFixed(1)
+                                  : '-';
+
+                                const panelKey = `${courseId}__${page}__${student.id}`
+                                  .replace(/[^a-zA-Z0-9_-]/g, '_')
+                                  .slice(0, 120);
+
+                                return (
+                                  <article class="fold-node fold-level-3" data-fold-level="3" data-fold-node data-fold-scope="course-grades" style="margin-bottom: 0.45rem;">
+                                    <button type="button" class="fold-header" data-fold-toggle>
+                                      <span class="fold-toggle-icon">▾</span>
+                                      <span>👤 {student.name}</span>
+                                      <span class="fold-student-summary" data-average-for={panelKey}>Promedio: {average}</span>
+                                    </button>
+                                    <div class="fold-children">
+                                      <table class="student-assignment-table">
+                                        <thead>
+                                          <tr>
+                                            <th>Asignación</th>
+                                            <th>Nota (x/10)</th>
+                                            <th>Estado</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {assignmentsForPage.map((assignment: any) => {
+                                            const submission = studentSubmissions.find((sub: any) => sub.assignmentId === assignment.id);
+                                            const assignmentLabel = decodeUriSafe(assignment.id.split('/').pop() || assignment.id);
+                                            return (
+                                              <tr>
+                                                <td>{assignmentLabel}</td>
+                                                <td>
+                                                  {submission ? (
+                                                    <input
+                                                      type="number"
+                                                      min="0"
+                                                      max="10"
+                                                      step="0.1"
+                                                      value={submission.score !== null && submission.score !== undefined ? submission.score : ''}
+                                                      placeholder="-"
+                                                      data-submission-id={submission.id}
+                                                      data-assignment-id={assignment.id}
+                                                      data-student-panel={panelKey}
+                                                      class="grade-input"
+                                                      style="width: 66px; padding: 0.25rem; text-align: center; border: 1px solid var(--c-border); border-radius: 4px; background: var(--c-bg); font-size: 0.9rem;"
+                                                    />
+                                                  ) : (
+                                                    <span style="color: var(--c-fg-dim);">-</span>
+                                                  )}
+                                                </td>
+                                                <td>
+                                                  {submission?.gradedAt ? (
+                                                    <span class="status-graded">✓ Calificada</span>
+                                                  ) : submission ? (
+                                                    <span class="status-pending">⏳ Pendiente</span>
+                                                  ) : (
+                                                    <span style="color: var(--c-fg-dim);">Sin entrega</span>
+                                                  )}
+                                                </td>
+                                              </tr>
+                                            );
+                                          })}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </article>
+                                );
+                              })}
+                            </div>
+                          </section>
+                        );
+                      })}
                     </div>
-                  </div>
+                  </section>
                 );
               });
             })()}
           </div>
 
           <script>
+            const foldableTabs = new Set(['course-grades', 'submissions']);
+            const foldStates = {};
+
+            function getFoldState(scope) {
+              if (!foldStates[scope]) {
+                foldStates[scope] = { depth: 0, maxLevel: 1 };
+              }
+              return foldStates[scope];
+            }
+
+            function getFoldNodes(scope) {
+              return Array.from(document.querySelectorAll(`[data-fold-node][data-fold-scope="${scope}"]`));
+            }
+
+            function getActiveTabName() {
+              const activeTab = document.querySelector('.tab.active');
+              return activeTab ? activeTab.getAttribute('data-tab') : null;
+            }
+
             document.querySelectorAll('.tab').forEach(tab => {
               tab.addEventListener('click', () => {
                 // Remove active from all
@@ -467,6 +1007,11 @@ const courseEntries = Object.entries(courseFiles).map(([filepath, module]: any) 
                 // Initialize autosave for grade inputs when switching to course grades tab
                 if (tabName === 'course-grades') {
                   initializeGradeAutosave();
+                  initializeCorrectionFolding('course-grades');
+                }
+                if (tabName === 'submissions') {
+                  initializeSubmissionQuickEditors();
+                  initializeCorrectionFolding('submissions');
                 }
               });
             });
@@ -529,28 +1074,29 @@ const courseEntries = Object.entries(courseFiles).map(([filepath, module]: any) 
               }
             }
 
-            // Update row average after grade change
+            // Update student panel average after grade change
             function updateRowAverage(input) {
-              const row = input.closest('tr');
-              if (!row) return;
-              
-              const gradeInputs = row.querySelectorAll('.grade-input');
+              const panelKey = input.dataset.studentPanel;
+              if (!panelKey) return;
+
+              const panelInputs = document.querySelectorAll(`.grade-input[data-student-panel="${panelKey}"]`);
               const scores = [];
-              
-              gradeInputs.forEach(inp => {
-                const val = parseFloat(inp.value);
-                if (!isNaN(val)) {
-                  scores.push(val);
-                }
+
+              panelInputs.forEach((panelInput) => {
+                const value = parseFloat(panelInput.value);
+                if (!Number.isNaN(value)) scores.push(value);
               });
-              
-              const averageCell = row.querySelector('.average-cell');
-              if (averageCell && scores.length > 0) {
-                const avg = (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1);
-                averageCell.textContent = avg;
-              } else if (averageCell) {
-                averageCell.textContent = '-';
+
+              const averageElement = document.querySelector(`[data-average-for="${panelKey}"]`);
+              if (!averageElement) return;
+
+              if (scores.length === 0) {
+                averageElement.textContent = 'Promedio: -';
+                return;
               }
+
+              const average = (scores.reduce((sum, value) => sum + value, 0) / scores.length).toFixed(1);
+              averageElement.textContent = `Promedio: ${average}`;
             }
 
             const debouncedSaveGrade = debounce(saveGrade, 800);
@@ -571,94 +1117,260 @@ const courseEntries = Object.entries(courseFiles).map(([filepath, module]: any) 
               });
             }
 
-            // Initialize on load if course-grades tab is active
+            function applyFoldDepth(scope) {
+              const foldNodes = getFoldNodes(scope);
+              if (foldNodes.length === 0) return;
+
+              const state = getFoldState(scope);
+              const collapseFromLevel = state.maxLevel - state.depth + 1;
+
+              foldNodes.forEach((node) => {
+                const level = Number(node.dataset.foldLevel || 0);
+                const shouldCollapse = state.depth > 0 && level >= collapseFromLevel;
+                node.classList.toggle('is-collapsed', shouldCollapse);
+              });
+            }
+
+            function setFoldDepth(scope, nextDepth) {
+              const state = getFoldState(scope);
+              const bounded = Math.max(0, Math.min(state.maxLevel, nextDepth));
+              state.depth = bounded;
+              applyFoldDepth(scope);
+            }
+
+            function initializeCorrectionFolding(scope) {
+              const foldNodes = getFoldNodes(scope);
+              if (foldNodes.length === 0) return false;
+
+              const state = getFoldState(scope);
+              state.maxLevel = foldNodes.reduce((max, node) => {
+                const level = Number(node.dataset.foldLevel || 0);
+                return Math.max(max, level);
+              }, 1);
+
+              foldNodes.forEach((node) => {
+                if (node.dataset.foldBound === 'true') return;
+                node.dataset.foldBound = 'true';
+
+                const toggle = node.querySelector('[data-fold-toggle]');
+                if (!toggle) return;
+
+                toggle.addEventListener('click', () => {
+                  node.classList.toggle('is-collapsed');
+                });
+              });
+
+              applyFoldDepth(scope);
+              return true;
+            }
+
+            function handleFoldShortcuts(event) {
+              const isMacShortcut = event.metaKey;
+              if (!isMacShortcut) return;
+
+              const target = event.target;
+              if (target instanceof HTMLElement) {
+                const tag = target.tagName.toLowerCase();
+                if (target.isContentEditable || tag === 'input' || tag === 'textarea' || tag === 'select') {
+                  return;
+                }
+              }
+
+              const activeTabName = getActiveTabName();
+              if (!activeTabName || !foldableTabs.has(activeTabName)) return;
+              if (!initializeCorrectionFolding(activeTabName)) return;
+
+              const state = getFoldState(activeTabName);
+
+              if (event.shiftKey && event.key === 'ArrowUp') {
+                event.preventDefault();
+                setFoldDepth(activeTabName, state.maxLevel);
+                return;
+              }
+
+              if (event.shiftKey && event.key === 'ArrowDown') {
+                event.preventDefault();
+                setFoldDepth(activeTabName, 0);
+                return;
+              }
+
+              if (!event.shiftKey && event.key === 'ArrowUp') {
+                event.preventDefault();
+                setFoldDepth(activeTabName, state.depth + 1);
+                return;
+              }
+
+              if (!event.shiftKey && event.key === 'ArrowDown') {
+                event.preventDefault();
+                setFoldDepth(activeTabName, state.depth - 1);
+              }
+            }
+
+            function markQuickState(input, state) {
+              input.classList.remove('quick-saving', 'quick-success', 'quick-error');
+              if (state) input.classList.add(state);
+              if (state === 'quick-success' || state === 'quick-error') {
+                setTimeout(() => {
+                  input.classList.remove('quick-success', 'quick-error');
+                }, 1200);
+              }
+            }
+
+            async function saveQuickSubmissionField({ submissionId, score, feedback, input }) {
+              if (!submissionId) return;
+
+              markQuickState(input, 'quick-saving');
+
+              try {
+                const response = await fetch('/api/grade/quick-update', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    submissionId,
+                    score,
+                    feedback,
+                  }),
+                });
+
+                if (!response.ok) {
+                  markQuickState(input, 'quick-error');
+                  return;
+                }
+
+                markQuickState(input, 'quick-success');
+              } catch (error) {
+                console.error('Error saving quick submission field:', error);
+                markQuickState(input, 'quick-error');
+              }
+            }
+
+            function initializeSubmissionQuickEditors() {
+              const feedbackInputs = document.querySelectorAll('.quick-feedback-input');
+              const scoreInputs = document.querySelectorAll('.quick-score-input');
+
+              feedbackInputs.forEach((input) => {
+                if (input.dataset.bound === 'true') return;
+                input.dataset.bound = 'true';
+
+                input.addEventListener('keydown', async (event) => {
+                  if (event.key !== 'Enter') return;
+                  event.preventDefault();
+                  await saveQuickSubmissionField({
+                    submissionId: input.dataset.submissionId,
+                    feedback: input.value,
+                    input,
+                  });
+                });
+              });
+
+              scoreInputs.forEach((input) => {
+                if (input.dataset.bound === 'true') return;
+                input.dataset.bound = 'true';
+
+                const handleSaveScore = async () => {
+                  if (input.value === '') return;
+                  const score = parseFloat(input.value);
+                  if (Number.isNaN(score)) return;
+                  await saveQuickSubmissionField({
+                    submissionId: input.dataset.submissionId,
+                    score,
+                    input,
+                  });
+                };
+
+                input.addEventListener('keydown', async (event) => {
+                  if (event.key !== 'Enter') return;
+                  event.preventDefault();
+                  await handleSaveScore();
+                });
+
+                input.addEventListener('blur', handleSaveScore);
+              });
+            }
+
+            // Initialize on load for active tab
             document.addEventListener('DOMContentLoaded', () => {
               const activeTab = document.querySelector('.tab.active');
               if (activeTab && activeTab.getAttribute('data-tab') === 'course-grades') {
                 initializeGradeAutosave();
+                initializeCorrectionFolding('course-grades');
               }
+              if (activeTab && activeTab.getAttribute('data-tab') === 'submissions') {
+                initializeSubmissionQuickEditors();
+                initializeCorrectionFolding('submissions');
+              }
+              document.addEventListener('keydown', handleFoldShortcuts);
             });
           </script>
         </>
       ) : (
         <>
-          <h1>Mis Cursos</h1>
-          
-          {studentSubmissions.length > 0 && (
-            <div style="margin-bottom: 3rem;">
-              <h2 class="group-title">📝 Mis Entregas Recientes</h2>
+          <h1>Panel de Estudiante</h1>
+
+          <section class="student-section">
+            <h2 class="group-title">Mi Perfil</h2>
+            <article class="student-profile-card">
+              {dbUser.image ? (
+                <img class="student-profile-avatar" src={dbUser.image} alt={dbUser.name || dbUser.email || 'Perfil'} />
+              ) : (
+                <span class="student-profile-fallback">
+                  {String(dbUser.name || dbUser.email || 'U').trim().charAt(0).toUpperCase()}
+                </span>
+              )}
+              <div>
+                <p class="student-profile-name">{dbUser.name || 'Estudiante'}</p>
+                <p class="student-profile-meta">
+                  <span>{dbUser.email}</span>
+                  <span>Rol: estudiante</span>
+                </p>
+                <p class="student-profile-note">
+                  Este panel solo muestra tus datos y tus entregas.
+                </p>
+              </div>
+            </article>
+          </section>
+
+          <section class="student-section">
+            <h2 class="group-title">Entregas</h2>
+            {studentSubmissions.length === 0 ? (
+              <p class="student-empty">No registras entregas todavía.</p>
+            ) : (
               <table class="admin-table">
                 <thead>
                   <tr>
                     <th>Tarea</th>
+                    <th>Curso</th>
                     <th>Fecha</th>
                     <th>Estado</th>
                     <th>Calificación</th>
-                    <th>Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {studentSubmissions.slice(0, 5).map((sub: any) => (
-                    <tr>
-                      <td>{sub.assignmentId}</td>
-                      <td>{new Date(sub.submittedAt).toLocaleDateString()}</td>
-                      <td>
-                        {sub.gradedAt ? (
-                          <span class="status-graded">✓ Calificada</span>
-                        ) : (
-                          <span class="status-pending">⏳ Pendiente</span>
-                        )}
-                      </td>
-                      <td>{sub.score !== null ? `${sub.score}/10` : '-'}</td>
-                      <td>
-                        <a href={`/submission/${sub.id}`} class="grade-link">Ver Detalles</a>
-                      </td>
-                    </tr>
-                  ))}
+                  {studentSubmissions.map((sub: any) => {
+                    const assignment = studentAssignmentById.get(sub.assignmentId);
+                    const assignmentSlug = String(assignment?.slug || sub.assignmentId || '');
+                    const assignmentLabel = decodeUriSafe(assignmentSlug.split('/').pop() || assignmentSlug);
+                    const courseLabel = decodeUriSafe(assignment?.courseId || assignmentSlug.split('/')[0] || '—');
+                    return (
+                      <tr>
+                        <td title={assignmentSlug}>{assignmentLabel}</td>
+                        <td>{courseLabel}</td>
+                        <td>{formatSubmissionDate(sub.submittedAt)}</td>
+                        <td>
+                          {sub.gradedAt ? (
+                            <span class="status-graded">✓ Calificada</span>
+                          ) : (
+                            <span class="status-pending">⏳ Pendiente</span>
+                          )}
+                        </td>
+                        <td>{sub.score !== null && sub.score !== undefined ? `${sub.score}/10` : '-'}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
-            </div>
-          )}
-
-          {courseEntries.length === 0 ? (
-            <p>No hay cursos disponibles en este momento.</p>
-          ) : (
-            <div class="gallery">
-              {courseEntries.map((course: any) => {
-                const isEnrolled = enrolledCourseIds.includes(course.courseId);
-
-                // Calculate Progress
-                const courseAssignments = studentAssignments.filter(a => a.courseId === course.courseId);
-                const totalAssignments = courseAssignments.length;
-                const completedAssignments = studentSubmissions.filter(s => courseAssignments.some(a => a.id === s.assignmentId)).length;
-                const progressPercent = totalAssignments > 0 ? Math.round((completedAssignments / totalAssignments) * 100) : 0;
-
-                return (
-                  <div class="card" style="position: relative;">
-                    {course.img && <img src={course.img} alt={course.title} />}
-                    <div class="card-body">
-                      <h4 class="title">{course.title}</h4>
-                      {course.tags.length > 0 && <div class="tags">{course.tags.map((t: string) => <span class="tag">{t}</span>)}</div>}
-
-                      {isEnrolled && totalAssignments > 0 && (
-                        <div class="progress-container" title={`${progressPercent}% Completado`}>
-                          <div class="progress-bar" style={`width: ${progressPercent}%`}></div>
-                        </div>
-                      )}
-                    </div>
-
-                    {isEnrolled ? (
-                      <a href={`/cursos/${course.slug}`} style="position:absolute; top:0; left:0; width:100%; height:100%; z-index:1;"></a>
-                    ) : (
-                      <div class="enroll-overlay">
-                        <button type="button" class="enroll-btn" data-course-id={course.courseId}>Inscribirse</button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+            )}
+          </section>
         </>
       )}
     </main>

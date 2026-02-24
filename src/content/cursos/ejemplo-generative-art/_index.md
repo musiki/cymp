@@ -3,16 +3,12 @@ type: course
 title: "Introducción al Arte Generativo"
 description: "Aprende los fundamentos del arte generativo con código, explorando conceptos de aleatoriedad, algoritmos y estética computacional."
 instructor: "Musiki Lab"
-level: "beginner"
+year: "1er año"
 duration: "4 semanas"
 public: false
 coverImage: "https://i.imgur.com/My9GqVB.png"
 tags: ["arte-generativo", "programación", "creatividad"]
 ---
-
-
-
-![](https://i.imgur.com/0Ijxgbn.png)
 
 
 # Introducción al Arte Generativo

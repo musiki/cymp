@@ -7,6 +7,16 @@
 	--gray-dark: 34, 41, 57;
 	--gray-gradient: rgba(var(--gray-light), 50%), #fff;
 	--box-shadow: 0 0 0 transparent;
+	--font-size-base: clamp(1.02rem, 0.96rem + 0.24vw, 1.1rem);
+	--line-height-base: 1.72;
+	--content-measure: 74ch;
+	--space-xs: 0.75rem;
+	--space-sm: 1rem;
+	--space-md: 1.35rem;
+	--space-lg: 2rem;
+	--space-xl: 2.8rem;
+	--font-family-primary: "Dank Mono", monospace;
+	--font-family-mono: "Dank Mono", monospace;
 }
 header[data-astro-cid-3ef6ksr2] {
     margin: 0;
@@ -36,7 +46,7 @@ font-style: normal;
 	font-display: swap;
 }
 body {
-	font-family: "Dank Mono", monospace;
+	font-family: var(--font-family-primary);
 	margin: 0;
 	padding: 0;
 	text-align: left;
@@ -44,14 +54,14 @@ body {
 	word-wrap: break-word;
 	overflow-wrap: break-word;
 	color: rgb(var(--gray-dark));
-	font-size: 20px;
-	line-height: 1.7;
+	font-size: var(--font-size-base);
+	line-height: var(--line-height-base);
 }
 main {
-	width: 100%;
-	max-width: 100%;
-	margin: 0;
-	padding: 3em 1em;
+	width: min(100%, 1200px);
+	max-width: 1200px;
+	margin: 0 auto;
+	padding: clamp(1.4rem, 2.5vw, 2.8rem) clamp(1rem, 2vw, 1.5rem);
 }
 h1,
 h2,
@@ -59,25 +69,25 @@ h3,
 h4,
 h5,
 h6 {
-	margin: 0 0 0.5rem 0;
+	margin: 0 0 var(--space-xs) 0;
 	color: rgb(var(--black));
-	line-height: 1.1;
+	line-height: 1.22;
 }
 h1 {
-	font-size: 1.5em;
+	font-size: clamp(1.75rem, 1.46rem + 1.2vw, 2.3rem);
 	font-weight: bold;
 }
 h2 {
-	font-size: 1.3em;
+	font-size: clamp(1.42rem, 1.28rem + 0.62vw, 1.76rem);
 }
 h3 {
-	font-size: 1.2em;
+	font-size: clamp(1.25rem, 1.16rem + 0.44vw, 1.48rem);
 }
 h4 {
-	font-size: 1.1em;
+	font-size: clamp(1.12rem, 1.06rem + 0.28vw, 1.25rem);
 }
 h5 {
-	font-size: 1em;
+	font-size: 1rem;
 }
 strong,
 b {
@@ -94,17 +104,24 @@ a:hover {
 	border-bottom-color: var(--accent);
 }
 p {
-	margin-bottom: 1em;
+	margin: 0 0 var(--space-md) 0;
 }
 .prose p {
-	margin-bottom: 2em;
+	margin-bottom: var(--space-md);
 }
 textarea {
 	width: 100%;
-	font-size: 16px;
 }
 input {
-	font-size: 16px;
+	font-size: 1rem;
+}
+textarea,
+input,
+button,
+select,
+option {
+	font-family: var(--font-family-primary);
+	font-size: 1rem;
 }
 table {
 	width: 100%;
@@ -114,13 +131,33 @@ img {
 	height: auto;
 	border-radius: 0;
 }
+
+.obsidian-media-embed {
+	margin: 0.9rem 0;
+}
+
+.obsidian-audio-embed,
+.obsidian-video-embed {
+	display: block;
+	width: min(100%, 680px);
+	max-width: 100%;
+}
+
+.obsidian-media-caption {
+	margin: 0.35rem 0 0 0;
+	font-size: 0.82rem;
+	color: rgb(var(--gray-dark), 0.72);
+}
 code {
+	font-family: var(--font-family-mono);
 	padding: 2px 5px;
 	background-color: transparent;
 	border-radius: 0;
 }
 pre {
-	padding: 1.5em;
+	font-family: var(--font-family-mono);
+	padding: 1rem 1.15rem;
+	margin: var(--space-md) 0;
 	border-radius: 0;
 }
 pre > code {
@@ -128,21 +165,91 @@ pre > code {
 }
 blockquote {
 	border-left: 4px solid var(--accent);
-	padding: 0 0 0 20px;
-	margin: 0px;
-	font-size: 1.333em;
+	padding: 0 0 0 1rem;
+	margin: var(--space-md) 0;
+	font-size: 1rem;
+	line-height: 1.7;
 }
 hr {
 	border: none;
 	border-top: 1px solid transparent;
-	margin: 3em;
+	margin: var(--space-xl) 0;
+}
+
+:where(article, .prose, .content-area) {
+	line-height: 1.75;
+}
+
+:where(article, .prose, .content-area) :where(p, ul, ol, pre, blockquote, table, figure, hr) {
+	margin-top: var(--space-md);
+	margin-bottom: var(--space-md);
+}
+
+:where(article, .prose, .content-area) :where(h1, h2, h3, h4) {
+	margin-top: calc(var(--space-xl) + 1.2em);
+	margin-bottom: var(--space-sm);
+	scroll-margin-top: 5.5rem;
+}
+
+:where(article, .prose, .content-area) :where(h5, h6) {
+	margin-top: var(--space-xl);
+	margin-bottom: var(--space-sm);
+	scroll-margin-top: 5.5rem;
+}
+
+:where(article, .prose, .content-area) :where(p + p) {
+	margin-top: var(--space-sm);
+}
+
+:where(article, .prose, .content-area) > :first-child {
+	margin-top: 0 !important;
+}
+
+:where(article, .prose, .content-area) :where(li) {
+	line-height: 1.65;
+}
+
+/* KaTeX fallback guards (avoid double layer if external stylesheet fails to load) */
+.katex {
+	position: relative;
+}
+
+.katex .katex-mathml {
+	position: absolute !important;
+	width: 1px !important;
+	height: 1px !important;
+	padding: 0 !important;
+	margin: -1px !important;
+	overflow: hidden !important;
+	clip: rect(0, 0, 0, 0) !important;
+	white-space: nowrap !important;
+	border: 0 !important;
+}
+
+.katex-display {
+	display: block;
+	margin: var(--space-md) 0;
+	overflow-x: auto;
+	overflow-y: hidden;
+}
+
+.katex-display > .katex {
+	display: block;
+	text-align: center;
 }
 @media (max-width: 720px) {
 	body {
-		font-size: 18px;
+		font-size: 1rem;
+		line-height: 1.68;
 	}
 	main {
-		padding: 1em;
+		padding: 1rem;
+	}
+	:where(article, .prose, .content-area) :where(h1, h2, h3, h4) {
+		margin-top: calc(2rem + 1.2em);
+	}
+	:where(article, .prose, .content-area) :where(h5, h6) {
+		margin-top: 2rem;
 	}
 }
 
@@ -230,20 +337,45 @@ hr {
 
 /* Callouts base */
 .callout {
-  --c-border: transparent;
-  --c-bg: transparent;
-  --c-accent: #111;
+  --c-border: rgba(71, 85, 105, 0.28);
+  --c-bg: rgba(148, 163, 184, 0.12);
+  --c-accent: #334155;
+  --c-icon: "ⓘ";
+  --c-icon-bg: rgba(51, 65, 85, 0.14);
+  --c-icon-border: rgba(51, 65, 85, 0.24);
+  position: relative;
   border: 1px solid var(--c-border);
   border-left: 4px solid var(--c-accent);
   background: var(--c-bg);
-  border-radius: 0;
-  padding: 0.75rem 1rem;
-  margin: 1rem 0;
+  border-radius: 10px;
+  padding: 0.85rem 1rem 0.95rem;
+  margin: 1.1rem 0;
+}
+
+.callout::before {
+  content: var(--c-icon);
+  position: absolute;
+  top: 0.6rem;
+  right: 0.7rem;
+  width: 1.28rem;
+  height: 1.28rem;
+  border-radius: 999px;
+  border: 1px solid var(--c-icon-border);
+  background: var(--c-icon-bg);
+  color: var(--c-accent);
+  font-size: 0.82rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Título del callout */
 .callout-title {
   font-weight: 600;
+  font-size: 0.8em;
+  letter-spacing: 0.01em;
+  padding-right: 1.9rem;
   margin: 0 0 .5rem 0;
 }
 
@@ -252,26 +384,32 @@ hr {
 .callout-body > :last-child { margin-bottom: 0; }
 
 /* Paletas por tipo (podés ajustar a gusto) */
-.callout-note    { --c-accent:#6b7280; --c-border:transparent; --c-bg:transparent; }
-.callout-info    { --c-accent:#2563eb; --c-border:transparent; --c-bg:transparent; }
-.callout-tip     { --c-accent:#059669; --c-border:transparent; --c-bg:transparent; }
-.callout-warning { --c-accent:#d97706; --c-border:transparent; --c-bg:transparent; }
-.callout-danger  { --c-accent:#dc2626; --c-border:transparent; --c-bg:transparent; }
-.callout-quote   { --c-accent:#111827; --c-border:transparent; --c-bg:transparent; font-style: italic; }
+.callout-note    { --c-accent:#64748b; --c-border:rgba(100, 116, 139, 0.36); --c-bg:rgba(100, 116, 139, 0.13); --c-icon:"ⓘ"; --c-icon-bg:rgba(100, 116, 139, 0.2); --c-icon-border:rgba(100, 116, 139, 0.34); }
+.callout-info    { --c-accent:#2563eb; --c-border:rgba(37, 99, 235, 0.36); --c-bg:rgba(37, 99, 235, 0.12); --c-icon:"ℹ"; --c-icon-bg:rgba(37, 99, 235, 0.2); --c-icon-border:rgba(37, 99, 235, 0.35); }
+.callout-tip     { --c-accent:#059669; --c-border:rgba(5, 150, 105, 0.36); --c-bg:rgba(5, 150, 105, 0.12); --c-icon:"✓"; --c-icon-bg:rgba(5, 150, 105, 0.2); --c-icon-border:rgba(5, 150, 105, 0.35); }
+.callout-important { --c-accent:#7c3aed; --c-border:rgba(124, 58, 237, 0.38); --c-bg:rgba(124, 58, 237, 0.12); --c-icon:"★"; --c-icon-bg:rgba(124, 58, 237, 0.2); --c-icon-border:rgba(124, 58, 237, 0.35); }
+.callout-warning { --c-accent:#d97706; --c-border:rgba(217, 119, 6, 0.39); --c-bg:rgba(217, 119, 6, 0.14); --c-icon:"⚠"; --c-icon-bg:rgba(217, 119, 6, 0.21); --c-icon-border:rgba(217, 119, 6, 0.36); }
+.callout-caution { --c-accent:#dc2626; --c-border:rgba(220, 38, 38, 0.4); --c-bg:rgba(220, 38, 38, 0.14); --c-icon:"⛔"; --c-icon-bg:rgba(220, 38, 38, 0.2); --c-icon-border:rgba(220, 38, 38, 0.36); }
+.callout-danger  { --c-accent:#dc2626; --c-border:rgba(220, 38, 38, 0.4); --c-bg:rgba(220, 38, 38, 0.14); --c-icon:"⛔"; --c-icon-bg:rgba(220, 38, 38, 0.2); --c-icon-border:rgba(220, 38, 38, 0.36); }
+.callout-quote   { --c-accent:#334155; --c-border:rgba(51, 65, 85, 0.3); --c-bg:rgba(51, 65, 85, 0.1); --c-icon:"❝"; --c-icon-bg:rgba(51, 65, 85, 0.18); --c-icon-border:rgba(51, 65, 85, 0.3); font-style: italic; }
 
 /* Dark mode callouts */
 .dark .callout {
-  --c-border: transparent;
-  --c-bg: transparent;
+  --c-border: rgba(148, 163, 184, 0.38);
+  --c-bg: rgba(15, 23, 42, 0.38);
   --c-accent: #f9fafb;
+  --c-icon-bg: rgba(248, 250, 252, 0.15);
+  --c-icon-border: rgba(248, 250, 252, 0.32);
 }
 
-.dark .callout-note    { --c-accent:#9ca3af; --c-border:transparent; --c-bg:transparent; }
-.dark .callout-info    { --c-accent:#60a5fa; --c-border:transparent; --c-bg:transparent; }
-.dark .callout-tip     { --c-accent:#34d399; --c-border:transparent; --c-bg:transparent; }
-.dark .callout-warning { --c-accent:#fbbf24; --c-border:transparent; --c-bg:transparent; }
-.dark .callout-danger  { --c-accent:#f87171; --c-border:transparent; --c-bg:transparent; }
-.dark .callout-quote   { --c-accent:#f3f4f6; --c-border:transparent; --c-bg:transparent; font-style: italic; color: #f3f4f6; }
+.dark .callout-note    { --c-accent:#cbd5e1; --c-border:rgba(148, 163, 184, 0.45); --c-bg:rgba(100, 116, 139, 0.2); --c-icon:"ⓘ"; --c-icon-bg:rgba(148, 163, 184, 0.26); --c-icon-border:rgba(148, 163, 184, 0.46); }
+.dark .callout-info    { --c-accent:#93c5fd; --c-border:rgba(96, 165, 250, 0.48); --c-bg:rgba(37, 99, 235, 0.22); --c-icon:"ℹ"; --c-icon-bg:rgba(96, 165, 250, 0.26); --c-icon-border:rgba(96, 165, 250, 0.5); }
+.dark .callout-tip     { --c-accent:#6ee7b7; --c-border:rgba(52, 211, 153, 0.48); --c-bg:rgba(5, 150, 105, 0.22); --c-icon:"✓"; --c-icon-bg:rgba(52, 211, 153, 0.25); --c-icon-border:rgba(52, 211, 153, 0.48); }
+.dark .callout-important { --c-accent:#ddd6fe; --c-border:rgba(196, 181, 253, 0.5); --c-bg:rgba(124, 58, 237, 0.24); --c-icon:"★"; --c-icon-bg:rgba(196, 181, 253, 0.27); --c-icon-border:rgba(196, 181, 253, 0.5); }
+.dark .callout-warning { --c-accent:#fcd34d; --c-border:rgba(251, 191, 36, 0.5); --c-bg:rgba(217, 119, 6, 0.24); --c-icon:"⚠"; --c-icon-bg:rgba(251, 191, 36, 0.28); --c-icon-border:rgba(251, 191, 36, 0.5); }
+.dark .callout-caution { --c-accent:#fca5a5; --c-border:rgba(248, 113, 113, 0.5); --c-bg:rgba(220, 38, 38, 0.24); --c-icon:"⛔"; --c-icon-bg:rgba(248, 113, 113, 0.27); --c-icon-border:rgba(248, 113, 113, 0.5); }
+.dark .callout-danger  { --c-accent:#fca5a5; --c-border:rgba(248, 113, 113, 0.5); --c-bg:rgba(220, 38, 38, 0.24); --c-icon:"⛔"; --c-icon-bg:rgba(248, 113, 113, 0.27); --c-icon-border:rgba(248, 113, 113, 0.5); }
+.dark .callout-quote   { --c-accent:#e2e8f0; --c-border:rgba(148, 163, 184, 0.44); --c-bg:rgba(51, 65, 85, 0.24); --c-icon:"❝"; --c-icon-bg:rgba(148, 163, 184, 0.22); --c-icon-border:rgba(148, 163, 184, 0.4); font-style: italic; color: #f3f4f6; }
 
 /* Mermaid centering and padding for all modes */
 .mermaid {
@@ -402,15 +540,15 @@ ul {
   list-style: none;
   padding-left: 0;
   margin-left: 0;
-  margin-top: 1em;
-  margin-bottom: 1em;
+  margin-top: 1.15em;
+  margin-bottom: 1.4em;
   text-align: left;
 }
 
 ul > li {
   position: relative;
-  padding-left: 1em;
-  margin: 0.3em;
+  padding-left: 1.25em;
+  margin: 0.45em 0;
 }
 
 ul > li::before {
@@ -425,7 +563,7 @@ ul > li::before {
 
 ul ul > li {
   padding-left: 1.6em;
-  margin: 0.2em 0;
+  margin: 0.28em 0;
   text-align: left;
 }
 
@@ -439,7 +577,7 @@ ul ul > li::before {
 
 ul ul ul > li {
   padding-left: 1.6em;
-  margin: 0.2em 0;
+  margin: 0.25em 0;
   text-align: left;
 }
 
@@ -456,15 +594,17 @@ ol {
   counter-reset: item;
   padding-left: 0;
   margin-left: 0;
+  margin-top: 1.15em;
+  margin-bottom: 1.4em;
   list-style: none;
 }
 
 ol > li {
   counter-increment: item;
-  margin: 0.2em 0;
-  padding-left: 1.0em;
+  margin: 0.45em 0;
+  padding-left: 1.15em;
   position: relative;
-  line-height: 1.4;
+  line-height: 1.6;
   text-align: left;
 }
 
@@ -642,4 +782,583 @@ ol ol ol ol > li::marker {
   margin: 1.5rem 0;
   text-align: center;
   overflow-x: auto;
+}
+
+/* Forum dynamic DOM (created client-side in cursos/[...slug].astro)
+   Astro component-scoped styles do not always hit these nodes, so keep
+   critical presentation rules global and explicit. */
+#lesson-forum .forum-post-list {
+  overflow-x: hidden !important;
+  gap: 0.36rem !important;
+}
+
+#lesson-forum .forum-grid {
+  grid-template-columns: 1fr !important;
+  gap: 0.9rem !important;
+}
+
+#lesson-forum .forum-panel {
+  border: none !important;
+  border-radius: 20px !important;
+  background: color-mix(in srgb, var(--forum-bg-subtle, #eef2f5) 10%, transparent) !important;
+  box-shadow: none !important;
+}
+
+#lesson-forum .forum-thread-stage {
+  display: none !important;
+}
+
+#lesson-forum .forum-thread-column {
+  display: grid !important;
+  gap: 0.72rem !important;
+  width: 100% !important;
+  min-width: 0 !important;
+}
+
+#lesson-forum .forum-thread-list {
+  display: grid !important;
+  gap: 0.72rem !important;
+  max-height: none !important;
+  overflow: visible !important;
+  width: 100% !important;
+  min-width: 0 !important;
+}
+
+#lesson-forum .forum-new-thread,
+#lesson-forum .forum-thread-item {
+  border: none !important;
+  border-radius: 20px !important;
+  background: color-mix(in srgb, var(--forum-bg-subtle, #eef2f5) 78%, var(--forum-bg-panel, #ffffff) 22%) !important;
+  box-shadow: none !important;
+  padding: 0.72rem !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+  justify-self: stretch !important;
+}
+
+#lesson-forum .forum-thread-item:nth-child(odd) {
+  background: color-mix(in srgb, var(--forum-bg-subtle, #eef2f5) 74%, var(--forum-bg-panel, #ffffff) 26%) !important;
+}
+
+#lesson-forum .forum-thread-item:nth-child(even) {
+  background: color-mix(in srgb, var(--forum-bg-subtle, #eef2f5) 84%, var(--forum-bg-panel, #ffffff) 16%) !important;
+}
+
+#lesson-forum .forum-thread-item.active {
+  background: color-mix(in srgb, var(--forum-accent, #2f5d8c) 11%, var(--forum-bg-subtle, #eef2f5) 89%) !important;
+}
+
+#lesson-forum .forum-new-thread .forum-panel-title {
+  margin: 0 0 0.55rem 0 !important;
+}
+
+#lesson-forum .forum-editor-shell {
+  position: relative !important;
+  width: 90% !important;
+  max-width: 90% !important;
+  margin: 0 auto !important;
+  min-height: 84px !important;
+  box-sizing: border-box !important;
+}
+
+#lesson-forum .forum-editor-shell .forum-textarea {
+  position: relative !important;
+  z-index: 2 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  background: transparent !important;
+  color: transparent !important;
+  caret-color: var(--forum-text-primary, #1c1f23) !important;
+  font-family: var(--font-family-mono, "Dank Mono", monospace) !important;
+  line-height: 1.6 !important;
+  resize: vertical !important;
+}
+
+#lesson-forum .forum-editor-shell .forum-textarea::placeholder {
+  color: var(--forum-text-secondary, #6b7480) !important;
+  opacity: 0.88 !important;
+}
+
+#lesson-forum .forum-editor-shell.is-empty .forum-textarea {
+  color: var(--forum-text-primary, #1c1f23) !important;
+}
+
+#lesson-forum .forum-editor-shell .forum-textarea::selection {
+  background: color-mix(in srgb, var(--forum-accent, #2f5d8c) 26%, transparent) !important;
+  color: transparent !important;
+}
+
+#lesson-forum .forum-editor-overlay {
+  position: absolute !important;
+  z-index: 1 !important;
+  top: 1px !important;
+  right: 1px !important;
+  bottom: 1px !important;
+  left: 1px !important;
+  margin: 0 !important;
+  padding: 0.58rem 0.7rem !important;
+  border-radius: 7px !important;
+  background: transparent !important;
+  overflow: auto !important;
+  pointer-events: none !important;
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+  box-sizing: border-box !important;
+}
+
+#lesson-forum .forum-editor-shell.is-empty .forum-editor-overlay {
+  opacity: 0 !important;
+}
+
+#lesson-forum .forum-editor-overlay-code {
+  display: block !important;
+  min-height: 100% !important;
+  font-family: var(--font-family-mono, "Dank Mono", monospace) !important;
+  font-size: 0.91rem !important;
+  line-height: 1.6 !important;
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+#lesson-forum .forum-editor-overlay code {
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  font-family: var(--font-family-mono, "Dank Mono", monospace) !important;
+}
+
+#lesson-forum .forum-editor-fence {
+  color: #7f9f7f !important;
+}
+
+#lesson-forum .forum-thread-toggle {
+  width: 100% !important;
+  border: none !important;
+  background: transparent !important;
+  text-align: left !important;
+  color: var(--forum-text-primary, #1c1f23) !important;
+  cursor: pointer !important;
+  padding: 0 !important;
+  display: grid !important;
+  gap: 0.35rem !important;
+}
+
+#lesson-forum .forum-thread-top {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  align-items: center !important;
+  gap: 0.45rem !important;
+}
+
+#lesson-forum .forum-thread-title {
+  font-weight: 700 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  line-height: 1.2 !important;
+}
+
+#lesson-forum .forum-thread-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--forum-accent, #2f5d8c) 42%, transparent) !important;
+  outline-offset: 2px !important;
+  border-radius: 10px !important;
+}
+
+#lesson-forum .forum-thread-caret {
+  justify-self: end !important;
+  color: var(--forum-text-secondary, #6b7480) !important;
+  font-size: 0.74rem !important;
+  line-height: 1 !important;
+}
+
+#lesson-forum .forum-thread-trailing {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 0.38rem !important;
+  justify-self: end !important;
+  margin-right: 5px !important;
+}
+
+#lesson-forum .forum-thread-counts {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 0.35rem !important;
+  opacity: 0.5 !important;
+  font-size: 0.67rem !important;
+  line-height: 1 !important;
+}
+
+#lesson-forum .forum-thread-count {
+  font-weight: 700 !important;
+  position: relative;
+  cursor: help;
+}
+
+#lesson-forum .forum-thread-count-messages {
+  color: #2563eb !important;
+}
+
+#lesson-forum .forum-thread-count-replies {
+  color: #16a34a !important;
+}
+
+#lesson-forum .forum-thread-count::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 0.35rem);
+  transform: translate(-50%, 0.3rem);
+  padding: 0.2rem 0.38rem;
+  border-radius: 6px;
+  background: rgba(17, 24, 39, 0.94);
+  color: #fff;
+  font-size: 0.62rem;
+  line-height: 1.1;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  z-index: 12;
+}
+
+#lesson-forum .forum-thread-count:hover::after,
+#lesson-forum .forum-thread-count:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+#lesson-forum .forum-thread-divider {
+  border: 0 !important;
+  border-top: 1px solid color-mix(in srgb, var(--forum-border-soft, #e2e8ee) 86%, transparent) !important;
+  margin: 0.34rem 0 0.3rem 0 !important;
+}
+
+#lesson-forum .forum-thread-meta {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 0.5rem !important;
+  font-size: 0.72rem !important;
+  line-height: 1.15 !important;
+}
+
+#lesson-forum .forum-thread-author {
+  min-width: 0 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#lesson-forum .forum-thread-date {
+  white-space: nowrap !important;
+  color: var(--forum-text-secondary, #6b7480) !important;
+}
+
+#lesson-forum .forum-thread-inline-panel {
+  margin-top: 0.62rem !important;
+  padding-top: 0.62rem !important;
+  border-top: 1px solid color-mix(in srgb, var(--forum-border-soft, #e2e8ee) 78%, transparent) !important;
+  display: grid !important;
+  gap: 0.62rem !important;
+}
+
+#lesson-forum .forum-thread-inline-panel[hidden] {
+  display: none !important;
+}
+
+#lesson-forum .forum-thread-inline-panel .forum-post-list {
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+#lesson-forum .forum-panel .forum-field,
+#lesson-forum .forum-panel .forum-textarea,
+#lesson-forum .forum-panel .forum-select {
+  width: 90% !important;
+  max-width: 90% !important;
+  display: block !important;
+  margin: 0 auto !important;
+  box-sizing: border-box !important;
+}
+
+#lesson-forum .forum-post {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 0.44rem !important;
+  padding: 0.52rem !important;
+  box-sizing: border-box;
+}
+
+#lesson-forum .forum-post-identity {
+  display: grid !important;
+  grid-template-columns: 24px minmax(0, 1fr) !important;
+  column-gap: 0.55rem !important;
+  align-items: center !important;
+  justify-items: start !important;
+}
+
+#lesson-forum .forum-post.forum-post-role-instructor {
+  background: color-mix(in srgb, var(--forum-role-instructor, #2f5d8c) 5%, var(--forum-bg-panel, #ffffff) 70%) !important;
+  border-color: color-mix(in srgb, var(--forum-role-instructor, #2f5d8c) 5%, var(--forum-border-soft, #e2e8ee) 62%) !important;
+}
+
+#lesson-forum .forum-post.forum-post-role-student {
+  background: color-mix(in srgb, var(--forum-text-secondary, #6b7480) 5%, var(--forum-bg-panel, #ffffff) 70%) !important;
+  border-color: color-mix(in srgb, var(--forum-text-secondary, #6b7480) 5%, var(--forum-border-soft, #e2e8ee) 65%) !important;
+}
+
+#lesson-forum .forum-post-main {
+  min-width: 0 !important;
+  max-width: 100% !important;
+  overflow: visible !important;
+  padding: 0.08rem 0.12rem 0.08rem 0 !important;
+}
+
+#lesson-forum .forum-post-avatar {
+  width: 24px !important;
+  height: 24px !important;
+  min-width: 24px !important;
+  min-height: 24px !important;
+  aspect-ratio: 1 / 1 !important;
+  border-radius: 50% !important;
+  overflow: hidden !important;
+  clip-path: circle(50% at 50% 50%) !important;
+  object-fit: cover !important;
+  object-position: center !important;
+}
+
+#lesson-forum img.forum-post-avatar {
+  display: block !important;
+}
+
+#lesson-forum span.forum-post-avatar {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.55rem !important;
+  line-height: 1 !important;
+}
+
+#lesson-forum .forum-post-name,
+#lesson-forum .forum-post-date {
+  font-size: 0.62rem !important;
+  line-height: 1.2 !important;
+}
+
+#lesson-forum .forum-post-badges,
+#lesson-forum .forum-role-badge {
+  display: none !important;
+}
+
+#lesson-forum .forum-post-body {
+  font-size: 0.95rem !important;
+  line-height: 1.62 !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+}
+
+#lesson-forum .forum-post-body :is(p, ul, ol, pre, blockquote, table, .mermaid, .katex-display, .lily-score, .callout) {
+  max-width: 100% !important;
+  margin: 0 0 0.32rem 0 !important;
+}
+
+#lesson-forum .forum-post-body pre,
+#lesson-forum .forum-post-body table,
+#lesson-forum .forum-post-body .mermaid,
+#lesson-forum .forum-post-body .lily-score,
+#lesson-forum .forum-post-body .katex-display {
+  display: block !important;
+  overflow-x: auto !important;
+}
+
+#lesson-forum .forum-post-body > :last-child {
+  margin-bottom: 0 !important;
+}
+
+#lesson-forum .forum-edit-textarea {
+  min-height: 11.6rem !important;
+}
+
+#lesson-forum .forum-form-actions {
+  width: 90% !important;
+  margin: 0 auto !important;
+  display: flex !important;
+  justify-content: flex-end !important;
+  align-items: center !important;
+  gap: 0.3rem !important;
+}
+
+#lesson-forum .forum-post-actions {
+  width: 100% !important;
+  margin-left: 0 !important;
+  margin-top: 0.25rem !important;
+  display: flex !important;
+  justify-content: flex-end !important;
+  align-items: center !important;
+  gap: 0.3rem !important;
+}
+
+#lesson-forum .forum-post-reactions {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 0.38rem !important;
+  margin-right: auto !important;
+}
+
+#lesson-forum .forum-post-reaction-item {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 0.16rem !important;
+}
+
+#lesson-forum .forum-post-reaction-count {
+  min-width: 1.2ch;
+  text-align: right;
+  font-size: 0.6rem !important;
+  line-height: 1 !important;
+  font-weight: 700 !important;
+  color: var(--forum-text-secondary, #64748b);
+  opacity: 0.58;
+}
+
+#lesson-forum .forum-action-btn {
+  width: 1.42rem !important;
+  height: 1.42rem !important;
+  min-width: 1.42rem !important;
+  min-height: 1.42rem !important;
+  border: none !important;
+  border-radius: 999px !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  padding: 0.14rem !important;
+  margin: 0 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.03em;
+  font-weight: 800 !important;
+  font-size: 0.53rem !important;
+  line-height: 1 !important;
+  color: #fff !important;
+  cursor: pointer;
+  opacity: 0.9 !important;
+  touch-action: manipulation;
+  position: relative;
+  transition: transform 0.14s ease, filter 0.14s ease, box-shadow 0.14s ease;
+}
+
+#lesson-forum .forum-action-btn:hover {
+  transform: translateY(-1px);
+  filter: saturate(1.08);
+  opacity: 0.9 !important;
+}
+
+#lesson-forum .forum-action-btn:active {
+  transform: translateY(0);
+  opacity: 0.9 !important;
+}
+
+#lesson-forum .forum-action-btn:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+  outline-offset: 2px;
+}
+
+#lesson-forum .forum-action-btn::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 0.42rem);
+  transform: translate(-50%, 0.35rem);
+  padding: 0.22rem 0.45rem;
+  border-radius: 6px;
+  background: rgba(17, 24, 39, 0.94);
+  color: #fff;
+  font-size: 0.66rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+  z-index: 15;
+}
+
+#lesson-forum .forum-action-btn:hover::after,
+#lesson-forum .forum-action-btn:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+#lesson-forum .forum-action-r { background: #2563eb !important; } /* Responder */
+#lesson-forum .forum-action-e { background: #7c3aed !important; } /* Editar */
+#lesson-forum .forum-action-b { background: #b91c1c !important; } /* Borrar */
+#lesson-forum .forum-action-p { background: #16a34a !important; } /* Publicar respuesta */
+#lesson-forum .forum-action-c { background: #dc2626 !important; } /* Cancelar */
+#lesson-forum .forum-action-h { background: #ea580c !important; } /* Publicar hilo */
+#lesson-forum .forum-action-f { background: #0d9488 !important; } /* Crear foro */
+
+#lesson-forum .forum-post-reaction-btn {
+  border: 1px solid color-mix(in srgb, var(--forum-border-soft, #d8dee6) 86%, transparent) !important;
+  background: color-mix(in srgb, var(--forum-bg-panel, #ffffff) 80%, var(--forum-bg-subtle, #eef2f5) 20%) !important;
+  color: var(--forum-text-secondary, #64748b) !important;
+  font-size: 0.7rem !important;
+  opacity: 0.44 !important;
+}
+
+#lesson-forum .forum-post-reaction-btn:hover,
+#lesson-forum .forum-post-reaction-btn:focus-visible {
+  opacity: 0.62 !important;
+}
+
+#lesson-forum .forum-post-reaction-btn.is-active {
+  color: #ffffff !important;
+  border-color: transparent !important;
+  opacity: 0.92 !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.82), 0 0 0 3px rgba(15, 23, 42, 0.14);
+}
+
+#lesson-forum .forum-post-reaction-useful.is-active {
+  background: #15803d !important;
+}
+
+#lesson-forum .forum-post-reaction-clarifies.is-active {
+  background: #ca8a04 !important;
+}
+
+#lesson-forum .forum-post-reaction-reference.is-active {
+  background: #2563eb !important;
+}
+
+/* Keep non-action secondary buttons (e.g. edit form save/cancel) usable. */
+#lesson-forum .forum-secondary-btn:not(.forum-action-btn) {
+  border-radius: 8px !important;
+  border: 1px solid rgba(148, 163, 184, 0.5) !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  color: #1f2937 !important;
+  min-height: 2rem !important;
+  padding: 0.32rem 0.72rem !important;
+}
+
+@media (max-width: 968px) {
+  #lesson-forum .forum-post {
+    grid-template-columns: 1fr !important;
+  }
+  #lesson-forum .forum-post-reply {
+    margin-left: 0.35rem !important;
+  }
+  #lesson-forum .forum-form-actions,
+  #lesson-forum .forum-post-actions {
+    justify-content: flex-end !important;
+  }
+  #lesson-forum .forum-action-btn {
+    width: 1.6rem !important;
+    height: 1.6rem !important;
+    min-width: 1.6rem !important;
+    min-height: 1.6rem !important;
+    font-size: 0.56rem !important;
+  }
 }

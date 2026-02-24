@@ -34,9 +34,6 @@ const commitUrl = `https://github.com/${repoOwner}/${repoSlug}/commit/${commitSh
   <head>
     <BaseHead title={title} description={description} />
 
-    <!-- KaTeX -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
-
     <!-- Mermaid -->
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js" defer></script>
     <script is:inline>
@@ -100,10 +97,10 @@ const commitUrl = `https://github.com/${repoOwner}/${repoSlug}/commit/${commitSh
         display: grid;
         grid-template-columns: 1fr auto;
         width: 100%;
-        max-width: 1200px;
+        max-width: 1180px;
         margin: 0 auto;
-        padding: 0 1rem 4rem;
-        gap: 1rem;
+        padding: 0 clamp(1rem, 2vw, 1.5rem) 4rem;
+        gap: 2rem;
       }
 
       @media (max-width: 1024px) {
@@ -113,14 +110,22 @@ const commitUrl = `https://github.com/${repoOwner}/${repoSlug}/commit/${commitSh
 
       /* Improve spacing in prose while keeping your font/line-height */
       .prose {
-        font-size: 1.1rem;
-        line-height: 1.8;
+        font-size: clamp(1rem, 0.98rem + 0.22vw, 1.06rem);
+        line-height: 1.78;
       }
 
       .prose h2, .prose h3, .prose h4 {
         color: rgb(var(--black));
-        margin-top: 2.5rem;
-        margin-bottom: 1rem;
+        margin-top: calc(2.6rem + 1.2em);
+        margin-bottom: 0.95rem;
+      }
+
+      .prose > * {
+        max-width: 74ch;
+      }
+
+      .prose > :is(pre, .code-wrapper, .mermaid, table, figure, .callout) {
+        max-width: 100%;
       }
 
       .dark .prose h2, .dark .prose h3, .dark .prose h4 {

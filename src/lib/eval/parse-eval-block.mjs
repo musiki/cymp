@@ -16,6 +16,17 @@ const asPositiveNumber = (value, fallback = 1) => {
   return parsed;
 };
 
+const asBoolean = (value, fallback = false) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'si', 'sí', 'on'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  }
+  return fallback;
+};
+
 const toList = (value) => {
   if (Array.isArray(value)) return value;
   if (typeof value === 'string') {
@@ -37,6 +48,27 @@ const cleanId = (rawId, fallbackId) => {
     .replace(/^-+|-+$/g, '');
 
   return candidate || fallbackId;
+};
+
+const normalizeLooseEvalYaml = (rawBlock = '') =>
+  String(rawBlock)
+    .split(/\r?\n/g)
+    .map((line) => {
+      // Accept top-level `key = value` syntax for authoring convenience.
+      const assignment = line.match(/^([A-Za-z][A-Za-z0-9_-]*)\s*=\s*(.+)$/);
+      if (!assignment) return line;
+      return `${assignment[1]}: ${assignment[2]}`;
+    })
+    .join('\n');
+
+const loadEvalYaml = (blockValue) => {
+  try {
+    return yaml.load(blockValue);
+  } catch (baseError) {
+    const normalized = normalizeLooseEvalYaml(blockValue);
+    if (normalized === blockValue) throw baseError;
+    return yaml.load(normalized);
+  }
 };
 
 const parseMcqOption = (option, index) => {
@@ -71,7 +103,8 @@ const parseMcqOption = (option, index) => {
   };
 };
 
-const normalizeMcq = (raw, common) => {
+const normalizeMcq = (raw, common, config = {}) => {
+  const { forceMultiple = false } = config;
   const options = toList(raw.options)
     .map((option, index) => parseMcqOption(option, index))
     .filter((option) => option && option.text);
@@ -84,12 +117,18 @@ const normalizeMcq = (raw, common) => {
     options[0].isCorrect = true;
   }
 
+  const correctCount = options.filter((option) => option.isCorrect).length;
+  const allowMultiple = forceMultiple
+    || correctCount > 1;
+
   return {
     ...common,
     type: 'mcq',
     prompt: asText(raw.prompt),
     explanation: asText(raw.explanation),
     hint: asText(raw.hint),
+    allowMultiple,
+    selectionMode: allowMultiple ? 'multiple' : 'single',
     options,
   };
 };
@@ -113,7 +152,7 @@ const normalizeMcc = (raw, common) => {
 export function parseEvalBlock(blockValue, options = {}) {
   const { fallbackId = 'eval-item' } = options;
 
-  const parsed = yaml.load(blockValue);
+  const parsed = loadEvalYaml(blockValue);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('Eval block must be a YAML object');
   }
@@ -126,9 +165,11 @@ export function parseEvalBlock(blockValue, options = {}) {
     mode: ALLOWED_MODES.has(modeCandidate) ? modeCandidate : 'self',
     points: asPositiveNumber(parsed.points, 1),
     title: asText(parsed.title),
+    allowEdit: asBoolean(parsed.allowEdit ?? parsed.allowedit ?? parsed.allow_edit ?? parsed.editable, false),
   };
 
   if (type === 'mcq') return normalizeMcq(parsed, common);
+  if (type === 'msq') return normalizeMcq(parsed, common, { forceMultiple: true });
   if (type === 'mcc') return normalizeMcc(parsed, common);
 
   return {

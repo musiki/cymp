@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
+    "preflight": "bash scripts/preflight.sh",
     "build": "astro build --remote",
     "build:local": "astro build",
     "preview": "astro preview",

@@ -2,13 +2,15 @@
 type: course
 title: music contents
 description: test for music contents
-instructor: zztt
-level: beginner
+instructor: 
+- Luciano Azzigotti
+year: "1er año"
 duration: 4 semanas
 public: false
-coverImage: https://i.imgur.com/My9GqVB.png
+coverImage: https://i.imgur.com/0Ijxgbn.png
 tags: [music, counterpoint, creatividad]
 ---
+
 
 # intro to music contents
 
