@@ -129,25 +129,99 @@ function renderClientSideDataviewJS(node, index, parent, command, config, file, 
   const script = `${imports}
 (async function() {
   try {
-  const container = document.getElementById('${id}');
+  const waitForContainer = async () => {
+    const maxAttempts = 240; // ~4s at 60fps
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const el = document.getElementById('${id}');
+      if (el && !el.closest('#slides-source')) {
+        return el;
+      }
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    const fallback = document.getElementById('${id}');
+    return fallback && !fallback.closest('#slides-source') ? fallback : null;
+  };
+
+  const container = await waitForContainer();
   if (!container) return;
 
-  const ctx = { container };
+  const applyElementOptions = (el, options = {}) => {
+    if (options == null) return el;
+    if (typeof options === 'string') {
+      el.textContent = options;
+      return el;
+    }
+    if (typeof options.text === 'string') {
+      el.textContent = options.text;
+    }
+    if (options.cls) {
+      const classList = Array.isArray(options.cls) ? options.cls : [options.cls];
+      classList.filter(Boolean).forEach((cls) => el.classList.add(cls));
+    }
+    if (options.attr && typeof options.attr === 'object') {
+      for (const [key, value] of Object.entries(options.attr)) {
+        el.setAttribute(key, String(value));
+      }
+    }
+    return el;
+  };
+
+  const enhanceElement = (el) => {
+    if (!el || el.__dvEnhanced) return el;
+
+    Object.defineProperty(el, '__dvEnhanced', {
+      configurable: true,
+      enumerable: false,
+      writable: false,
+      value: true,
+    });
+
+    el.createEl = function(tag, options = {}) {
+      const child = document.createElement(tag);
+      applyElementOptions(child, options);
+      this.appendChild(child);
+      return enhanceElement(child);
+    };
+
+    el.createDiv = function(options = {}) {
+      return this.createEl('div', options);
+    };
+
+    el.empty = function() {
+      this.innerHTML = '';
+      return this;
+    };
+
+    el.setText = function(text = '') {
+      this.textContent = String(text);
+      return this;
+    };
+
+    el.addClass = function(...classes) {
+      classes.filter(Boolean).forEach((cls) => this.classList.add(cls));
+      return this;
+    };
+
+    el.removeClass = function(...classes) {
+      classes.filter(Boolean).forEach((cls) => this.classList.remove(cls));
+      return this;
+    };
+
+    return el;
+  };
+
+  const enhancedContainer = enhanceElement(container);
+
   const dv = {
-    container,
+    container: enhancedContainer,
     current: () => ({ file: { path: "${filePath}", outlinks: [], inlinks: [] } }),
     el: (tag, text = '', options = {}) => {
       const el = document.createElement(tag);
-      if (text) el.textContent = text;
-      if (options.cls) el.className = Array.isArray(options.cls) ? options.cls.join(' ') : options.cls;
-      if (options.attr) {
-        for (const [key, value] of Object.entries(options.attr)) {
-          el.setAttribute(key, value);
-        }
-      }
-      const parentEl = options.parent || container;
+      applyElementOptions(el, options);
+      if (text && !options?.text) el.textContent = text;
+      const parentEl = options.parent || enhancedContainer;
       parentEl.appendChild(el);
-      return el;
+      return enhanceElement(el);
     },
     paragraph: (text, options = {}) => dv.el('p', text, options),
     span: (text, options = {}) => dv.el('span', text, options),
@@ -202,8 +276,23 @@ function renderClientSideDataviewJS(node, index, parent, command, config, file, 
   try {
     const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
     const code = new TextDecoder().decode(Uint8Array.from(atob("${b64}"), c => c.charCodeAt(0)));
+    const trimmed = String(code || '').trim();
+    const looksLikeFunctionExpr = /^(async\\s*)?\\(\\s*\\)\\s*=>/.test(trimmed)
+      || /^(async\\s*)?function\\s*\\(/.test(trimmed);
+
+    // Run normal DataviewJS blocks first (statement style).
     const fn = new AsyncFunction('dv', code);
-    await fn.call(dv, dv);  // Set 'this' to dv for codes using 'this.container', and pass dv for direct access
+    const directResult = await fn.call(dv, dv); // 'this' = dv for this.container
+    if (typeof directResult === 'function') {
+      await directResult.call(dv, dv);
+    } else if (looksLikeFunctionExpr) {
+      // Compatibility with blocks written as async arrow/function expressions.
+      const fnExpr = new AsyncFunction('dv', 'return (' + trimmed + ');');
+      const maybeFn = await fnExpr.call(dv, dv);
+      if (typeof maybeFn === 'function') {
+        await maybeFn.call(dv, dv);
+      }
+    }
   } catch (e) {
     if (container) container.innerHTML = '<div style="color:red;border:1px solid red;padding:10px;">DataviewJS Error: ' + e.message + '</div>';
     console.error(e);

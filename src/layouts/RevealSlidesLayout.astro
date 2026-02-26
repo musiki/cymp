@@ -22,7 +22,7 @@ const {
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css" />
     <link rel="stylesheet" href={slideTheme} />
-    <style>
+    <style is:global>
       html.slides-view,
       body.slides-view {
         margin: 0;
@@ -43,6 +43,11 @@ const {
         overflow: visible;
       }
 
+      .slide-grid-block.media-only {
+        padding: 0.2rem;
+        overflow: hidden;
+      }
+
       .slide-grid-block > :first-child {
         margin-top: 0;
       }
@@ -56,6 +61,154 @@ const {
         white-space: normal;
         overflow-wrap: anywhere;
         word-break: normal;
+      }
+
+      /* Media fit for slides: prevent vertical overflow */
+      .reveal .slides img,
+      .reveal .slides video,
+      .reveal .slides iframe {
+        display: block;
+        max-width: min(100%, 96vw);
+        max-height: min(72vh, calc(100vh - 8rem), 100%);
+        width: auto;
+        height: auto;
+        margin-left: auto;
+        margin-right: auto;
+        object-fit: contain;
+      }
+
+      /* Grid media should be constrained by each grid box */
+      .slide-grid-block img,
+      .slide-grid-block video,
+      .slide-grid-block iframe {
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+      }
+
+      /* Center stills vertically in non-grid slides */
+      .reveal .slides > section > p:only-child:has(> img:only-child),
+      .reveal .slides > section > p:only-child:has(> video:only-child),
+      .reveal .slides > section > p:only-child:has(> iframe:only-child) {
+        min-height: 82vh;
+        margin-top: 0;
+        margin-bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .slide-grid-block > p:has(> img:only-child),
+      .slide-grid-block > p:has(> video:only-child),
+      .slide-grid-block > p:has(> iframe:only-child) {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .slide-grid-block.media-only > p:has(> img:only-child),
+      .slide-grid-block.media-only > p:has(> video:only-child),
+      .slide-grid-block.media-only > p:has(> iframe:only-child) {
+        justify-content: flex-start;
+      }
+
+      .reveal .slides > section.slide-text-centered {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+
+      .reveal .slides > section .slide-media-figure {
+        margin: 0.2rem auto 1rem;
+        width: min(100%, 96vw);
+        max-width: min(96vw, 1200px);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.4rem;
+      }
+
+      .reveal .slides > section .slide-media-figure > :is(img, video, iframe) {
+        display: block;
+        width: min(100%, 96vw) !important;
+        max-width: 100% !important;
+        max-height: min(72vh, calc(100vh - 10rem)) !important;
+        height: auto !important;
+        margin: 0 auto;
+        object-fit: contain;
+      }
+
+      .reveal .slides > section .slide-media-figure > iframe {
+        height: min(72vh, calc(100vh - 10rem)) !important;
+        aspect-ratio: 16 / 9;
+      }
+
+      /* Force large responsive embeds even when source injects inline width/height */
+      .reveal .slides > section iframe {
+        display: block !important;
+        width: min(100%, 96vw) !important;
+        max-width: min(96vw, 1280px) !important;
+        min-height: 320px !important;
+        height: clamp(320px, 65vh, 820px) !important;
+        max-height: min(72vh, calc(100vh - 10rem)) !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
+        aspect-ratio: auto !important;
+      }
+
+      /* Keep embed fit constrained when iframe is used inside custom grid blocks */
+      .slide-grid-block iframe {
+        width: auto !important;
+        height: auto !important;
+        max-width: 100% !important;
+        max-height: 100% !important;
+        aspect-ratio: auto !important;
+      }
+
+      .reveal .slides > section .slide-media-figure > figcaption {
+        width: min(100%, 92ch);
+        text-align: left;
+      }
+
+      .slide-grid-block.stretch-column > * {
+        width: 100%;
+      }
+
+      .slide-grid-block.stretch-row > * {
+        height: 100%;
+      }
+
+      .slide-grid-block.flex-even > * {
+        flex: 1 1 0%;
+      }
+
+      /* Allow vertical reading on overflowing slides only */
+      .reveal .slides > section.slide-scrollable {
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        -webkit-overflow-scrolling: touch;
+        max-height: calc(100vh - 2.5rem);
+        overscroll-behavior: contain;
+        touch-action: pan-y;
+        padding-right: 0.45rem;
+        box-sizing: border-box;
+      }
+
+      .reveal .slides > section.slide-scrollable::-webkit-scrollbar {
+        width: 8px;
+      }
+
+      .reveal .slides > section.slide-scrollable::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.32);
+        border-radius: 999px;
+      }
+
+      .reveal .slides > section.slide-has-grid {
+        height: 100%;
+        min-height: 100%;
       }
 
       .slides-controls {
@@ -116,6 +269,7 @@ const {
 
     <div class="slides-controls" role="toolbar" aria-label="Controles de presentacion">
       <button id="slides-back-btn" type="button" title="Volver a la nota (Esc)">Volver a nota</button>
+      <button id="slides-speaker-btn" type="button" title="Speaker view (Ctrl+S)">Speaker view</button>
       <button id="slides-fs-btn" type="button" title="Fullscreen (Ctrl+E)">Fullscreen</button>
     </div>
 
@@ -129,11 +283,14 @@ const {
       import RevealHighlight from 'reveal.js/plugin/highlight/highlight.esm.js';
       import RevealMath from 'reveal.js/plugin/math/math.esm.js';
       import RevealMarkdown from 'reveal.js/plugin/markdown/markdown.esm.js';
+      import { marked } from 'marked';
+      import mermaid from 'mermaid';
 
       (() => {
         const source = document.getElementById('slides-source');
         const slidesRoot = document.getElementById('slides-root');
         const backBtn = document.getElementById('slides-back-btn');
+        const speakerBtn = document.getElementById('slides-speaker-btn');
         const fsBtn = document.getElementById('slides-fs-btn');
 
         if (!source || !slidesRoot) return;
@@ -155,6 +312,11 @@ const {
           return event.ctrlKey && !event.metaKey && key === 'e';
         };
 
+        const isSpeakerShortcut = (event) => {
+          const key = String(event.key || '').toLowerCase();
+          return event.ctrlKey && !event.metaKey && key === 's';
+        };
+
         const setFsButtonLabel = () => {
           if (!fsBtn) return;
           fsBtn.textContent = document.fullscreenElement ? 'Salir fullscreen' : 'Fullscreen';
@@ -167,10 +329,15 @@ const {
           node?.nodeType === Node.TEXT_NODE && !String(node.textContent || '').trim();
 
         const normalizeNotes = (section) => {
-          const kids = Array.from(section.children);
-          const noteStart = kids.findIndex((el) => {
-            if (el.tagName !== 'P') return false;
-            return /^note:\s*/i.test(String(el.textContent || '').trim());
+          const nodes = Array.from(section.childNodes);
+          const noteStart = nodes.findIndex((node) => {
+            if (node.nodeType === Node.TEXT_NODE) {
+              return /^note:\s*/i.test(String(node.textContent || '').trim());
+            }
+            if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'P') {
+              return /^note:\s*/i.test(String(node.textContent || '').trim());
+            }
+            return false;
           });
 
           if (noteStart === -1) return;
@@ -178,20 +345,104 @@ const {
           const aside = document.createElement('aside');
           aside.className = 'notes';
 
-          while (section.children.length > noteStart) {
-            const child = section.children[noteStart];
-            if (aside.children.length === 0 && child.tagName === 'P') {
-              const text = String(child.textContent || '').replace(/^note:\s*/i, '').trim();
-              if (!text) {
+          while (section.childNodes.length > noteStart) {
+            const child = section.childNodes[noteStart];
+            if (aside.childNodes.length === 0) {
+              if (child.nodeType === Node.TEXT_NODE) {
+                const text = String(child.textContent || '').replace(/^note:\s*/i, '').trim();
                 child.remove();
+                if (!text) {
+                  continue;
+                }
+                const p = document.createElement('p');
+                p.textContent = text;
+                aside.appendChild(p);
                 continue;
               }
-              child.textContent = text;
+              if (child.nodeType === Node.ELEMENT_NODE && child.tagName === 'P') {
+                const text = String(child.textContent || '').replace(/^note:\s*/i, '').trim();
+                if (!text) {
+                  child.remove();
+                  continue;
+                }
+                child.textContent = text;
+              }
             }
             aside.appendChild(child);
           }
 
-          section.appendChild(aside);
+          if (aside.childNodes.length > 0) {
+            section.appendChild(aside);
+          }
+        };
+
+        const isMediaElement = (node) =>
+          node?.nodeType === Node.ELEMENT_NODE &&
+          ['IMG', 'VIDEO', 'IFRAME'].includes(node.tagName);
+
+        const hasMeaningfulText = (node) =>
+          node?.nodeType === Node.TEXT_NODE && String(node.textContent || '').trim().length > 0;
+
+        const normalizeMediaFigures = (section) => {
+          const directParagraphs = Array.from(section.children)
+            .filter((child) => child.tagName === 'P');
+
+          directParagraphs.forEach((paragraph) => {
+            const nodes = Array.from(paragraph.childNodes);
+            const firstMeaningful = nodes.find((node) => {
+              if (isIgnorableText(node)) return false;
+              if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'BR') return false;
+              return true;
+            });
+
+            if (!isMediaElement(firstMeaningful)) return;
+
+            const media = firstMeaningful;
+            const mediaIndex = nodes.indexOf(media);
+            if (mediaIndex === -1) return;
+
+            const captionNodes = nodes
+              .slice(mediaIndex + 1)
+              .filter((node) => !isIgnorableText(node) || hasMeaningfulText(node));
+
+            const figure = document.createElement('figure');
+            figure.className = 'slide-media-figure';
+
+            media.remove();
+            figure.appendChild(media);
+
+            if (captionNodes.length > 0) {
+              const caption = document.createElement('figcaption');
+              captionNodes.forEach((node) => {
+                caption.appendChild(node);
+              });
+              if (String(caption.textContent || '').trim().length > 0 || caption.children.length > 0) {
+                figure.appendChild(caption);
+              }
+            }
+
+            paragraph.replaceWith(figure);
+          });
+        };
+
+        const shouldCenterTextSlide = (slide) => {
+          if (!(slide instanceof HTMLElement)) return false;
+          if (slide.querySelector('.slide-grid-block')) return false;
+          if (slide.querySelector('.slide-media-figure')) return false;
+          if (slide.querySelector('pre, table, canvas, .mermaid, iframe, video, img')) return false;
+
+          const contentChildren = Array.from(slide.children)
+            .filter((child) => !child.matches('aside.notes'));
+          if (contentChildren.length === 0) return false;
+
+          const allowedTags = new Set(['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'P', 'UL', 'OL', 'BLOCKQUOTE']);
+          if (!contentChildren.every((child) => allowedTags.has(child.tagName))) return false;
+
+          const totalHeight = contentChildren.reduce(
+            (sum, child) => sum + child.getBoundingClientRect().height,
+            0,
+          );
+          return totalHeight < slide.clientHeight * 0.84;
         };
 
         let section = document.createElement('section');
@@ -201,6 +452,7 @@ const {
 
         const flushSection = () => {
           if (!hasContent) return;
+          normalizeMediaFigures(section);
           normalizeNotes(section);
           slidesRoot.appendChild(section);
           section = document.createElement('section');
@@ -220,71 +472,227 @@ const {
         flushSection();
         source.remove();
 
-        const parseGridPair = (value, fallback = [0, 0]) => {
-          const parts = String(value || '')
-            .trim()
-            .split(/\s+/)
-            .map((part) => Number(part));
+        const normalizeSlideEmbeds = (container = slidesRoot) => {
+          const embeds = Array.from(container.querySelectorAll('iframe'));
+          embeds.forEach((iframe) => {
+            if (iframe.closest('.slide-grid-block')) return;
 
-          const x = Number.isFinite(parts[0]) ? parts[0] : fallback[0];
-          const y = Number.isFinite(parts[1]) ? parts[1] : fallback[1];
-          return [x, y];
+            iframe.removeAttribute('width');
+            iframe.removeAttribute('height');
+            iframe.setAttribute('loading', 'eager');
+
+            const src = String(iframe.getAttribute('src') || '').trim();
+            if (!src) return;
+
+            try {
+              const url = new URL(src, window.location.origin);
+              const host = url.hostname.toLowerCase();
+              const isYouTube = host.includes('youtube.com')
+                || host.includes('youtu.be')
+                || host.includes('youtube-nocookie.com');
+
+              if (!isYouTube) return;
+
+              if (!url.searchParams.has('vq')) url.searchParams.set('vq', 'hd1080');
+              if (!url.searchParams.has('rel')) url.searchParams.set('rel', '0');
+              if (!url.searchParams.has('modestbranding')) url.searchParams.set('modestbranding', '1');
+              if (!url.searchParams.has('playsinline')) url.searchParams.set('playsinline', '1');
+
+              const nextSrc = url.toString();
+              if (nextSrc !== src) {
+                iframe.setAttribute('src', nextSrc);
+              }
+            } catch {
+              // Ignore malformed iframe src values.
+            }
+          });
         };
 
-        const inlineMarkdown = (value) => {
-          let html = String(value || '');
-          html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" />');
-          html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-          html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-          html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-          return html;
+        const gridAttributeRegex =
+          /^(?:(-?\d*(?:px)?)(?:\s*|x)(-?\d*(?:px)?)|(center|top|bottom|left|right|topleft|topright|bottomleft|bottomright))$/i;
+
+        const toRelativeValue = (max, input) => {
+          if (typeof input !== 'string') return Number.NaN;
+          const value = input.trim().toLowerCase();
+          if (!value) return Number.NaN;
+          if (value.endsWith('px')) {
+            return (Number(value.replace('px', '').trim()) / max) * 100;
+          }
+          return Number(value);
+        };
+
+        const toPixelValue = (max, input) => {
+          if (typeof input !== 'string') return Number.NaN;
+          const value = input.trim().toLowerCase();
+          if (!value) return Number.NaN;
+          if (value.endsWith('px')) {
+            return Number(value.replace('px', '').trim());
+          }
+          return (max / 100) * Number(value);
+        };
+
+        const getXYof = (name, width, height, maxWidth, maxHeight) => {
+          switch (name) {
+            case 'topleft':
+              return [0, 0];
+            case 'topright':
+              return [maxWidth - width, 0];
+            case 'bottomleft':
+              return [0, maxHeight - height];
+            case 'bottomright':
+              return [maxWidth - width, maxHeight - height];
+            case 'left':
+              return [0, (maxHeight - height) / 2];
+            case 'right':
+              return [maxWidth - width, (maxHeight - height) / 2];
+            case 'top':
+              return [(maxWidth - width) / 2, 0];
+            case 'bottom':
+              return [(maxWidth - width) / 2, maxHeight - height];
+            case 'center':
+              return [(maxWidth - width) / 2, (maxHeight - height) / 2];
+            default:
+              return [0, 0];
+          }
+        };
+
+        const readGrid = (drag, drop, isAbsolute) => {
+          try {
+            const dragMatch = gridAttributeRegex.exec(String(drag || '').trim());
+            const dropMatch = gridAttributeRegex.exec(String(drop || '').trim());
+            if (!dragMatch || !dropMatch) return null;
+
+            const [, widthRaw, heightRaw] = dragMatch;
+            const [, xRaw, yRaw, nameRaw] = dropMatch;
+            if (!widthRaw || !heightRaw) return null;
+
+            const slideWidth = 960;
+            const slideHeight = 700;
+            const maxWidth = isAbsolute ? slideWidth : 100;
+            const maxHeight = isAbsolute ? slideHeight : 100;
+            const valueTransformer = isAbsolute ? toPixelValue : toRelativeValue;
+
+            const width = valueTransformer(slideWidth, widthRaw);
+            const height = valueTransformer(slideHeight, heightRaw);
+            if (!Number.isFinite(width) || !Number.isFinite(height)) return null;
+
+            // Keep grid dimensions usable even when source markdown passes
+            // negative drag values (for example "-5 10").
+            const normalizedWidth = width <= 0 ? (maxWidth + width) : width;
+            const normalizedHeight = height <= 0 ? (maxHeight + height) : height;
+            if (!Number.isFinite(normalizedWidth) || !Number.isFinite(normalizedHeight)) return null;
+            if (normalizedWidth <= 0 || normalizedHeight <= 0) return null;
+
+            let x = 0;
+            let y = 0;
+            if (nameRaw) {
+              [x, y] = getXYof(nameRaw.toLowerCase(), normalizedWidth, normalizedHeight, maxWidth, maxHeight);
+            } else {
+              x = valueTransformer(slideWidth, xRaw);
+              y = valueTransformer(slideHeight, yRaw);
+            }
+
+            if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+
+            return {
+              x,
+              y,
+              width: normalizedWidth,
+              height: normalizedHeight,
+              maxWidth,
+              maxHeight,
+              unit: isAbsolute ? 'px' : '%',
+            };
+          } catch (error) {
+            return null;
+          }
+        };
+
+        const leftOf = (gridSpec) => {
+          if (gridSpec.x < 0) {
+            return gridSpec.maxWidth + gridSpec.x - gridSpec.width;
+          }
+          return gridSpec.x;
+        };
+
+        const topOf = (gridSpec) => {
+          if (gridSpec.y < 0) {
+            return gridSpec.maxHeight + gridSpec.y - gridSpec.height;
+          }
+          return gridSpec.y;
+        };
+
+        const getAlignment = (input, flow) => {
+          const direction = flow ?? 'col';
+          switch (input) {
+            case 'topleft':
+              return direction === 'col'
+                ? ['left', 'flex-start', 'flex-start', '']
+                : ['left', 'flex-start', 'space-evenly', ''];
+            case 'topright':
+              return direction === 'col'
+                ? ['right', 'flex-end', 'flex-start', '']
+                : ['right', 'flex-start', 'space-evenly', ''];
+            case 'bottomright':
+              return direction === 'col'
+                ? ['right', 'flex-end', 'flex-end', '']
+                : ['right', 'flex-end', 'space-evenly', ''];
+            case 'bottomleft':
+              return direction === 'col'
+                ? ['left', 'flex-start', 'flex-end', '']
+                : ['left', 'flex-end', 'space-evenly', ''];
+            case 'left':
+              return direction === 'col'
+                ? ['left', 'flex-start', 'space-evenly', '']
+                : ['left', 'center', 'space-evenly', ''];
+            case 'right':
+              return direction === 'col'
+                ? ['right', 'flex-end', 'space-evenly', '']
+                : ['right', 'center', 'space-evenly', ''];
+            case 'top':
+              return direction === 'col'
+                ? ['', 'center', 'flex-start', '']
+                : ['', 'flex-start', 'space-evenly', ''];
+            case 'bottom':
+              return direction === 'col'
+                ? ['', 'center', 'flex-end', '']
+                : ['', 'flex-end', 'space-evenly', ''];
+            case 'stretch':
+              return direction === 'col'
+                ? ['', 'center', 'space-evenly', 'stretch-column']
+                : ['', 'center', 'space-evenly', 'stretch-row'];
+            case 'block':
+            case 'justify':
+              return ['justify', 'center', 'space-evenly', ''];
+            case 'center':
+            default:
+              return ['', 'center', 'center', ''];
+          }
+        };
+
+        const normalizeGridInnerMarkdown = (rawValue) => {
+          return String(rawValue || '')
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/\u00a0/g, ' ');
         };
 
         const renderGridMarkdown = (rawValue) => {
-          const lines = String(rawValue || '')
-            .replace(/<br\s*\/?>/gi, '\n')
-            .split(/\r?\n/g);
+          const markdown = normalizeGridInnerMarkdown(rawValue);
+          return String(marked.parse(markdown, { gfm: true, breaks: true }));
+        };
 
-          let html = '';
-          let inList = false;
-
-          const closeList = () => {
-            if (!inList) return;
-            html += '</ul>';
-            inList = false;
-          };
-
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed) {
-              closeList();
-              continue;
-            }
-
-            const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
-            if (headingMatch) {
-              closeList();
-              const level = Math.min(headingMatch[1].length, 6);
-              html += `<h${level}>${inlineMarkdown(headingMatch[2])}</h${level}>`;
-              continue;
-            }
-
-            const listMatch = trimmed.match(/^-\s+(.+)$/);
-            if (listMatch) {
-              if (!inList) {
-                html += '<ul>';
-                inList = true;
-              }
-              html += `<li>${inlineMarkdown(listMatch[1])}</li>`;
-              continue;
-            }
-
-            closeList();
-            html += `<p>${inlineMarkdown(trimmed)}</p>`;
-          }
-
-          closeList();
-          return html;
+        const rewriteMermaidInGrid = (block) => {
+          const nodes = Array.from(
+            block.querySelectorAll('pre code.language-mermaid, pre code.lang-mermaid'),
+          );
+          nodes.forEach((codeNode) => {
+            const pre = codeNode.closest('pre');
+            if (!pre) return;
+            const mermaidNode = document.createElement('div');
+            mermaidNode.className = 'mermaid';
+            mermaidNode.textContent = String(codeNode.textContent || '');
+            pre.replaceWith(mermaidNode);
+          });
         };
 
         const hydrateSlideGrids = (container = slidesRoot) => {
@@ -292,72 +700,99 @@ const {
           if (grids.length === 0) return;
 
           grids.forEach((grid, gridIndex) => {
-            const [rawWidth, rawHeight] = parseGridPair(grid.getAttribute('drag'), [100, 100]);
-            const [offsetX, offsetY] = parseGridPair(grid.getAttribute('drop'), [0, 0]);
+            const isAbsolute = grid.getAttribute('absolute') === 'true';
+            const defaultDrag = isAbsolute ? '480px 700px' : '50 100';
+            const drop = grid.getAttribute('drop');
+            const drag = grid.getAttribute('drag') || defaultDrag;
             const bg = String(grid.getAttribute('bg') || '').trim();
             const align = String(grid.getAttribute('align') || '').trim().toLowerCase();
-
-            let width = Math.abs(rawWidth);
-            let height = Math.abs(rawHeight);
-            if (!Number.isFinite(width) || width < 8) width = 30;
-            if (!Number.isFinite(height) || height < 8) height = 25;
+            const flow = String(grid.getAttribute('flow') || 'col').trim().toLowerCase();
+            const justifyContentAttr = String(grid.getAttribute('justify-content') || '').trim();
 
             const block = document.createElement('div');
             block.className = 'slide-grid-block';
-            block.style.zIndex = String(200 - gridIndex);
-            block.style.width = `${width}%`;
-            block.style.minHeight = `${height}%`;
-            block.style.left = `calc(50% + ${offsetX}%)`;
-            block.style.top = `calc(50% + ${offsetY}%)`;
-            block.style.transform = 'translate(-50%, -50%)';
+            block.style.zIndex = String(100 + gridIndex);
+
+            const hostSection = grid.closest('section');
+            if (hostSection) {
+              hostSection.classList.add('slide-has-grid');
+            }
+
+            if (drop != null) {
+              const gridSpec = readGrid(drag, drop, isAbsolute);
+              if (gridSpec) {
+                block.style.position = 'absolute';
+                block.style.left = `${leftOf(gridSpec)}${gridSpec.unit}`;
+                block.style.top = `${topOf(gridSpec)}${gridSpec.unit}`;
+                block.style.height = `${gridSpec.height}${gridSpec.unit}`;
+                block.style.width = `${gridSpec.width}${gridSpec.unit}`;
+                if (isAbsolute) {
+                  block.style.minHeight = `${gridSpec.height}${gridSpec.unit}`;
+                }
+              }
+            }
 
             if (bg && bg !== 'transparent') {
               block.style.background = bg;
               block.style.borderRadius = '8px';
             }
 
-            if (align === 'left' || align === 'right' || align === 'center') {
-              block.style.textAlign = align;
-            }
-
-            if (align === 'top') {
+            if (align) {
+              const [textAlign, alignItems, justifyContent, stretchClass] = getAlignment(align, flow);
               block.style.display = 'flex';
-              block.style.flexDirection = 'column';
-              block.style.justifyContent = 'flex-start';
+              block.style.flexDirection = flow === 'row' ? 'row' : 'column';
+              block.style.alignItems = alignItems;
+              block.style.justifyContent = justifyContentAttr || justifyContent;
+              if (textAlign) {
+                block.style.textAlign = textAlign;
+              }
+              if (stretchClass) {
+                block.classList.add(stretchClass);
+              }
             }
 
             block.innerHTML = renderGridMarkdown(grid.innerHTML);
+            rewriteMermaidInGrid(block);
+
+            const blockChildren = Array.from(block.children);
+            const mediaInBlock = Array.from(block.querySelectorAll('img, video, iframe'));
+            const isMediaOnly =
+              mediaInBlock.length > 0 &&
+              blockChildren.every((child) => child.matches('p, figure, img, video, iframe'));
+
+            if (isMediaOnly) {
+              block.classList.add('media-only');
+              if (!align) {
+                block.style.display = 'flex';
+                block.style.alignItems = 'center';
+                block.style.justifyContent = 'flex-start';
+              }
+            }
+
             grid.replaceWith(block);
           });
         };
 
         hydrateSlideGrids(slidesRoot);
+        normalizeSlideEmbeds(slidesRoot);
 
         const ensureSlidesMermaid = () => {
-          if (window.mermaid?.run) return Promise.resolve(window.mermaid);
           if (slidesMermaidPromise) return slidesMermaidPromise;
-
-          slidesMermaidPromise = new Promise((resolve) => {
-            const existing = document.querySelector('script[data-slides-mermaid-loader="true"]');
-            if (existing) {
-              existing.addEventListener('load', () => resolve(window.mermaid || null), { once: true });
-              existing.addEventListener('error', () => resolve(null), { once: true });
-              return;
-            }
-
-            const script = document.createElement('script');
-            script.src = 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js';
-            script.defer = true;
-            script.dataset.slidesMermaidLoader = 'true';
-            script.onload = () => resolve(window.mermaid || null);
-            script.onerror = () => resolve(null);
-            document.head.appendChild(script);
-          });
+          slidesMermaidPromise = Promise.resolve(mermaid || null)
+            .then((api) => {
+              if (!api?.run) return null;
+              if (!mermaidConfigured) {
+                api.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
+                mermaidConfigured = true;
+              }
+              return api;
+            })
+            .catch(() => null);
 
           return slidesMermaidPromise;
         };
 
-        const renderSlidesMermaid = (container = slidesRoot) => {
+        const renderSlidesMermaid = (container = slidesRoot, attempt = 0) => {
           const nodes = Array.from(container.querySelectorAll('.mermaid'))
             .filter((node) => node && node.dataset.mermaidRendered !== 'true');
           if (nodes.length === 0) return;
@@ -379,7 +814,14 @@ const {
                 nodes.forEach((node) => {
                   delete node.dataset.mermaidRendered;
                 });
-                console.error('Slides mermaid render error:', error);
+                if (attempt < 3) {
+                  const retryDelay = 180 * (attempt + 1);
+                  window.setTimeout(() => {
+                    renderSlidesMermaid(container, attempt + 1);
+                  }, retryDelay);
+                } else {
+                  console.error('Slides mermaid render error:', error);
+                }
               }
             })
             .catch((error) => {
@@ -436,15 +878,123 @@ const {
           ].filter(Boolean),
         });
 
+        let speakerOpenPending = false;
+        const openSpeakerView = () => {
+          const notesPlugin = deck.getPlugin?.('notes');
+          if (!notesPlugin || typeof notesPlugin.open !== 'function') {
+            speakerOpenPending = true;
+            return;
+          }
+          try {
+            notesPlugin.open();
+            speakerOpenPending = false;
+          } catch (error) {
+            console.warn('Speaker view open failed:', error);
+          }
+        };
+
+        const refreshScrollableState = () => {
+          requestAnimationFrame(() => {
+            const currentSlide = deck.getCurrentSlide?.();
+            if (!(currentSlide instanceof HTMLElement)) return;
+
+            const directMedia = Array.from(
+              currentSlide.querySelectorAll(':scope > p > img, :scope > p > video, :scope > img, :scope > video'),
+            ).filter((node) => !node.closest('.slide-grid-block'));
+
+            if (directMedia.length > 0) {
+              const mediaParents = new Set(
+                directMedia.map((node) => node.closest('p, figure, div') || node),
+              );
+              const nonMediaHeight = Array.from(currentSlide.children).reduce((sum, child) => {
+                if (child.matches('aside.notes')) return sum;
+                if (mediaParents.has(child)) return sum;
+                return sum + child.getBoundingClientRect().height;
+              }, 0);
+              const available = Math.max(
+                140,
+                currentSlide.clientHeight - nonMediaHeight - 40,
+              );
+              const maxEach = Math.max(
+                120,
+                Math.floor(available / Math.max(1, directMedia.length)),
+              );
+              directMedia.forEach((mediaNode) => {
+                mediaNode.style.maxHeight = `${maxEach}px`;
+                mediaNode.style.width = 'auto';
+                mediaNode.style.height = 'auto';
+              });
+            }
+
+            currentSlide.classList.remove('slide-scrollable');
+            currentSlide.classList.remove('slide-text-centered');
+            currentSlide.scrollTop = 0;
+
+            // Grid-based slides are absolutely positioned and should not enter
+            // overflow scrolling mode.
+            if (currentSlide.querySelector('.slide-grid-block')) {
+              return;
+            }
+
+            const needsScroll = currentSlide.scrollHeight > (currentSlide.clientHeight + 8);
+            if (needsScroll) {
+              currentSlide.classList.add('slide-scrollable');
+              return;
+            }
+
+            if (shouldCenterTextSlide(currentSlide)) {
+              currentSlide.classList.add('slide-text-centered');
+            }
+          });
+        };
+
+        deck.on('slidechanged', () => {
+          const currentSlide = deck.getCurrentSlide?.();
+          if (currentSlide instanceof HTMLElement) {
+            renderSlidesMermaid(currentSlide);
+          }
+          refreshScrollableState();
+        });
+
         deck.initialize()
           .then(() => {
             renderSlidesMermaid(slidesRoot);
+            setTimeout(() => renderSlidesMermaid(slidesRoot), 360);
+            refreshScrollableState();
+            setTimeout(refreshScrollableState, 220);
+            if (speakerOpenPending) {
+              openSpeakerView();
+            }
           })
           .catch((error) => {
             showFallback(error?.message || 'Reveal initialize failed');
           });
 
+        window.addEventListener('resize', () => {
+          normalizeSlideEmbeds(slidesRoot);
+          refreshScrollableState();
+        });
+
+        slidesRoot.addEventListener('wheel', (event) => {
+          const currentSlide = deck.getCurrentSlide?.();
+          if (!(currentSlide instanceof HTMLElement)) return;
+          if (!currentSlide.classList.contains('slide-scrollable')) return;
+          if (!(event.target instanceof Node) || !currentSlide.contains(event.target)) return;
+          event.stopPropagation();
+        }, { passive: true });
+
+        speakerBtn?.addEventListener('click', () => {
+          openSpeakerView();
+        });
+
         document.addEventListener('keydown', (event) => {
+          if (isSpeakerShortcut(event)) {
+            if (event.defaultPrevented) return;
+            event.preventDefault();
+            openSpeakerView();
+            return;
+          }
+
           if (isToggleShortcut(event)) {
             if (event.defaultPrevented) return;
             event.preventDefault();

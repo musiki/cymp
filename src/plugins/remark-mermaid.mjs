@@ -6,7 +6,7 @@ export default function remarkMermaid() {
     visit(tree, 'code', (node, index, parent) => {
       if (!parent || typeof index !== 'number') return;
       if (node.lang !== 'mermaid') return;
-      const code = String(node.value || '');
+      const code = String(node.value || '').trimEnd();
       parent.children.splice(index, 1, {
         type: 'html',
         value: `<div class="mermaid">\n${code}\n</div>`,

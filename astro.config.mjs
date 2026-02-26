@@ -18,9 +18,11 @@ import remarkLily from './src/plugins/remark-lily.mjs'
 import auth from 'auth-astro';
 import vercel from '@astrojs/vercel';
 
+const vercelSite = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined;
+const site = process.env.SITE_URL || process.env.AUTH_URL || vercelSite || 'http://localhost:4321';
 
 export default defineConfig({
-  site: 'https://musiki.github.io/cymp/',
+  site,
   output: 'server',
   adapter: vercel(),
   integrations: [

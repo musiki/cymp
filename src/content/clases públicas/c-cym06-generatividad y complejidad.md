@@ -17,11 +17,11 @@ type: class
 - Códigos<br>
 </grid>
 
-<grid drag="-5 10" drop="5 -10" bg="black">
-![](https://i.imgur.com/3dKJzNX.png)  
+<grid drag="-50 10" drop="0 -8" bg="black">
+![|20](https://i.imgur.com/3dKJzNX.png)  
 </grid>
 
-<grid drag="80 10" drop="12 -12">
+<grid drag="0 10" drop="12 -12">
 <b>Ciencia y Música</b> 900 | 2025 | Luciano Azzigotti</grid>
 
 
@@ -171,7 +171,7 @@ flowchart TB
   Generatividad[Generatividad = regular el procedimiento entre control y descontrol]
   Generatividad --- Control
   Generatividad --- Descontrol
-
+  
 ```
 
 
@@ -193,6 +193,84 @@ La generatividad es más bien una regulación de la dialéctica entre control y 
 ## Manfred Mohr
 
 ![](https://i.imgur.com/Lf0Cvvi.png)
+
+---
+
+
+test manfred dataviewjs
+
+
+---
+dtaviewjs simple
+
+```dataviewjs
+const root = this.container;
+const p = document.createElement("pre");
+p.textContent = "DataviewJS OK";
+root.appendChild(p);
+```
+---
+
+
+```dataviewjs
+async () => {
+  const W= Math.min(window.innerWidth*0.9, 680), H = W*0.66;
+  const wrap=this.container.createEl('div'); wrap.style.margin='8px 0';
+  const ui=this.container.createEl('div'); ui.style.marginBottom='6px'; ui.style.display='flex'; ui.style.gap='8px'; ui.style.alignItems='center';
+
+  function mkSlider(min,max,val,step=1,label=''){
+    const s=wrap.createEl('input');
+    s.type='range'; s.min=min; s.max=max; s.step=step; s.value=val; s.style.width='160px';
+    const l=wrap.createEl('span',{text:`${label}${val}`});
+    l.style.fontFamily='ui-monospace'; l.style.marginLeft='6px';
+    return {s,l};
+  }
+
+  const {s:ang,l:lAng}=mkSlider(0,360,25,1,'áng°=');
+  const {s:mask,l:lMask}=mkSlider(0,255,85,1,'máscara=');
+  const {s:scale,l:lScale}=mkSlider(40,160,120,1,'escala=');
+  ui.append(ang,lAng,mask,lMask,scale,lScale);
+
+  const c=this.container.createEl('canvas'); c.width=W; c.height=H;
+  c.style.background='#fff'; c.style.boxShadow='0 0 0 1px #0002 inset';
+  this.container.append(ui,c);
+
+  function rot(v,a){
+    const ca=Math.cos(a), sa=Math.sin(a);
+    let [x,y,z]=v; let x1= x*ca - y*sa, y1= x*sa + y*ca, z1=z;
+    const cb=Math.cos(a*0.7), sb=Math.sin(a*0.7);
+    let x2= x1*cb - z1*sb, z2= x1*sb + z1*cb;
+    return [x2,y1,z2];
+  }
+  function proj([x,y,z], s){ const p=1/(1+0.8*z); return [W/2 + s*x*p, H/2 + s*y*p]; }
+
+  const verts=[]; for(let i=0;i<8;i++){ verts.push([ (i&1)?1:-1, (i&2)?1:-1, (i&4)?1:-1 ]); }
+  const edges=[]; for(let i=0;i<8;i++)for(let j=i+1;j<8;j++){
+    const d=((i^j).toString(2).match(/1/g)||[]).length;
+    if(d===1) edges.push([i,j]);
+  }
+
+  const ctx=c.getContext('2d');
+  function draw(){
+    ctx.clearRect(0,0,W,H); ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H);
+    ctx.strokeStyle='#111'; ctx.lineWidth=1;
+    const a=ang.value*Math.PI/180, s=+scale.value, m=+mask.value;
+    const V=verts.map(v=>rot(v,a));
+    const Z=V.map(v=>v[2]); const order=[...Array(8).keys()].sort((i,j)=>Z[i]-Z[j]);
+    for(const [i,j] of edges){
+      const bit=((i^j)&m);
+      if((bit.toString(2).match(/1/g)||[]).length%2===1){
+        const p1=proj(V[i],s), p2=proj(V[j],s);
+        ctx.beginPath(); ctx.moveTo(...p1); ctx.lineTo(...p2); ctx.stroke();
+      }
+    }
+    lAng.textContent='áng°='+ang.value;
+    lMask.textContent='máscara='+mask.value;
+    lScale.textContent='escala='+scale.value;
+  }
+  [ang,mask,scale].forEach(s=>s.oninput=draw); draw();
+}
+```
 
 ---
 
