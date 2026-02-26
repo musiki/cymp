@@ -18,8 +18,12 @@ import remarkLily from './src/plugins/remark-lily.mjs'
 import auth from 'auth-astro';
 import vercel from '@astrojs/vercel';
 
+const localhostUrlRe = /^https?:\/\/(?:localhost|127(?:\.\d+){3}|0\.0\.0\.0)(?::\d+)?(?:\/|$)/i;
 const vercelSite = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined;
-const site = process.env.SITE_URL || process.env.AUTH_URL || vercelSite || 'http://localhost:4321';
+const authSite = process.env.AUTH_URL && !localhostUrlRe.test(process.env.AUTH_URL)
+  ? process.env.AUTH_URL
+  : undefined;
+const site = process.env.SITE_URL || authSite || vercelSite || 'http://localhost:4321';
 
 export default defineConfig({
   site,

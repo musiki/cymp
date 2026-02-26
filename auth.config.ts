@@ -1,6 +1,36 @@
 import Google from "@auth/core/providers/google";
 import { defineConfig } from "auth-astro";
 
+const LOCALHOST_URL_RE =
+  /^https?:\/\/(?:localhost|127(?:\.\d+){3}|0\.0\.0\.0)(?::\d+)?(?:\/|$)/i;
+
+function normalizeUrl(value?: string): string | undefined {
+  if (!value) return undefined;
+  const withProtocol =
+    value.startsWith("http://") || value.startsWith("https://")
+      ? value
+      : `https://${value}`;
+  return withProtocol.replace(/\/$/, "");
+}
+
+const runtimeAuthUrl = normalizeUrl(
+  process.env.AUTH_URL || process.env.NEXTAUTH_URL
+);
+const vercelRuntimeUrl = normalizeUrl(
+  process.env.SITE_URL ||
+    process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+    process.env.VERCEL_URL
+);
+
+if (
+  process.env.NODE_ENV === "production" &&
+  vercelRuntimeUrl &&
+  (!runtimeAuthUrl || LOCALHOST_URL_RE.test(runtimeAuthUrl))
+) {
+  process.env.AUTH_URL = vercelRuntimeUrl;
+  process.env.NEXTAUTH_URL = vercelRuntimeUrl;
+}
+
 export default defineConfig({
   trustHost: true,
   providers: [
