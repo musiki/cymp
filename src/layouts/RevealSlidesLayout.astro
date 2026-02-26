@@ -1,0 +1,464 @@
+---
+import BaseHead from '../components/BaseHead.astro';
+import 'reveal.js/dist/reveal.css';
+
+type Props = {
+  title: string;
+  description?: string;
+  slideTheme?: string;
+};
+
+const {
+  title,
+  description = '',
+  slideTheme = '/inc/reveal/themes/zztt-reveal.css',
+} = Astro.props as Props;
+---
+
+<!doctype html>
+<html lang="es">
+  <head>
+    <BaseHead title={`${title} | Slides`} description={description} />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css" />
+    <link rel="stylesheet" href={slideTheme} />
+    <style>
+      html.slides-view,
+      body.slides-view {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+      }
+
+      #slides-source {
+        display: none;
+      }
+
+      .slide-grid-block {
+        position: absolute;
+        box-sizing: border-box;
+        padding: 0.45rem 0.6rem;
+        overflow: visible;
+      }
+
+      .slide-grid-block > :first-child {
+        margin-top: 0;
+      }
+
+      .slide-grid-block > :last-child {
+        margin-bottom: 0;
+      }
+
+      .slide-grid-block :is(h1, h2, h3, h4, h5, h6, p, ul, ol) {
+        max-width: 100%;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        word-break: normal;
+      }
+
+      .slides-controls {
+        position: fixed;
+        top: 0.8rem;
+        right: 0.8rem;
+        z-index: 10010;
+        display: flex;
+        gap: 0.5rem;
+      }
+
+      .slides-controls button {
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        background: rgba(17, 17, 17, 0.78);
+        color: #f7f7f7;
+        border-radius: 8px;
+        padding: 0.4rem 0.65rem;
+        font: inherit;
+        font-size: 0.82rem;
+        cursor: pointer;
+      }
+
+      .slides-controls button:hover {
+        background: rgba(38, 38, 38, 0.92);
+      }
+
+      body.slides-fallback {
+        overflow: auto;
+      }
+
+      body.slides-fallback .reveal {
+        width: min(1180px, 100%);
+        margin: 0 auto;
+        min-height: auto;
+        padding: 3.8rem 1rem 2rem;
+        box-sizing: border-box;
+      }
+
+      body.slides-fallback .reveal .slides {
+        position: static;
+        width: 100%;
+        height: auto;
+      }
+
+      body.slides-fallback .reveal .slides > section {
+        display: block !important;
+        position: static !important;
+        margin: 0 0 2rem 0 !important;
+        opacity: 1 !important;
+        transform: none !important;
+      }
+    </style>
+  </head>
+  <body class="slides-view">
+    <div id="slides-source">
+      <slot />
+    </div>
+
+    <div class="slides-controls" role="toolbar" aria-label="Controles de presentacion">
+      <button id="slides-back-btn" type="button" title="Volver a la nota (Esc)">Volver a nota</button>
+      <button id="slides-fs-btn" type="button" title="Fullscreen (Ctrl+E)">Fullscreen</button>
+    </div>
+
+    <div class="reveal">
+      <div class="slides" id="slides-root"></div>
+    </div>
+
+    <script>
+      import Reveal from 'reveal.js';
+      import RevealNotes from 'reveal.js/plugin/notes/notes.esm.js';
+      import RevealHighlight from 'reveal.js/plugin/highlight/highlight.esm.js';
+      import RevealMath from 'reveal.js/plugin/math/math.esm.js';
+      import RevealMarkdown from 'reveal.js/plugin/markdown/markdown.esm.js';
+
+      (() => {
+        const source = document.getElementById('slides-source');
+        const slidesRoot = document.getElementById('slides-root');
+        const backBtn = document.getElementById('slides-back-btn');
+        const fsBtn = document.getElementById('slides-fs-btn');
+
+        if (!source || !slidesRoot) return;
+
+        const noteUrl = new URL(window.location.href);
+        noteUrl.searchParams.delete('view');
+        noteUrl.searchParams.delete('autofs');
+
+        const goToNote = () => {
+          window.location.href = noteUrl.toString();
+        };
+
+        backBtn?.addEventListener('click', () => {
+          goToNote();
+        });
+
+        const isToggleShortcut = (event) => {
+          const key = String(event.key || '').toLowerCase();
+          return event.ctrlKey && !event.metaKey && key === 'e';
+        };
+
+        const setFsButtonLabel = () => {
+          if (!fsBtn) return;
+          fsBtn.textContent = document.fullscreenElement ? 'Salir fullscreen' : 'Fullscreen';
+        };
+
+        const isSeparator = (node) =>
+          node?.nodeType === Node.ELEMENT_NODE && node.tagName === 'HR';
+
+        const isIgnorableText = (node) =>
+          node?.nodeType === Node.TEXT_NODE && !String(node.textContent || '').trim();
+
+        const normalizeNotes = (section) => {
+          const kids = Array.from(section.children);
+          const noteStart = kids.findIndex((el) => {
+            if (el.tagName !== 'P') return false;
+            return /^note:\s*/i.test(String(el.textContent || '').trim());
+          });
+
+          if (noteStart === -1) return;
+
+          const aside = document.createElement('aside');
+          aside.className = 'notes';
+
+          while (section.children.length > noteStart) {
+            const child = section.children[noteStart];
+            if (aside.children.length === 0 && child.tagName === 'P') {
+              const text = String(child.textContent || '').replace(/^note:\s*/i, '').trim();
+              if (!text) {
+                child.remove();
+                continue;
+              }
+              child.textContent = text;
+            }
+            aside.appendChild(child);
+          }
+
+          section.appendChild(aside);
+        };
+
+        let section = document.createElement('section');
+        let hasContent = false;
+        let slidesMermaidPromise = null;
+        let mermaidConfigured = false;
+
+        const flushSection = () => {
+          if (!hasContent) return;
+          normalizeNotes(section);
+          slidesRoot.appendChild(section);
+          section = document.createElement('section');
+          hasContent = false;
+        };
+
+        const nodes = Array.from(source.childNodes);
+        for (const node of nodes) {
+          if (isIgnorableText(node)) continue;
+          if (isSeparator(node)) {
+            flushSection();
+            continue;
+          }
+          section.appendChild(node);
+          hasContent = true;
+        }
+        flushSection();
+        source.remove();
+
+        const parseGridPair = (value, fallback = [0, 0]) => {
+          const parts = String(value || '')
+            .trim()
+            .split(/\s+/)
+            .map((part) => Number(part));
+
+          const x = Number.isFinite(parts[0]) ? parts[0] : fallback[0];
+          const y = Number.isFinite(parts[1]) ? parts[1] : fallback[1];
+          return [x, y];
+        };
+
+        const inlineMarkdown = (value) => {
+          let html = String(value || '');
+          html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" />');
+          html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+          html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+          html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+          return html;
+        };
+
+        const renderGridMarkdown = (rawValue) => {
+          const lines = String(rawValue || '')
+            .replace(/<br\s*\/?>/gi, '\n')
+            .split(/\r?\n/g);
+
+          let html = '';
+          let inList = false;
+
+          const closeList = () => {
+            if (!inList) return;
+            html += '</ul>';
+            inList = false;
+          };
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) {
+              closeList();
+              continue;
+            }
+
+            const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
+            if (headingMatch) {
+              closeList();
+              const level = Math.min(headingMatch[1].length, 6);
+              html += `<h${level}>${inlineMarkdown(headingMatch[2])}</h${level}>`;
+              continue;
+            }
+
+            const listMatch = trimmed.match(/^-\s+(.+)$/);
+            if (listMatch) {
+              if (!inList) {
+                html += '<ul>';
+                inList = true;
+              }
+              html += `<li>${inlineMarkdown(listMatch[1])}</li>`;
+              continue;
+            }
+
+            closeList();
+            html += `<p>${inlineMarkdown(trimmed)}</p>`;
+          }
+
+          closeList();
+          return html;
+        };
+
+        const hydrateSlideGrids = (container = slidesRoot) => {
+          const grids = Array.from(container.querySelectorAll('grid'));
+          if (grids.length === 0) return;
+
+          grids.forEach((grid, gridIndex) => {
+            const [rawWidth, rawHeight] = parseGridPair(grid.getAttribute('drag'), [100, 100]);
+            const [offsetX, offsetY] = parseGridPair(grid.getAttribute('drop'), [0, 0]);
+            const bg = String(grid.getAttribute('bg') || '').trim();
+            const align = String(grid.getAttribute('align') || '').trim().toLowerCase();
+
+            let width = Math.abs(rawWidth);
+            let height = Math.abs(rawHeight);
+            if (!Number.isFinite(width) || width < 8) width = 30;
+            if (!Number.isFinite(height) || height < 8) height = 25;
+
+            const block = document.createElement('div');
+            block.className = 'slide-grid-block';
+            block.style.zIndex = String(200 - gridIndex);
+            block.style.width = `${width}%`;
+            block.style.minHeight = `${height}%`;
+            block.style.left = `calc(50% + ${offsetX}%)`;
+            block.style.top = `calc(50% + ${offsetY}%)`;
+            block.style.transform = 'translate(-50%, -50%)';
+
+            if (bg && bg !== 'transparent') {
+              block.style.background = bg;
+              block.style.borderRadius = '8px';
+            }
+
+            if (align === 'left' || align === 'right' || align === 'center') {
+              block.style.textAlign = align;
+            }
+
+            if (align === 'top') {
+              block.style.display = 'flex';
+              block.style.flexDirection = 'column';
+              block.style.justifyContent = 'flex-start';
+            }
+
+            block.innerHTML = renderGridMarkdown(grid.innerHTML);
+            grid.replaceWith(block);
+          });
+        };
+
+        hydrateSlideGrids(slidesRoot);
+
+        const ensureSlidesMermaid = () => {
+          if (window.mermaid?.run) return Promise.resolve(window.mermaid);
+          if (slidesMermaidPromise) return slidesMermaidPromise;
+
+          slidesMermaidPromise = new Promise((resolve) => {
+            const existing = document.querySelector('script[data-slides-mermaid-loader="true"]');
+            if (existing) {
+              existing.addEventListener('load', () => resolve(window.mermaid || null), { once: true });
+              existing.addEventListener('error', () => resolve(null), { once: true });
+              return;
+            }
+
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js';
+            script.defer = true;
+            script.dataset.slidesMermaidLoader = 'true';
+            script.onload = () => resolve(window.mermaid || null);
+            script.onerror = () => resolve(null);
+            document.head.appendChild(script);
+          });
+
+          return slidesMermaidPromise;
+        };
+
+        const renderSlidesMermaid = (container = slidesRoot) => {
+          const nodes = Array.from(container.querySelectorAll('.mermaid'))
+            .filter((node) => node && node.dataset.mermaidRendered !== 'true');
+          if (nodes.length === 0) return;
+
+          ensureSlidesMermaid()
+            .then((mermaid) => {
+              if (!mermaid?.run) return;
+              try {
+                if (!mermaidConfigured) {
+                  mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+                  mermaidConfigured = true;
+                }
+
+                nodes.forEach((node) => {
+                  node.dataset.mermaidRendered = 'true';
+                });
+                mermaid.run({ nodes });
+              } catch (error) {
+                nodes.forEach((node) => {
+                  delete node.dataset.mermaidRendered;
+                });
+                console.error('Slides mermaid render error:', error);
+              }
+            })
+            .catch((error) => {
+              console.error('Slides mermaid loader error:', error);
+            });
+        };
+
+        const showFallback = (reason) => {
+          console.warn('Reveal fallback mode:', reason);
+          document.documentElement.classList.remove('slides-view');
+          document.body.classList.remove('slides-view');
+          document.body.classList.add('slides-fallback');
+          if (!slidesRoot.children.length) {
+            const section = document.createElement('section');
+            section.innerHTML = '<h2>Sin contenido de diapositivas</h2>';
+            slidesRoot.appendChild(section);
+          }
+          renderSlidesMermaid(slidesRoot);
+        };
+
+        const toggleFullscreen = async () => {
+          try {
+            if (!document.fullscreenElement) {
+              await document.documentElement.requestFullscreen();
+            } else {
+              await document.exitFullscreen();
+            }
+          } catch (error) {
+            console.warn('Fullscreen toggle failed:', error);
+          } finally {
+            setFsButtonLabel();
+          }
+        };
+
+        fsBtn?.addEventListener('click', () => {
+          toggleFullscreen();
+        });
+
+        document.addEventListener('fullscreenchange', setFsButtonLabel);
+        setFsButtonLabel();
+
+        const deck = new Reveal({
+          hash: true,
+          controls: true,
+          progress: true,
+          center: false,
+          slideNumber: 'c/t',
+          transition: 'slide',
+          plugins: [
+            RevealHighlight,
+            RevealNotes,
+            RevealMath?.KaTeX || RevealMath,
+            RevealMarkdown,
+          ].filter(Boolean),
+        });
+
+        deck.initialize()
+          .then(() => {
+            renderSlidesMermaid(slidesRoot);
+          })
+          .catch((error) => {
+            showFallback(error?.message || 'Reveal initialize failed');
+          });
+
+        document.addEventListener('keydown', (event) => {
+          if (isToggleShortcut(event)) {
+            if (event.defaultPrevented) return;
+            event.preventDefault();
+            toggleFullscreen();
+            return;
+          }
+
+          if (event.key === 'Escape' && !document.fullscreenElement) {
+            if (event.defaultPrevented) return;
+            event.preventDefault();
+            goToNote();
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>

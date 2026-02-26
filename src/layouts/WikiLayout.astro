@@ -53,14 +53,13 @@ const commitUrl = `https://github.com/${repoOwner}/${repoSlug}/commit/${commitSh
     <style is:global>
       /* Fade-in animation for sections */
       .fade-in-section {
-        opacity: 0;
-        transform: translateY(20px);
-        transition: opacity 0.7s ease-out, transform 0.7s ease-out;
+        opacity: 1;
+        transform: none;
       }
 
       .fade-in-section.is-visible {
         opacity: 1;
-        transform: translateY(0);
+        transform: none;
       }
 
       /* Minimal title – left aligned, uses existing variables */
@@ -274,18 +273,28 @@ const commitUrl = `https://github.com/${repoOwner}/${repoSlug}/commit/${commitSh
       // ────────────────────────────────────────────────
       // Lenis smooth scrolling
       // ────────────────────────────────────────────────
-      const lenis = new Lenis({
-        duration: 1.1,
-        easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
-        smoothWheel: true,
-        smoothTouch: false,
-      });
+      const initLenis = () => {
+        const LenisCtor = window.Lenis;
+        if (typeof LenisCtor !== 'function') {
+          console.warn('Lenis is not available, skipping smooth scroll.');
+          return;
+        }
 
-      function raf(time) {
-        lenis.raf(time);
+        const lenis = new LenisCtor({
+          duration: 1.1,
+          easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+          smoothWheel: true,
+          smoothTouch: false,
+        });
+
+        const raf = (time) => {
+          lenis.raf(time);
+          requestAnimationFrame(raf);
+        };
         requestAnimationFrame(raf);
-      }
-      requestAnimationFrame(raf);
+      };
+
+      initLenis();
 
       // ────────────────────────────────────────────────
       // IntersectionObserver fade-in

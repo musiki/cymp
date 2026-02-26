@@ -3,9 +3,11 @@ node_modules/
 
 # Build output
 dist/
+.tmp/
 
 # Astro
 .astro/
+.content-sources/
 
 # Environment variables
 .env

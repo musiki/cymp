@@ -3,6 +3,7 @@ title: generatividad y complejidad
 tags: class
 type: class
 ---
+
 <grid drag="60 55" drop="5 10" bg="transparent" align="left">
 # generatividad y complejidad
 ## Clase 6

@@ -3,41 +3,92 @@ export const prerender = false;
 
 import { getCollection, render } from 'astro:content';
 import WikiLayout from '../layouts/WikiLayout.astro';
+import RevealSlidesLayout from '../layouts/RevealSlidesLayout.astro';
 
 const { slug } = Astro.params;
+const isSlidesView = Astro.url.searchParams.get('view') === 'slides';
+
+const toCleanSlug = (value: unknown) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 
 // Get all content entries
 const allContent = await getCollection('content');
 
-// Find entry by matching the slug path
-const entry = allContent.find(item => {
+// Find entry by matching filename slug first
+let entry = allContent.find(item => {
   const target = decodeURIComponent(slug || '').toLowerCase();
   const filename = item.id.split('/').pop()?.replace(/\.[^/.]+$/, '') || '';
-  
-  // Generate clean slug for the file to compare with target (matches index.astro logic)
-  const fileSlug = filename
-    .trim().toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  
+  const fileSlug = toCleanSlug(filename);
   return fileSlug === target || filename.toLowerCase() === target;
 });
+
+// Fallback by unique title slug (e.g. /generatividad-y-complejidad)
+if (!entry) {
+  const target = decodeURIComponent(slug || '').toLowerCase();
+  const byTitle = allContent.filter((item) => toCleanSlug(item.data?.title) === target);
+  if (byTitle.length === 1) {
+    entry = byTitle[0];
+  }
+}
 
 if (!entry) {
   return Astro.redirect('/404');
 }
 
 // Render the content
-const { Content, headings } = await render(entry);
+const { Content } = await render(entry);
 
 // Resolve title: Frontmatter > Filename
 const title = entry.data.title || entry.id.split('/').pop()?.replace(/\.[^/.]+$/, '') || 'Untitled';
+const description = entry.data.description || entry.data.subtitle || '';
+const defaultSlideTheme = '/inc/reveal/themes/zztt-reveal.css';
+const slideThemeFromData = (entry.data as Record<string, unknown>).slideTheme || (entry.data as Record<string, unknown>).revealTheme;
+const slideTheme = typeof slideThemeFromData === 'string' && slideThemeFromData.trim()
+  ? slideThemeFromData.trim()
+  : defaultSlideTheme;
 ---
 
-<WikiLayout
-  title={title}
-  description={entry.data.description || entry.data.subtitle || ''}
->
-  <Content />
-</WikiLayout>
+{
+  isSlidesView ? (
+    <RevealSlidesLayout
+      title={title}
+      description={description}
+      slideTheme={slideTheme}
+    >
+      <Content />
+    </RevealSlidesLayout>
+  ) : (
+    <>
+      <WikiLayout
+        title={title}
+        description={description}
+      >
+        <Content />
+      </WikiLayout>
+      <script is:inline>
+        (() => {
+          const isShortcut = (event) => {
+            const key = String(event.key || '').toLowerCase();
+            return event.ctrlKey && !event.metaKey && key === 'e';
+          };
+
+          document.addEventListener('keydown', (event) => {
+            if (!isShortcut(event)) return;
+            if (event.defaultPrevented) return;
+
+            event.preventDefault();
+            const url = new URL(window.location.href);
+            url.searchParams.set('view', 'slides');
+            window.location.href = url.toString();
+          });
+        })();
+      </script>
+    </>
+  )
+}

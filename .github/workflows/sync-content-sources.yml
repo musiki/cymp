@@ -1,0 +1,76 @@
+name: Sync Content Sources
+
+on:
+  repository_dispatch:
+    types: [content-source-updated]
+  workflow_dispatch:
+    inputs:
+      commit_changes:
+        description: "Commit synchronized content into this repository"
+        required: false
+        default: "true"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: content-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout platform repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Pull source repositories
+        run: npm run content:pull -- --clean
+        env:
+          CONTENT_SOURCE_READ_TOKEN: ${{ secrets.CONTENT_SOURCE_READ_TOKEN }}
+
+      - name: Assemble src/content
+        run: npm run content:assemble
+
+      - name: Upload assemble report
+        uses: actions/upload-artifact@v4
+        with:
+          name: assemble-report
+          path: .tmp/assemble-report.json
+          if-no-files-found: warn
+
+      - name: Commit synchronized content
+        if: ${{ github.event_name == 'repository_dispatch' || github.event.inputs.commit_changes == 'true' }}
+        env:
+          SOURCE_REPO: ${{ github.event.client_payload.source_repo || 'manual' }}
+          SOURCE_SHA: ${{ github.event.client_payload.source_sha || '' }}
+        run: |
+          if [[ -z "$(git status --porcelain src/content)" ]]; then
+            echo "No content changes to commit."
+            exit 0
+          fi
+
+          git config user.name "musiki-content-bot"
+          git config user.email "musiki-content-bot@users.noreply.github.com"
+
+          git add src/content
+
+          MESSAGE="chore(content): sync from ${SOURCE_REPO}"
+          if [[ -n "${SOURCE_SHA}" ]]; then
+            MESSAGE="${MESSAGE} @ ${SOURCE_SHA:0:7}"
+          fi
+
+          git commit -m "${MESSAGE}"
+          git push

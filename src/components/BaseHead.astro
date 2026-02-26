@@ -26,21 +26,20 @@ const { title, description, image = FallbackImage } = Astro.props;
 <!-- Prevent FOUC: Set dark mode immediately -->
 <script is:inline>
 	(function() {
-		const getTheme = () => {
-			if (typeof localStorage !== 'undefined' && localStorage.getItem('theme')) {
-				return localStorage.getItem('theme');
+		const readStoredTheme = () => {
+			try {
+				const value = localStorage.getItem('theme');
+				return value === 'dark' || value === 'light' ? value : null;
+			} catch {
+				return null;
 			}
-			if (window.matchMedia('(prefers-color-scheme: light)').matches) {
-				return 'light';
-			}
-			return 'dark';
 		};
-		const theme = getTheme();
-		if (theme === 'dark') {
-			document.documentElement.classList.add('dark');
-		} else {
-			document.documentElement.classList.remove('dark');
-		}
+
+		// Use explicit user choice when available; otherwise default to light.
+		const theme = readStoredTheme() || 'light';
+		const root = document.documentElement;
+		root.classList.toggle('dark', theme === 'dark');
+		root.dataset.theme = theme;
 	})();
 </script>
 <link rel="sitemap" href="/sitemap-index.xml" />

@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "id": "i1-i2",
+      "enabled": false,
+      "repo": "musiki/REPLACE_WITH_I1_I2_REPO",
+      "branch": "main",
+      "contentRoot": "content"
+    },
+    {
+      "id": "cym",
+      "enabled": false,
+      "repo": "musiki/REPLACE_WITH_CYM_REPO",
+      "branch": "main",
+      "contentRoot": "content"
+    },
+    {
+      "id": "seminarios",
+      "enabled": false,
+      "repo": "musiki/REPLACE_WITH_SEMINARIOS_REPO",
+      "branch": "main",
+      "contentRoot": "content"
+    }
+  ],
+  "assembly": {
+    "coursesDir": "cursos",
+    "publicDir": "public",
+    "promoteFromCourses": true,
+    "requiredVisibilityForPublic": "public",
+    "requiredPublicStatus": "approved",
+    "excludeTypesFromPublic": [
+      "assignment"
+    ]
+  }
+}

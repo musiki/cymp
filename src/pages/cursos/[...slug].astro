@@ -1662,35 +1662,7 @@ const hasSessionUser = Boolean(session?.user?.email);
 
         let latestPostRequestToken = 0;
         let forumMermaidPromise = null;
-        let forumHighlighterPromise = null;
         const FORUM_READ_PREFIX = 'forum:read:';
-        const forumEditorLanguageAliases = {
-          js: 'javascript',
-          javascript: 'javascript',
-          ts: 'typescript',
-          typescript: 'typescript',
-          jsx: 'javascript',
-          tsx: 'typescript',
-          py: 'python',
-          python: 'python',
-          bash: 'bash',
-          sh: 'bash',
-          zsh: 'bash',
-          fish: 'bash',
-          shell: 'bash',
-          html: 'xml',
-          xml: 'xml',
-          md: 'markdown',
-          markdown: 'markdown',
-          math: 'latex',
-          mathjax: 'latex',
-          tex: 'latex',
-          latex: 'latex',
-          lily: 'lisp',
-          lilypond: 'lisp',
-          ly: 'lisp',
-          mermaid: 'plaintext',
-        };
 
         function setForumStatus(message, tone = 'info') {
           if (!message) {
@@ -1769,89 +1741,6 @@ const hasSessionUser = Boolean(session?.user?.email);
 
           const plain = escapeHtml(post?.body || '').replaceAll('\n', '<br />');
           return `<p>${plain}</p>`;
-        }
-
-        function normalizeForumEditorLanguage(rawLanguage) {
-          const normalized = String(rawLanguage || '').trim().toLowerCase();
-          if (!normalized) return 'plaintext';
-          return forumEditorLanguageAliases[normalized] || normalized;
-        }
-
-        function ensureForumHighlighter() {
-          if (window.hljs?.highlight) {
-            return Promise.resolve(window.hljs);
-          }
-
-          if (forumHighlighterPromise) return forumHighlighterPromise;
-
-          forumHighlighterPromise = loadScriptOnce(
-            'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js',
-            'data-forum-hljs-loader',
-          )
-            .then(() => window.hljs || null)
-            .catch((error) => {
-              console.error('Forum highlighter loader error:', error);
-              return null;
-            });
-
-          return forumHighlighterPromise;
-        }
-
-        function renderForumEditorHighlight(source, language, hljs) {
-          const text = String(source || '');
-          const normalizedLanguage = normalizeForumEditorLanguage(language);
-
-          if (hljs?.highlight && hljs.getLanguage?.(normalizedLanguage)) {
-            try {
-              return hljs.highlight(text, { language: normalizedLanguage, ignoreIllegals: true }).value;
-            } catch (error) {
-              console.error('Forum editor highlight error:', error);
-            }
-          }
-
-          return escapeHtml(text);
-        }
-
-        function buildForumEditorOverlayHtml(source, hljs) {
-          const text = String(source || '');
-          if (!text) return '';
-
-          const parts = [];
-          const fenceRegex = /```([A-Za-z0-9_+-]*)[ \t]*\n([\s\S]*?)```/g;
-          let lastIndex = 0;
-          let match;
-
-          while ((match = fenceRegex.exec(text)) !== null) {
-            const markdownChunk = text.slice(lastIndex, match.index);
-            if (markdownChunk) {
-              parts.push(renderForumEditorHighlight(markdownChunk, 'markdown', hljs));
-            }
-
-            const rawLanguage = String(match[1] || '').trim().toLowerCase();
-            const codeBody = match[2] || '';
-            const normalizedLanguage = normalizeForumEditorLanguage(rawLanguage);
-            const openingFence = `\`\`\`${rawLanguage}\n`;
-            parts.push(`<span class="forum-editor-fence">${escapeHtml(openingFence)}</span>`);
-            parts.push(renderForumEditorHighlight(codeBody, normalizedLanguage, hljs));
-            parts.push('<span class="forum-editor-fence">```</span>');
-
-            lastIndex = fenceRegex.lastIndex;
-          }
-
-          const trailingChunk = text.slice(lastIndex);
-          if (trailingChunk) {
-            parts.push(renderForumEditorHighlight(trailingChunk, 'markdown', hljs));
-          }
-
-          let html = parts.join('');
-          if (!html) {
-            html = escapeHtml(text);
-          }
-          if (text.endsWith('\n')) {
-            html += '\n';
-          }
-
-          return html;
         }
 
         function replaceForumTextareaSelection(textarea, nextText, start, end, cursorStart, cursorEnd = cursorStart) {
@@ -1939,54 +1828,7 @@ const hasSessionUser = Boolean(session?.user?.email);
           textarea.dataset.forumEditorEnhanced = 'true';
 
           attachForumTypingHelpers(textarea);
-
-          const parent = textarea.parentElement;
-          if (!parent) return;
-
-          const shell = document.createElement('div');
-          shell.className = 'forum-editor-shell';
-
-          const overlay = document.createElement('pre');
-          overlay.className = 'forum-editor-overlay hljs language-markdown';
-          overlay.setAttribute('aria-hidden', 'true');
-
-          const overlayCode = document.createElement('code');
-          overlayCode.className = 'forum-editor-overlay-code';
-          overlay.appendChild(overlayCode);
-
-          parent.insertBefore(shell, textarea);
-          shell.appendChild(overlay);
           textarea.classList.add('forum-editor-input');
-          shell.appendChild(textarea);
-
-          let renderToken = 0;
-          const syncOverlayScroll = () => {
-            overlay.scrollTop = textarea.scrollTop;
-            overlay.scrollLeft = textarea.scrollLeft;
-          };
-
-          const refreshOverlay = async () => {
-            const nextToken = ++renderToken;
-            const text = textarea.value || '';
-            const hasContent = text.length > 0;
-            shell.classList.toggle('is-empty', !hasContent);
-            if (!hasContent) {
-              overlayCode.innerHTML = '';
-              syncOverlayScroll();
-              return;
-            }
-
-            const hljs = await ensureForumHighlighter();
-            if (nextToken !== renderToken) return;
-            overlayCode.innerHTML = buildForumEditorOverlayHtml(text, hljs);
-            syncOverlayScroll();
-          };
-
-          textarea.addEventListener('input', refreshOverlay);
-          textarea.addEventListener('scroll', syncOverlayScroll);
-          textarea.addEventListener('keyup', syncOverlayScroll);
-          textarea.addEventListener('click', syncOverlayScroll);
-          refreshOverlay();
         }
 
         function isForumPostEdited(post) {

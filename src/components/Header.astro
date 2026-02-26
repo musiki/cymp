@@ -1,5 +1,4 @@
 ---
-import { SITE_TITLE } from '../consts';
 import HeaderLink from './HeaderLink.astro';
 import Search from './Search.astro';
 
@@ -10,7 +9,11 @@ const user = session?.user;
 
 <header>
 	<nav>
-		<h2><a href="/">{SITE_TITLE}</a></h2>
+		<h2>
+			<a href="/" class="brand-link" title="musiki" aria-label="musiki">
+				<img src="/logo-musiki.png" alt="musiki" class="brand-logo" />
+			</a>
+		</h2>
 		<div class="internal-links">
 			<HeaderLink href="/">Inicio</HeaderLink>
 			<HeaderLink href="/about">Acerca</HeaderLink>
@@ -74,6 +77,7 @@ const user = session?.user;
 		element.classList.toggle('dark');
 
 		const isDark = element.classList.contains('dark');
+		element.dataset.theme = isDark ? 'dark' : 'light';
 		localStorage.setItem('theme', isDark ? 'dark' : 'light');
 	};
 
@@ -108,6 +112,16 @@ const user = session?.user;
 	h2 a,
 	h2 a.active {
 		text-decoration: none;
+	}
+	.brand-link {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.35rem 0;
+	}
+	.brand-logo {
+		display: block;
+		height: 42px;
+		width: auto;
 	}
 	nav {
 		display: flex;
