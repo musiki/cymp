@@ -98,7 +98,7 @@ const groupedEntries = validEntries.reduce((acc, entry) => {
 
 <html lang="es">
   <head>
-    <BaseHead title="Ciencia y Música | UNTREF" description="Repositorio de contenidos públicos y plataforma de aprendizaje." />
+    <BaseHead title="musiki26 | Ciencia y Musica | UNTREF" description="Repositorio de contenidos publicos y plataforma de aprendizaje." />
     <meta charset="utf-8" />
     <style>
       .wrap { max-width: 1000px; margin: 0 auto; padding: 1rem; }
@@ -216,9 +216,20 @@ const groupedEntries = validEntries.reduce((acc, entry) => {
     <Header />
     <main class="wrap">
       <div class="page-header">
-        <!-- <h1>Contenidos</h1> -->
-
+        <h1>musiki26</h1>
       </div>
+      <section class="purpose">
+        <p>
+          musiki26 es una plataforma educativa de la catedra Ciencia y Musica (UNTREF)
+          para publicar contenidos, materiales de clase y cursos, con acceso por inicio de
+          sesion para estudiantes y docentes.
+        </p>
+        <p class="purpose-links">
+          <a href="/privacy">Politica de privacidad</a>
+          <span aria-hidden="true"> | </span>
+          <a href="/terms">Terminos del servicio</a>
+        </p>
+      </section>
 
       {Object.entries(groupedEntries).map(([folder, entriesInFolder]) => (
         <section class="folder-section" data-folder={folder}>
@@ -289,10 +300,25 @@ const groupedEntries = validEntries.reduce((acc, entry) => {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 1rem;
+      margin-bottom: 0.5rem;
     }
     .page-header h1 {
       margin: 0;
+    }
+    .purpose {
+      margin-bottom: 1.5rem;
+      padding: 0.75rem 1rem;
+      border: 1px solid var(--c-border);
+      border-radius: 10px;
+      background: var(--c-bg-mute);
+    }
+    .purpose p {
+      margin: 0;
+      line-height: 1.5;
+    }
+    .purpose-links {
+      margin-top: 0.4rem !important;
+      font-size: 0.95rem;
     }
   </style>
 </html>

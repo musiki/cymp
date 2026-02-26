@@ -13,13 +13,22 @@ function normalizeUrl(value?: string): string | undefined {
   return withProtocol.replace(/\/$/, "");
 }
 
+function firstNonLocalUrl(...values: Array<string | undefined>): string | undefined {
+  for (const value of values) {
+    const normalized = normalizeUrl(value);
+    if (!normalized) continue;
+    if (LOCALHOST_URL_RE.test(normalized)) continue;
+    return normalized;
+  }
+}
+
 const runtimeAuthUrl = normalizeUrl(
   process.env.AUTH_URL || process.env.NEXTAUTH_URL
 );
-const vercelRuntimeUrl = normalizeUrl(
-  process.env.SITE_URL ||
-    process.env.VERCEL_PROJECT_PRODUCTION_URL ||
-    process.env.VERCEL_URL
+const vercelRuntimeUrl = firstNonLocalUrl(
+  process.env.SITE_URL,
+  process.env.VERCEL_PROJECT_PRODUCTION_URL,
+  process.env.VERCEL_URL
 );
 
 if (

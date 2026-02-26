@@ -19,11 +19,31 @@ import auth from 'auth-astro';
 import vercel from '@astrojs/vercel';
 
 const localhostUrlRe = /^https?:\/\/(?:localhost|127(?:\.\d+){3}|0\.0\.0\.0)(?::\d+)?(?:\/|$)/i;
-const vercelSite = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined;
-const authSite = process.env.AUTH_URL && !localhostUrlRe.test(process.env.AUTH_URL)
-  ? process.env.AUTH_URL
-  : undefined;
-const site = process.env.SITE_URL || authSite || vercelSite || 'http://localhost:4321';
+
+const normalizeUrl = (value) => {
+  if (!value) return undefined;
+  const withProtocol = value.startsWith('http://') || value.startsWith('https://')
+    ? value
+    : `https://${value}`;
+  return withProtocol.replace(/\/$/, '');
+};
+
+const firstNonLocalUrl = (...values) => {
+  for (const value of values) {
+    const normalized = normalizeUrl(value);
+    if (!normalized) continue;
+    if (localhostUrlRe.test(normalized)) continue;
+    return normalized;
+  }
+};
+
+const site = firstNonLocalUrl(
+  process.env.SITE_URL,
+  process.env.AUTH_URL,
+  process.env.NEXTAUTH_URL,
+  process.env.VERCEL_PROJECT_PRODUCTION_URL,
+  process.env.VERCEL_URL
+) || 'http://localhost:4321';
 
 export default defineConfig({
   site,

@@ -66,6 +66,20 @@ function rewriteAuthRequestUrl(request: Request): URL {
   return incoming;
 }
 
+function syncAuthOriginEnv(requestUrl: URL) {
+  if (LOCALHOST_HOST_RE.test(requestUrl.hostname)) return;
+
+  const runtimeAuthUrl = normalizeUrl(process.env.AUTH_URL);
+  if (!runtimeAuthUrl || LOCALHOST_HOST_RE.test(runtimeAuthUrl.hostname)) {
+    process.env.AUTH_URL = requestUrl.origin;
+  }
+
+  const runtimeNextAuthUrl = normalizeUrl(process.env.NEXTAUTH_URL);
+  if (!runtimeNextAuthUrl || LOCALHOST_HOST_RE.test(runtimeNextAuthUrl.hostname)) {
+    process.env.NEXTAUTH_URL = requestUrl.origin;
+  }
+}
+
 function getAuthAction(pathname: string, prefix: string): string | undefined {
   if (!pathname.startsWith(`${prefix}/`)) return undefined;
   return pathname.slice(prefix.length + 1).split("/")[0];
@@ -92,6 +106,7 @@ function syncSetCookieHeaders(response: Response, context: APIContext) {
 
 async function handleAuth(context: APIContext) {
   const requestUrl = rewriteAuthRequestUrl(context.request);
+  syncAuthOriginEnv(requestUrl);
   const request =
     requestUrl.toString() === context.request.url
       ? context.request
