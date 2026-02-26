@@ -25,6 +25,11 @@ export default defineConfig({
   site,
   output: 'server',
   adapter: vercel(),
+  // Auth.js already validates CSRF tokens for auth endpoints.
+  // Astro's origin guard can false-positive behind Vercel/proxies.
+  security: {
+    checkOrigin: false,
+  },
   integrations: [
     mdx(), 
     auth()
