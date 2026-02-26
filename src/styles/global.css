@@ -18,6 +18,18 @@
 	--font-family-primary: "Dank Mono", monospace;
 	--font-family-mono: "Dank Mono", monospace;
 }
+
+html {
+	width: 100%;
+	overflow-x: hidden;
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
 header[data-astro-cid-3ef6ksr2] {
     margin: 0;
     padding: 0 1em;
@@ -49,10 +61,12 @@ body {
 	font-family: var(--font-family-primary);
 	margin: 0;
 	padding: 0;
+	max-width: 100%;
 	text-align: left;
 	background: #fff;
 	word-wrap: break-word;
 	overflow-wrap: break-word;
+	overflow-x: hidden;
 	color: rgb(var(--gray-dark));
 	font-size: var(--font-size-base);
 	line-height: var(--line-height-base);

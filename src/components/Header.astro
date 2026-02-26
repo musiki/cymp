@@ -227,6 +227,13 @@ const user = session?.user;
 		height: 24px;
 		border-radius: 50%;
 	}
+	.user-button span {
+		display: inline-block;
+		max-width: 11rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
 	.user-dropdown {
 		position: absolute;
 		top: calc(100% + 0.5rem);
@@ -264,9 +271,40 @@ const user = session?.user;
 		border-radius: 0 0 6px 6px;
 	}
 
+	@media (max-width: 960px) {
+		header {
+			padding: 0 0.75rem;
+		}
+		nav {
+			flex-wrap: wrap;
+			justify-content: center;
+			gap: 0.3rem 0.6rem;
+			padding-top: 0.2rem;
+		}
+		h2 {
+			width: 100%;
+			display: flex;
+			justify-content: center;
+		}
+		.internal-links {
+			width: 100%;
+			justify-content: center;
+		}
+		nav a {
+			padding: 0.55em 0.45em;
+		}
+	}
+
 	@media (max-width: 720px) {
 		.social-links {
 			display: none;
+		}
+		.internal-links {
+			gap: 0 0.15rem;
+		}
+		nav a {
+			padding: 0.45em 0.35em;
+			font-size: 0.95rem;
 		}
 	}
 
