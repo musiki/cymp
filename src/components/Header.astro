@@ -1,10 +1,176 @@
 ---
 import HeaderLink from './HeaderLink.astro';
 import Search from './Search.astro';
+import LiveInteractionBeacon from './LiveInteractionBeacon.astro';
+import GraphModal from './GraphModal.astro';
+import { createClient } from '@supabase/supabase-js';
+import { getCollection } from 'astro:content';
 
 // auth-astro populates Astro.locals.session
 const session = Astro.locals.session;
 const user = session?.user;
+const {
+	showPageInfoToggle = false,
+	courseId = '',
+	activeCourseId = '',
+	activeCourseCode = '',
+	livePageSlug = '',
+	presentationHref = '',
+	hasClasstimeEval = false,
+	classtimeEvalIds = [],
+} = Astro.props as {
+	showPageInfoToggle?: boolean;
+	courseId?: string;
+	activeCourseId?: string;
+	activeCourseCode?: string;
+	livePageSlug?: string;
+	presentationHref?: string;
+	hasClasstimeEval?: boolean;
+	classtimeEvalIds?: string[];
+};
+const hasPresentationLink = typeof presentationHref === 'string' && presentationHref.trim().length > 0;
+const normalizedPresentationHref = hasPresentationLink ? presentationHref.trim() : '';
+const currentPathWithQuery = `${Astro.url.pathname}${Astro.url.search}`;
+const loginHref =
+	currentPathWithQuery.startsWith('/login')
+		? '/login'
+		: `/login?redirect=${encodeURIComponent(currentPathWithQuery)}`;
+
+const normalizeCourseId = (value: unknown) => String(value || '').trim();
+const normalizeCourseIdKey = (value: unknown) => normalizeCourseId(value).toLowerCase();
+const normalizeCourseCode = (value: unknown) => String(value || '').trim().toUpperCase();
+const toCourseAliasSlug = (value: unknown) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+const encodeCoursePath = (value: unknown) =>
+	String(value || '')
+		.split('/')
+		.map((segment) => encodeURIComponent(segment))
+		.join('/');
+
+type HeaderCourseOption = {
+	courseId: string;
+	title: string;
+	code: string;
+};
+
+let enrolledCourses: HeaderCourseOption[] = [];
+let inferredCourseIdFromQuery = normalizeCourseId(Astro.url.searchParams.get('course') || '');
+
+if (user?.email) {
+	try {
+		const supabase = createClient(import.meta.env.SUPABASE_URL, import.meta.env.SUPABASE_KEY);
+		const sessionEmail = String(user.email || '').trim();
+		const { data: dbUser } = await supabase
+			.from('User')
+			.select('id')
+			.eq('email', sessionEmail)
+			.maybeSingle();
+
+		const userId = String(dbUser?.id || '').trim();
+		if (userId) {
+			const { data: enrollments } = await supabase
+				.from('Enrollment')
+				.select('courseId')
+				.eq('userId', userId);
+
+			const enrolledCourseIds = Array.from(
+				new Set(
+					(Array.isArray(enrollments) ? enrollments : [])
+						.map((row) => normalizeCourseId((row as { courseId?: string | null })?.courseId))
+						.filter(Boolean),
+				),
+			);
+
+			if (enrolledCourseIds.length > 0) {
+				const courseEntries = await getCollection('cursos');
+				const courseMetaById = new Map<string, { title: string; code: string }>();
+				const canonicalByAlias = new Map<string, string>();
+
+				for (const entry of courseEntries) {
+					if (!entry.id.endsWith('/_index') && !entry.id.endsWith('_index')) continue;
+					const nextCourseId = normalizeCourseId(entry.id.replace(/\/_index$/, ''));
+					if (!nextCourseId) continue;
+					const courseData = entry.data as Record<string, unknown>;
+					const code = normalizeCourseCode(courseData?.id || courseData?.code || '');
+					courseMetaById.set(nextCourseId, {
+						title: String(entry.data?.title || nextCourseId),
+						code,
+					});
+					canonicalByAlias.set(normalizeCourseIdKey(nextCourseId), nextCourseId);
+					const slugAlias = toCourseAliasSlug(nextCourseId);
+					if (slugAlias) canonicalByAlias.set(slugAlias, nextCourseId);
+					if (code) canonicalByAlias.set(normalizeCourseIdKey(code), nextCourseId);
+					const titleAlias = toCourseAliasSlug(entry.data?.title || '');
+					if (titleAlias) canonicalByAlias.set(titleAlias, nextCourseId);
+				}
+
+				const canonicalCourseIds = Array.from(
+					new Set(
+						enrolledCourseIds
+							.map((enrolledCourseId) =>
+								canonicalByAlias.get(normalizeCourseIdKey(enrolledCourseId)) || enrolledCourseId,
+							)
+							.filter(Boolean),
+					),
+				);
+
+				enrolledCourses = canonicalCourseIds
+					.map((canonicalCourseId) => {
+						const meta = courseMetaById.get(canonicalCourseId);
+						return {
+							courseId: canonicalCourseId,
+							title: String(meta?.title || canonicalCourseId),
+							code: normalizeCourseCode(meta?.code || ''),
+						};
+					})
+					.sort((left, right) => left.title.localeCompare(right.title, 'es'));
+			}
+		}
+	} catch (error) {
+		console.error('Header enrolled courses lookup failed:', error);
+	}
+}
+
+const activeCourseIdCandidates = [
+	activeCourseId,
+	courseId,
+	inferredCourseIdFromQuery,
+];
+const activeCourseIdFromCandidates = activeCourseIdCandidates
+	.map((candidate) => normalizeCourseId(candidate))
+	.find(Boolean) || '';
+
+const enrolledCourseByKey = new Map(
+	enrolledCourses.map((course) => [normalizeCourseIdKey(course.courseId), course]),
+);
+const activeCourseByEnrollment = enrolledCourseByKey.get(
+	normalizeCourseIdKey(activeCourseIdFromCandidates),
+);
+const fallbackActiveCourse = enrolledCourses[0] || null;
+const resolvedActiveCourse = activeCourseByEnrollment || fallbackActiveCourse;
+const resolvedActiveCourseId = normalizeCourseId(
+	resolvedActiveCourse?.courseId || activeCourseIdFromCandidates,
+);
+const resolvedActiveCourseCode = normalizeCourseCode(
+	activeCourseCode || resolvedActiveCourse?.code || '',
+);
+const resolvedActiveCourseLabel = resolvedActiveCourse?.title || '';
+
+const withActiveCourse = (href: string) => {
+	if (!resolvedActiveCourseId) return href;
+	try {
+		const nextUrl = new URL(href, Astro.url);
+		nextUrl.searchParams.set('course', resolvedActiveCourseId);
+		return `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
+	} catch {
+		return href;
+	}
+};
 ---
 
 <header>
@@ -17,12 +183,84 @@ const user = session?.user;
 		<div class="internal-links">
 			<HeaderLink href="/">Inicio</HeaderLink>
 			<HeaderLink href="/about">Acerca</HeaderLink>
-			<HeaderLink href="/cursos">Cursos</HeaderLink>
-			<HeaderLink href="/foro">FORO</HeaderLink>
-			{user && <HeaderLink href="/dashboard">Dashboard</HeaderLink>}
+			{
+				user && enrolledCourses.length > 0 ? (
+					<div class="course-menu">
+						<a href="/cursos" class="course-menu-link">Cursos</a>
+						<button
+							type="button"
+							class="course-menu-button"
+							id="course-menu-button"
+							aria-haspopup="menu"
+							aria-expanded="false"
+							aria-label="Abrir menu de cursos"
+						>
+							<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+								<polyline points="6 9 12 15 18 9"></polyline>
+							</svg>
+						</button>
+						<div class="course-dropdown" id="course-dropdown" role="menu">
+							{enrolledCourses.map((course) => {
+								const isCurrent = normalizeCourseIdKey(course.courseId) === normalizeCourseIdKey(resolvedActiveCourseId);
+								const courseHref = `/cursos/${encodeCoursePath(course.courseId)}?course=${encodeURIComponent(course.courseId)}`;
+								return (
+									<a href={courseHref} role="menuitem" class:list={['course-dropdown-link', { active: isCurrent }]}>
+										<span class="course-dropdown-title">{course.title}</span>
+									</a>
+								);
+							})}
+						</div>
+					</div>
+				) : (
+					<HeaderLink href="/cursos">Cursos</HeaderLink>
+				)
+			}
+			<HeaderLink href={withActiveCourse('/foro')}>FORO</HeaderLink>
+			{user && <HeaderLink href={withActiveCourse('/dashboard')}>Dashboard</HeaderLink>}
 		</div>
 		<Search />
 		<div class="social-links">
+			{
+				hasPresentationLink && (
+					<button
+						id="presentation-toggle"
+						class="presentation-toggle-btn"
+						title="Abrir presentacion (Ctrl+E)"
+						aria-label="Abrir presentacion"
+						data-href={normalizedPresentationHref}
+					>
+						<svg viewBox="0 0 24 24" aria-hidden="true" width="24" height="24">
+							<path
+								fill="currentColor"
+								d="M3 4.75A1.75 1.75 0 0 1 4.75 3h14.5A1.75 1.75 0 0 1 21 4.75v10.5A1.75 1.75 0 0 1 19.25 17h-5.5l1.2 3h1.8a.75.75 0 0 1 0 1.5h-9.5a.75.75 0 0 1 0-1.5h1.8l1.2-3h-6.5A1.75 1.75 0 0 1 3 15.25V4.75Zm1.5 0v10.5c0 .14.11.25.25.25h14.5a.25.25 0 0 0 .25-.25V4.75a.25.25 0 0 0-.25-.25H4.75a.25.25 0 0 0-.25.25Zm6.36 15.25h2.28l-1-2.5h-.28l-1 2.5Z"
+							></path>
+						</svg>
+					</button>
+				)
+			}
+			{
+				user ? (
+					<>
+					{
+						resolvedActiveCourseId ? (
+							<div class="active-course-chip" title={resolvedActiveCourseLabel || resolvedActiveCourseId}>
+								<span class="active-course-chip-code">{resolvedActiveCourseCode || resolvedActiveCourseId}</span>
+							</div>
+						) : null
+					}
+					<div class="live-beacon-slot">
+						<LiveInteractionBeacon
+							studentId={user?.email || ''}
+							courseId={resolvedActiveCourseId || courseId}
+							courseIds={enrolledCourses.map((course) => course.courseId)}
+							pageSlug={livePageSlug}
+							hasClasstimeEval={hasClasstimeEval}
+							classtimeEvalIds={classtimeEvalIds}
+						/>
+					</div>
+					</>
+				) : null
+			}
 			<a href="https://github.com/musiki/cym" target="_blank">
 				<span class="sr-only">repositorio de cym</span>
 				<svg viewBox="0 0 16 16" aria-hidden="true" width="32" height="32"
@@ -49,6 +287,18 @@ const user = session?.user;
 					<path fill-rule="evenodd" d="M9.528 1.718a.75.75 0 01.162.819A8.97 8.97 0 009 6a9 9 0 009 9 8.97 8.97 0 003.463-.69.75.75 0 01.981.98 10.503 10.503 0 01-9.694 6.46c-5.799 0-10.5-4.701-10.5-10.5 0-4.368 2.667-8.112 6.46-9.694a.75.75 0 01.818.162z" clip-rule="evenodd"/>
 				</svg>
 			</button>
+			{showPageInfoToggle && (
+				<button
+					id="page-info-toggle"
+					class="page-info-toggle-btn"
+					title="Mostrar informacion de la pagina"
+					aria-label="Mostrar informacion de la pagina"
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+						<path fill-rule="evenodd" d="M2.25 12a9.75 9.75 0 1119.5 0 9.75 9.75 0 01-19.5 0zM11.25 10.5a.75.75 0 011.5 0v5.25a.75.75 0 01-1.5 0V10.5zM12 8.25a.937.937 0 100-1.875.937.937 0 000 1.875z" clip-rule="evenodd" />
+					</svg>
+				</button>
+			)}
 			<div class="auth-links">
 				{user ? (
 					<div class="user-menu">
@@ -60,42 +310,153 @@ const user = session?.user;
 							</svg>
 						</button>
 						<div class="user-dropdown" id="user-dropdown">
-							<a href="/dashboard">Dashboard</a>
+							<a href={withActiveCourse('/dashboard')}>Dashboard</a>
 							<a href="/api/auth/signout">Cerrar Sesión</a>
 						</div>
 					</div>
 				) : (
-					<a href="/login">Login</a>
+					<a href={loginHref}>Login</a>
 				)}
 			</div>
 		</div>
 	</nav>
 </header>
+<GraphModal />
 <script>
-	const handleToggleClick = () => {
-		const element = document.documentElement;
-		element.classList.toggle('dark');
+	const setupHeaderControls = () => {
+		const handleThemeToggleClick = () => {
+			const element = document.documentElement;
+			element.classList.toggle('dark');
+			const isDark = element.classList.contains('dark');
+			element.dataset.theme = isDark ? 'dark' : 'light';
+			localStorage.setItem('theme', isDark ? 'dark' : 'light');
+		};
 
-		const isDark = element.classList.contains('dark');
-		element.dataset.theme = isDark ? 'dark' : 'light';
-		localStorage.setItem('theme', isDark ? 'dark' : 'light');
+		const themeButton = document.getElementById('theme-toggle');
+		if (themeButton && !themeButton.dataset.bound) {
+			themeButton.dataset.bound = 'true';
+			themeButton.addEventListener('click', handleThemeToggleClick);
+		}
+
+		const pageInfoButton = document.getElementById('page-info-toggle');
+		if (pageInfoButton && !pageInfoButton.dataset.bound) {
+			pageInfoButton.dataset.bound = 'true';
+			pageInfoButton.addEventListener('click', () => {
+				window.dispatchEvent(new CustomEvent('wiki:toggle-info'));
+			});
+		}
+
+		const graphToggleButton = document.getElementById('graph-toggle');
+		if (graphToggleButton && !graphToggleButton.dataset.bound) {
+			graphToggleButton.dataset.bound = 'true';
+			graphToggleButton.addEventListener('click', () => {
+				window.dispatchEvent(new CustomEvent('graph:toggle'));
+			});
+		}
+
+		const openPresentation = () => {
+			const presentationButton = document.getElementById('presentation-toggle');
+			const href = presentationButton?.getAttribute('data-href');
+			if (!href) return;
+			const nextUrl = new URL(href, window.location.origin);
+			window.location.href = nextUrl.toString();
+		};
+
+		const presentationButton = document.getElementById('presentation-toggle');
+		if (presentationButton && !presentationButton.dataset.bound) {
+			presentationButton.dataset.bound = 'true';
+			presentationButton.addEventListener('click', openPresentation);
+		}
+
+		if (typeof window.__musikiHeaderKeydownHandler === 'function') {
+			document.removeEventListener('keydown', window.__musikiHeaderKeydownHandler);
+		}
+
+		const keydownHandler = (event) => {
+			if (event.defaultPrevented) return;
+
+			const target = event.target;
+			const isEditable =
+				target instanceof HTMLElement &&
+				(target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+
+			const key = String(event.key || '').toLowerCase();
+			const code = String(event.code || '').toLowerCase();
+
+			if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+				if (key === 'g' && !isEditable) {
+					event.preventDefault();
+					window.dispatchEvent(new CustomEvent('graph:toggle'));
+				}
+				return;
+			}
+
+			if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+			if (!(key === 'e' || code === 'keye')) return;
+			if (isEditable) return;
+
+			const href = document.getElementById('presentation-toggle')?.getAttribute('data-href');
+			if (!href) return;
+
+			event.preventDefault();
+			openPresentation();
+		};
+
+		document.addEventListener('keydown', keydownHandler);
+		window.__musikiHeaderKeydownHandler = keydownHandler;
+
+		const userMenuButton = document.getElementById('user-menu-button');
+		const userDropdown = document.getElementById('user-dropdown');
+		const courseMenuButton = document.getElementById('course-menu-button');
+		const courseDropdown = document.getElementById('course-dropdown');
+
+		if (userMenuButton && userDropdown && !userMenuButton.dataset.bound) {
+			userMenuButton.dataset.bound = 'true';
+			userMenuButton.addEventListener('click', (event) => {
+				event.stopPropagation();
+				if (courseDropdown) {
+					courseDropdown.classList.remove('show');
+					courseMenuButton?.setAttribute('aria-expanded', 'false');
+				}
+				userDropdown.classList.toggle('show');
+			});
+		}
+
+		if (courseMenuButton && courseDropdown && !courseMenuButton.dataset.bound) {
+			courseMenuButton.dataset.bound = 'true';
+			courseMenuButton.addEventListener('click', (event) => {
+				event.stopPropagation();
+				const willOpen = !courseDropdown.classList.contains('show');
+				if (userDropdown) userDropdown.classList.remove('show');
+				courseDropdown.classList.toggle('show', willOpen);
+				courseMenuButton.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+			});
+		}
+
+		if (typeof window.__musikiHeaderDocClickHandler === 'function') {
+			document.removeEventListener('click', window.__musikiHeaderDocClickHandler);
+		}
+
+		const docClickHandler = () => {
+			const dropdown = document.getElementById('user-dropdown');
+			dropdown?.classList.remove('show');
+			const nextCourseDropdown = document.getElementById('course-dropdown');
+			nextCourseDropdown?.classList.remove('show');
+			const nextCourseMenuButton = document.getElementById('course-menu-button');
+			nextCourseMenuButton?.setAttribute('aria-expanded', 'false');
+		};
+
+		document.addEventListener('click', docClickHandler);
+		window.__musikiHeaderDocClickHandler = docClickHandler;
 	};
 
-	document.getElementById('theme-toggle')?.addEventListener('click', handleToggleClick);
+	if (document.readyState === 'loading') {
+		document.addEventListener('DOMContentLoaded', setupHeaderControls, { once: true });
+	} else {
+		setupHeaderControls();
+	}
 
-	// User menu dropdown
-	const userMenuButton = document.getElementById('user-menu-button');
-	const userDropdown = document.getElementById('user-dropdown');
-
-	userMenuButton?.addEventListener('click', (e) => {
-		e.stopPropagation();
-		userDropdown?.classList.toggle('show');
-	});
-
-	// Close dropdown when clicking outside
-	document.addEventListener('click', () => {
-		userDropdown?.classList.remove('show');
-	});
+	document.addEventListener('astro:page-load', setupHeaderControls);
 </script>
 <style>
 	header {
@@ -143,10 +504,102 @@ const user = session?.user;
 		align-items: center;
 		flex-wrap: wrap;
 	}
+	.course-menu {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.06rem;
+	}
+	.course-menu-link {
+		display: inline-flex;
+		align-items: center;
+		line-height: 1;
+		padding: 1em 0.22em 1em 0.5em;
+	}
+	.course-menu-button {
+		padding: 1em 0.5em 1em 0.12em;
+		color: var(--black);
+		border: none;
+		background: transparent;
+		cursor: pointer;
+		display: inline-flex;
+		align-items: center;
+		line-height: 1;
+		vertical-align: middle;
+		font: inherit;
+	}
+	.course-menu-button:hover {
+		opacity: 0.88;
+	}
+	.course-dropdown {
+		position: absolute;
+		top: calc(100% + 0.35rem);
+		left: 0;
+		min-width: 220px;
+		max-width: 320px;
+		background: #ffffff;
+		border: 1px solid var(--c-border);
+		border-radius: 8px;
+		box-shadow: 0 8px 20px rgba(0, 0, 0, 0.14);
+		padding: 0.32rem;
+		opacity: 0;
+		visibility: hidden;
+		transform: translateY(-6px);
+		transition: all 0.18s ease;
+		z-index: 1200;
+	}
+	.course-dropdown.show {
+		opacity: 1;
+		visibility: visible;
+		transform: translateY(0);
+	}
+	.course-dropdown-link {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.52rem 0.56rem;
+		text-decoration: none;
+		color: var(--c-fg);
+		border-radius: 6px;
+		border-bottom: none;
+	}
+	.course-dropdown-link:hover {
+		background: var(--c-bg-mute);
+	}
+	.course-dropdown-link.active {
+		background: color-mix(in srgb, var(--accent) 18%, transparent);
+	}
+	.course-dropdown-title {
+		font-size: 0.86rem;
+		min-width: 0;
+		overflow-wrap: anywhere;
+	}
 	.social-links {
 		display: flex;
 		align-items: center;
 		gap: 0.5em;
+		flex-wrap: wrap;
+	}
+	.active-course-chip {
+		display: inline-flex;
+		align-items: center;
+		height: 1.5rem;
+		padding: 0 0.48rem;
+		border: 1px solid var(--c-border);
+		border-radius: 999px;
+		background: var(--c-bg);
+	}
+	.active-course-chip-code {
+		font-size: 0.74rem;
+		font-weight: 700;
+		letter-spacing: 0.02em;
+		color: var(--c-fg-dim);
+	}
+	.live-beacon-slot {
+		display: inline-flex;
+		align-items: center;
+		margin-left: 0;
+		margin-right: 0;
 	}
 	.auth-links a {
 		padding: 0.3em 0.8em;
@@ -193,6 +646,42 @@ const user = session?.user;
 		opacity: 0.7;
 	}
 	.graph-toggle-btn svg {
+		width: 24px;
+		height: 24px;
+	}
+	.presentation-toggle-btn {
+		background: none;
+		border: none;
+		cursor: pointer;
+		padding: 0.5em;
+		color: rgb(var(--black));
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: opacity 0.2s;
+	}
+	.presentation-toggle-btn:hover {
+		opacity: 0.7;
+	}
+	.presentation-toggle-btn svg {
+		width: 24px;
+		height: 24px;
+	}
+	.page-info-toggle-btn {
+		background: none;
+		border: none;
+		cursor: pointer;
+		padding: 0.5em;
+		color: rgb(var(--black));
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: opacity 0.2s;
+	}
+	.page-info-toggle-btn:hover {
+		opacity: 0.7;
+	}
+	.page-info-toggle-btn svg {
 		width: 24px;
 		height: 24px;
 	}
@@ -290,6 +779,12 @@ const user = session?.user;
 			width: 100%;
 			justify-content: center;
 		}
+		.course-menu-button {
+			padding: 0.55em 0.45em 0.55em 0.14em;
+		}
+		.course-menu-link {
+			padding: 0.55em 0.2em 0.55em 0.45em;
+		}
 		nav a {
 			padding: 0.55em 0.45em;
 		}
@@ -297,14 +792,99 @@ const user = session?.user;
 
 	@media (max-width: 720px) {
 		.social-links {
-			display: none;
+			display: flex;
+			width: 100%;
+			justify-content: center;
+			gap: 0.25rem;
+		}
+		.live-beacon-slot {
+			width: auto;
+			margin: 0;
 		}
 		.internal-links {
 			gap: 0 0.15rem;
 		}
+		.course-menu-button {
+			padding: 0.45em 0.35em 0.45em 0.12em;
+			font-size: 0.95rem;
+		}
+		.course-menu-link {
+			padding: 0.45em 0.14em 0.45em 0.35em;
+			font-size: 0.95rem;
+		}
 		nav a {
 			padding: 0.45em 0.35em;
 			font-size: 0.95rem;
+		}
+	}
+
+	@media (max-width: 500px) {
+		header {
+			padding: 0 0.4rem;
+		}
+		nav {
+			gap: 0.2rem 0.35rem;
+		}
+		.brand-logo {
+			height: 34px;
+		}
+		.internal-links {
+			width: 100%;
+			justify-content: center;
+			gap: 0 0.08rem;
+		}
+		.course-menu-button {
+			padding: 0.35em 0.28em 0.35em 0.08em;
+			font-size: 0.82rem;
+		}
+		.course-menu-link {
+			padding: 0.35em 0.1em 0.35em 0.28em;
+			font-size: 0.82rem;
+		}
+		nav a {
+			padding: 0.35em 0.28em;
+			font-size: 0.82rem;
+		}
+		.social-links {
+			width: 100%;
+			justify-content: center;
+			gap: 0.15rem;
+		}
+		.active-course-chip {
+			height: 1.38rem;
+			padding: 0 0.42rem;
+		}
+		.active-course-chip-code {
+			font-size: 0.68rem;
+		}
+		.social-links a {
+			padding: 0;
+		}
+		.social-links a svg,
+		.presentation-toggle-btn svg,
+		.graph-toggle-btn svg,
+		.theme-toggle svg,
+		.page-info-toggle-btn svg {
+			width: 22px;
+			height: 22px;
+		}
+		.presentation-toggle-btn,
+		.graph-toggle-btn,
+		.theme-toggle,
+		.page-info-toggle-btn {
+			padding: 0.34rem;
+		}
+		.auth-links {
+			width: 100%;
+			display: flex;
+			justify-content: center;
+		}
+		.user-button {
+			font-size: 0.8rem;
+			padding: 0.24rem 0.5rem;
+		}
+		.user-button span {
+			max-width: 8.2rem;
 		}
 	}
 
@@ -315,10 +895,20 @@ const user = session?.user;
 	:global(.dark) .auth-links a:hover {
 		background-color: #2b2b2f;
 	}
+	:global(.dark) .course-dropdown {
+		background: #121212;
+		border-color: #2f2f2f;
+	}
+	:global(.dark) .course-dropdown-link.active {
+		background: color-mix(in srgb, var(--accent) 30%, transparent);
+	}
 	:global(.dark) nav a {
 		color: rgb(var(--black));
 	}
 	:global(.dark) .theme-toggle {
+		color: rgb(var(--black));
+	}
+	:global(.dark) .page-info-toggle-btn {
 		color: rgb(var(--black));
 	}
 	:global(.dark) .sun {

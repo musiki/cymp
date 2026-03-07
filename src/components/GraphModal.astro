@@ -315,8 +315,7 @@ const currentSlug = Astro.url.pathname.replace(/^\//, '').replace(/\/$/, '');
     }
   }
 
-  // Event listeners
-  document.addEventListener('keydown', (e) => {
+  const handleGraphShortcut = (e) => {
     // Only trigger if not typing in an input field
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
     
@@ -329,7 +328,15 @@ const currentSlug = Astro.url.pathname.replace(/^\//, '').replace(/\/$/, '');
         toggleModal();
       }
     }
-  });
+  };
+
+  const handleGraphToggleRequest = () => {
+    toggleModal();
+  };
+
+  // Event listeners
+  document.addEventListener('keydown', handleGraphShortcut);
+  window.addEventListener('graph:toggle', handleGraphToggleRequest);
 
   document.getElementById('graph-close')?.addEventListener('click', toggleModal);
   document.getElementById('graph-center')?.addEventListener('click', centerOnCurrent);
@@ -339,6 +346,15 @@ const currentSlug = Astro.url.pathname.replace(/^\//, '').replace(/\/$/, '');
       toggleModal();
     }
   });
+
+  document.addEventListener(
+    'astro:before-swap',
+    () => {
+      document.removeEventListener('keydown', handleGraphShortcut);
+      window.removeEventListener('graph:toggle', handleGraphToggleRequest);
+    },
+    { once: true }
+  );
 </script>
 
 <style>

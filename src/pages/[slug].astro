@@ -17,6 +17,13 @@ const toCleanSlug = (value: unknown) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 
+const encodePathSegments = (value: string) =>
+  value
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+
 // Get all content entries
 const allContent = await getCollection('content');
 
@@ -37,7 +44,30 @@ if (!entry) {
   }
 }
 
+// Legacy fallback: if an old flat slug points to a course lesson, redirect to /cursos/...
 if (!entry) {
+  const target = decodeURIComponent(slug || '').toLowerCase();
+  const allCourseContent = await getCollection('cursos');
+  const courseLessons = allCourseContent.filter(
+    (item) => !item.id.endsWith('/_index') && !item.id.endsWith('_index'),
+  );
+
+  const byFilename = courseLessons.filter((item) => {
+    const filename = item.id.split('/').pop()?.replace(/\.[^/.]+$/, '') || '';
+    const fileSlug = toCleanSlug(filename);
+    return fileSlug === target || filename.toLowerCase() === target;
+  });
+
+  let redirectLesson = byFilename.length === 1 ? byFilename[0] : null;
+  if (!redirectLesson) {
+    const byTitle = courseLessons.filter((item) => toCleanSlug(item.data?.title) === target);
+    if (byTitle.length === 1) redirectLesson = byTitle[0];
+  }
+
+  if (redirectLesson) {
+    return Astro.redirect(`/cursos/${encodePathSegments(redirectLesson.id)}`);
+  }
+
   return Astro.redirect('/404');
 }
 
@@ -47,11 +77,19 @@ const { Content } = await render(entry);
 // Resolve title: Frontmatter > Filename
 const title = entry.data.title || entry.id.split('/').pop()?.replace(/\.[^/.]+$/, '') || 'Untitled';
 const description = entry.data.description || entry.data.subtitle || '';
+const tags = Array.isArray(entry.data.tags)
+  ? entry.data.tags
+  : entry.data.tags
+    ? String(entry.data.tags).split(',').map((tag) => tag.trim()).filter(Boolean)
+    : undefined;
 const defaultSlideTheme = '/inc/reveal/themes/zztt-reveal.css';
 const slideThemeFromData = (entry.data as Record<string, unknown>).slideTheme || (entry.data as Record<string, unknown>).revealTheme;
 const slideTheme = typeof slideThemeFromData === 'string' && slideThemeFromData.trim()
   ? slideThemeFromData.trim()
   : defaultSlideTheme;
+const rawPresentationTheme = (entry.data as Record<string, unknown>).theme;
+const hasPresentationTheme = typeof rawPresentationTheme === 'string' && rawPresentationTheme.trim().length > 0;
+const presentationHref = hasPresentationTheme ? `${Astro.url.pathname}?view=slides` : '';
 ---
 
 {
@@ -68,27 +106,12 @@ const slideTheme = typeof slideThemeFromData === 'string' && slideThemeFromData.
       <WikiLayout
         title={title}
         description={description}
+        id={entry.id}
+        tags={tags}
+        presentationHref={presentationHref}
       >
         <Content />
       </WikiLayout>
-      <script is:inline>
-        (() => {
-          const isShortcut = (event) => {
-            const key = String(event.key || '').toLowerCase();
-            return event.ctrlKey && !event.metaKey && key === 'e';
-          };
-
-          document.addEventListener('keydown', (event) => {
-            if (!isShortcut(event)) return;
-            if (event.defaultPrevented) return;
-
-            event.preventDefault();
-            const url = new URL(window.location.href);
-            url.searchParams.set('view', 'slides');
-            window.location.href = url.toString();
-          });
-        })();
-      </script>
     </>
   )
 }

@@ -6,6 +6,14 @@ import Header from '../components/Header.astro';
 import { createClient } from '@supabase/supabase-js';
 import { getResultIcon, getSubmissionAnswerText, getSubmissionResultState } from '../lib/submission-table';
 import { getEvalOptionMap } from '../lib/eval-option-map';
+import {
+  buildEvalCatalog,
+  EVAL_NOTE_TYPE_LABEL,
+  EVAL_NOTE_TYPE_ORDER,
+  inferEvalNoteTypeFromSlug,
+  resolveEvalCatalogEntry,
+  type EvalNoteType,
+} from '../lib/eval-catalog';
 import '../styles/theme.css';
 
 // --- AUTHENTICATION ---
@@ -15,6 +23,10 @@ const currentUser = session?.user;
 if (!currentUser?.email) {
   return Astro.redirect('/login?redirect=/dashboard');
 }
+
+const dashboardUrl = new URL(Astro.request.url);
+const requestedCourseParam = String(dashboardUrl.searchParams.get('course') || '').trim();
+const requestedYearParam = String(dashboardUrl.searchParams.get('year') || '').trim();
 
 // Initialize Supabase
 const supabase = createClient(import.meta.env.SUPABASE_URL, import.meta.env.SUPABASE_KEY);
@@ -96,15 +108,16 @@ let hasTeacherEnrollment = false;
 if (dashboardUserIds.length > 0) {
   const { data: teacherEnrollments, error: teacherEnrollmentError } = await supabase
     .from('Enrollment')
-    .select('userId')
+    .select('userId, roleInCourse')
     .in('userId', dashboardUserIds)
-    .eq('roleInCourse', 'teacher')
-    .limit(1);
+    .limit(50);
 
   if (teacherEnrollmentError) {
     console.error('Error resolving teacher enrollment for dashboard user:', teacherEnrollmentError);
   } else {
-    hasTeacherEnrollment = Array.isArray(teacherEnrollments) && teacherEnrollments.length > 0;
+    hasTeacherEnrollment =
+      Array.isArray(teacherEnrollments) &&
+      teacherEnrollments.some((row) => normalizeRole(row?.roleInCourse) === 'teacher');
   }
 }
 
@@ -198,6 +211,7 @@ const courseEntries = Object.entries(courseFiles).map(([filepath, module]: any) 
     slug: courseId, // The slug for the course page
     courseId: courseId,
     title: fm.title || courseId,
+    code: String(fm.id || fm.code || '').trim().toUpperCase(),
     // Support multiple image keys
     img: fm.coverImage || fm.img || fm.coverUrl || fm.image || '', 
     tags: Array.isArray(fm.tags) 
@@ -218,9 +232,6 @@ for (const [evalId, options] of evalOptionMap.entries()) {
     assignmentById.set(evalId, { id: evalId, options });
   }
 }
-const recentTeacherSubmissions = isTeacher ? [...(allSubmissions || [])].sort((a: any, b: any) => {
-  return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
-}) : [];
 
 const formatSubmissionDate = (value: string | null | undefined) => {
   if (!value) return '—';
@@ -243,6 +254,474 @@ const decodeUriSafe = (value: string | null | undefined) => {
     return value;
   }
 };
+
+const normalizeText = (value: unknown) => String(value || '').trim();
+const normalizeTextLower = (value: unknown) => normalizeText(value).toLowerCase();
+
+const asPayloadObject = (value: unknown): Record<string, any> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, any>;
+};
+
+const COURSE_STUDENT_META_KIND = 'course_student_profile';
+
+const normalizeCourseId = (value: unknown) => {
+  const raw = normalizeText(value);
+  if (!raw) return '';
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+};
+
+const toCourseAliasSlug = (value: unknown) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+const courseCanonicalByAlias = new Map<string, string>();
+for (const course of courseEntries) {
+  const canonical = normalizeCourseId(course?.courseId);
+  if (!canonical) continue;
+  courseCanonicalByAlias.set(normalizeTextLower(canonical), canonical);
+  const canonicalSlugAlias = toCourseAliasSlug(canonical);
+  if (canonicalSlugAlias) {
+    courseCanonicalByAlias.set(canonicalSlugAlias, canonical);
+  }
+  const codeAlias = normalizeText(course?.code || '');
+  if (codeAlias) {
+    courseCanonicalByAlias.set(normalizeTextLower(codeAlias), canonical);
+  }
+  const titleAlias = toCourseAliasSlug(course?.title || '');
+  if (titleAlias) {
+    courseCanonicalByAlias.set(titleAlias, canonical);
+  }
+}
+
+const canonicalizeCourseId = (value: unknown) => {
+  const normalized = normalizeCourseId(value);
+  if (!normalized) return '';
+  return courseCanonicalByAlias.get(normalizeTextLower(normalized)) || normalized;
+};
+
+const getSubmissionYear = (submission: any) => {
+  const directYear = normalizeText(
+    asPayloadObject(submission?.payload)?.year
+      || asPayloadObject(submission?.payload)?.academicYear
+      || '',
+  );
+  if (/^\d{4}$/.test(directYear)) return directYear;
+
+  const dateCandidates = [submission?.submittedAt, submission?.gradedAt, submission?.createdAt];
+  for (const candidate of dateCandidates) {
+    const parsed = new Date(String(candidate || ''));
+    if (!Number.isNaN(parsed.getTime())) return String(parsed.getFullYear());
+  }
+
+  return String(new Date().getFullYear());
+};
+
+const getEnrollmentYear = (enrollment: any) => {
+  const directYear = normalizeText(
+    enrollment?.year
+      || enrollment?.academicYear
+      || enrollment?.cohortYear
+      || enrollment?.periodYear
+      || '',
+  );
+  if (/^\d{4}$/.test(directYear)) return directYear;
+
+  const dateCandidates = [enrollment?.createdAt, enrollment?.updatedAt, enrollment?.enrolledAt];
+  for (const candidate of dateCandidates) {
+    const parsed = new Date(String(candidate || ''));
+    if (!Number.isNaN(parsed.getTime())) return String(parsed.getFullYear());
+  }
+
+  return String(new Date().getFullYear());
+};
+
+const isCourseStudentMetaSubmission = (submission: any) => {
+  const payload = asPayloadObject(submission?.payload);
+  return normalizeTextLower(payload?.__metaKind || payload?.metaKind || '') === COURSE_STUDENT_META_KIND;
+};
+
+const asJsonText = (value: unknown) => {
+  try {
+    return JSON.stringify(value ?? null);
+  } catch {
+    return '';
+  }
+};
+
+const toPreviewOptions = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((option) => {
+      if (typeof option === 'string') return normalizeText(option);
+      if (option && typeof option === 'object') {
+        const optionObject = option as Record<string, unknown>;
+        return normalizeText(
+          optionObject.text
+            || optionObject.label
+            || optionObject.value
+            || optionObject.id
+            || '',
+        );
+      }
+      return '';
+    })
+    .filter(Boolean);
+};
+
+const buildEvalPreview = ({
+  evalId,
+  evalType,
+  mode,
+  prompt,
+  options,
+}: {
+  evalId: string;
+  evalType: string;
+  mode: string;
+  prompt: string;
+  options: string[];
+}) => ({
+  id: normalizeText(evalId || '-'),
+  type: normalizeText(evalType || 'unknown') || 'unknown',
+  mode: normalizeText(mode || 'unknown') || 'unknown',
+  prompt: normalizeText(prompt || ''),
+  options: Array.isArray(options) ? options.map((item) => normalizeText(item)).filter(Boolean) : [],
+});
+
+const toEvalPreviewAttr = (value: unknown) => {
+  try {
+    return encodeURIComponent(JSON.stringify(value ?? {}));
+  } catch {
+    return '';
+  }
+};
+
+const teacherManagedCourseIds = new Set<string>();
+const teacherManagedCourseIdsRaw = new Set<string>();
+if (isTeacher && Array.isArray(allEnrollments)) {
+  allEnrollments
+    .filter(
+      (enrollment: any) =>
+        dashboardUserIds.includes(enrollment.userId) &&
+        normalizeRole(enrollment?.roleInCourse) === 'teacher',
+    )
+    .forEach((enrollment: any) => {
+      const rawCourseId = canonicalizeCourseId(enrollment?.courseId);
+      const normalizedCourseId = normalizeTextLower(rawCourseId);
+      if (normalizedCourseId) teacherManagedCourseIds.add(normalizedCourseId);
+      if (rawCourseId) teacherManagedCourseIdsRaw.add(rawCourseId);
+    });
+}
+
+const teacherMetaSubmissions = isTeacher
+  ? (allSubmissions || []).filter((submission: any) => isCourseStudentMetaSubmission(submission))
+  : [];
+const teacherDataSubmissions = isTeacher
+  ? (allSubmissions || []).filter((submission: any) => !isCourseStudentMetaSubmission(submission))
+  : [];
+
+if (!isTeacher) {
+  studentSubmissions = (studentSubmissions || []).filter((submission: any) => !isCourseStudentMetaSubmission(submission));
+}
+
+const courseStudentMetaByKey = new Map<string, { turno: string; concepto: string; grupo: string }>();
+if (isTeacher) {
+  teacherMetaSubmissions.forEach((submission: any) => {
+    const payload = asPayloadObject(submission?.payload);
+    const courseId = canonicalizeCourseId(payload?.courseId || payload?.course || payload?.courseSlug);
+    const studentId = normalizeText(payload?.studentId || submission?.userId);
+    const year = normalizeText(payload?.year || getSubmissionYear(submission));
+    if (!courseId || !studentId || !year) return;
+
+    courseStudentMetaByKey.set(
+      `${normalizeTextLower(courseId)}::${year}::${studentId}`,
+      {
+        turno: normalizeText(payload?.turno || '').toUpperCase(),
+        concepto: normalizeText(payload?.concepto || payload?.concept || ''),
+        grupo: normalizeText(payload?.grupo || payload?.group || ''),
+      },
+    );
+  });
+}
+
+const evalCatalog = await buildEvalCatalog();
+
+const resolveSubmissionMeta = (submission: any) => {
+  const assignment = assignmentById.get(submission.assignmentId);
+  const assignmentSlug = String(assignment?.slug || submission.assignmentId || '');
+  const assignmentCourseId = canonicalizeCourseId(assignment?.courseId);
+  const inferredNoteType = inferEvalNoteTypeFromSlug(assignmentSlug, assignmentCourseId) as EvalNoteType;
+  const catalogEntries = evalCatalog.get(String(submission.assignmentId || '')) || [];
+  const catalogEntry = resolveEvalCatalogEntry(catalogEntries, assignmentSlug);
+  const payload = asPayloadObject(submission?.payload);
+  const payloadCourseId = canonicalizeCourseId(payload.courseId || payload.course || payload.courseSlug);
+  const catalogCourseId = canonicalizeCourseId(catalogEntry?.courseId);
+  const slugCourseId = canonicalizeCourseId(assignmentSlug.split('/')[0]);
+  const resolvedCourseIdRaw =
+    assignmentCourseId || catalogCourseId || payloadCourseId || slugCourseId || 'sin-curso';
+
+  const noteType = (catalogEntry?.noteType || inferredNoteType || 'unknown') as EvalNoteType;
+  const noteTypeLabel = EVAL_NOTE_TYPE_LABEL[noteType] || EVAL_NOTE_TYPE_LABEL.unknown;
+  const noteTypeOrder = EVAL_NOTE_TYPE_ORDER[noteType] || EVAL_NOTE_TYPE_ORDER.unknown;
+  const evalType = normalizeText(catalogEntry?.evalType || payload.type || 'unknown') || 'unknown';
+  const mode = normalizeText(catalogEntry?.mode || payload.mode || 'unknown') || 'unknown';
+  const previewPrompt = normalizeText(catalogEntry?.prompt || payload.prompt || payload.question || payload.title || '');
+  const previewOptions = toPreviewOptions(
+    catalogEntry?.options || payload.options || payload.choices || payload.answers || [],
+  );
+  const evalPreview = buildEvalPreview({
+    evalId: String(submission?.assignmentId || ''),
+    evalType,
+    mode,
+    prompt: previewPrompt,
+    options: previewOptions,
+  });
+
+  return {
+    assignment,
+    assignmentSlug,
+    assignmentLabel: decodeUriSafe(assignmentSlug.split('/').pop() || assignmentSlug || String(submission.assignmentId || '')),
+    courseId: decodeUriSafe(canonicalizeCourseId(resolvedCourseIdRaw) || resolvedCourseIdRaw),
+    courseIdRaw: resolvedCourseIdRaw,
+    courseIdKey: normalizeTextLower(canonicalizeCourseId(resolvedCourseIdRaw) || resolvedCourseIdRaw),
+    noteType,
+    noteTypeLabel,
+    noteTypeOrder,
+    evalType,
+    mode,
+    catalogEntry,
+    payload,
+    evalPreview,
+  };
+};
+
+const teacherScopedSubmissions = isTeacher
+  ? (teacherDataSubmissions || []).filter((submission: any) => {
+      if (teacherManagedCourseIds.size === 0) return false;
+      const meta = resolveSubmissionMeta(submission);
+      const courseIdKey = normalizeTextLower(meta?.courseIdRaw || meta?.courseId || '');
+      if (!courseIdKey || courseIdKey === 'sin-curso') return true;
+      return teacherManagedCourseIds.has(courseIdKey);
+    })
+  : [];
+
+const availableCourseIds = (() => {
+  if (isTeacher) {
+    if (teacherManagedCourseIdsRaw.size > 0) {
+      return Array.from(teacherManagedCourseIdsRaw);
+    }
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      (userEnrollments || [])
+        .map((enrollment: any) => canonicalizeCourseId(enrollment?.courseId))
+        .filter(Boolean),
+    ),
+  );
+})();
+
+const availableCourseMeta = availableCourseIds
+  .map((courseId) => {
+    const entry = courseEntries.find((course: any) => canonicalizeCourseId(course?.courseId) === courseId);
+    return {
+      courseId,
+      title: String(entry?.title || decodeUriSafe(courseId)),
+      code: String(entry?.code || '').trim().toUpperCase(),
+    };
+  })
+  .sort((left, right) => String(left.title || '').localeCompare(String(right.title || ''), 'es'));
+
+const selectedCourseId = canonicalizeCourseId(requestedCourseParam);
+const activeCourseId = availableCourseMeta.some((course) => course.courseId === selectedCourseId)
+  ? selectedCourseId
+  : String(availableCourseMeta[0]?.courseId || '');
+const activeCourseMeta = availableCourseMeta.find((course) => course.courseId === activeCourseId) || null;
+const activeCourseCode = String(activeCourseMeta?.code || '').trim().toUpperCase();
+
+const activeCourseSubmissions = (() => {
+  if (!activeCourseId) {
+    return isTeacher ? teacherScopedSubmissions : studentSubmissions;
+  }
+
+  const source = isTeacher ? teacherScopedSubmissions : studentSubmissions;
+  return (source || []).filter((submission: any) => {
+    const meta = resolveSubmissionMeta(submission);
+    const submissionCourseId = canonicalizeCourseId(meta?.courseIdRaw || meta?.courseId || '');
+    return submissionCourseId === activeCourseId;
+  });
+})();
+
+const availableYears = (() => {
+  const yearSet = new Set<string>();
+
+  const enrollmentSource = isTeacher
+    ? (allEnrollments || [])
+    : (userEnrollments || []);
+  enrollmentSource.forEach((enrollment: any) => {
+    const enrollmentCourseId = canonicalizeCourseId(enrollment?.courseId);
+    if (activeCourseId && enrollmentCourseId !== activeCourseId) return;
+    yearSet.add(getEnrollmentYear(enrollment));
+  });
+
+  (activeCourseSubmissions || []).forEach((submission: any) => {
+    yearSet.add(getSubmissionYear(submission));
+  });
+
+  const years = Array.from(yearSet)
+    .filter((year) => /^\d{4}$/.test(String(year || '')))
+    .sort((left, right) => Number(right) - Number(left));
+  if (years.length === 0) {
+    years.push(String(new Date().getFullYear()));
+  }
+  return years;
+})();
+
+const activeYear = availableYears.includes(requestedYearParam)
+  ? requestedYearParam
+  : String(availableYears[0] || String(new Date().getFullYear()));
+
+const matchesActiveYear = (submission: any) => {
+  if (!activeYear) return true;
+  return getSubmissionYear(submission) === activeYear;
+};
+
+const scopedTeacherSubmissions = isTeacher
+  ? (activeCourseSubmissions || []).filter((submission: any) => matchesActiveYear(submission))
+  : [];
+const scopedStudentSubmissions = !isTeacher
+  ? (activeCourseSubmissions || []).filter((submission: any) => matchesActiveYear(submission))
+  : [];
+const scopedTeacherEnrollments = isTeacher
+  ? (allEnrollments || []).filter((enrollment: any) => {
+      if (teacherManagedCourseIds.size === 0) return false;
+      const enrollmentCourseId = canonicalizeCourseId(enrollment?.courseId);
+      if (!teacherManagedCourseIds.has(normalizeTextLower(enrollmentCourseId))) {
+        return false;
+      }
+      if (activeCourseId && enrollmentCourseId !== activeCourseId) return false;
+      if (activeYear && getEnrollmentYear(enrollment) !== activeYear) return false;
+      return true;
+    })
+  : [];
+
+const recentTeacherSubmissions = isTeacher
+  ? [...scopedTeacherSubmissions].sort((a: any, b: any) => {
+      return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
+    })
+  : [];
+
+const buildSubmissionLogRows = (submissions: any[], options: { includeUser: boolean }) => {
+  const includeUser = Boolean(options?.includeUser);
+  return submissions
+    .map((submission: any) => {
+      const meta = resolveSubmissionMeta(submission);
+      const scoreValue =
+        submission?.score !== null && submission?.score !== undefined ? Number(submission.score) : null;
+      const attempts = Number(submission?.attempts || 0);
+      const submittedAt = normalizeText(submission?.submittedAt);
+      const gradedAt = normalizeText(submission?.gradedAt);
+      const feedback = normalizeText(submission?.feedback);
+      const answerText = getSubmissionAnswerText(submission, assignmentById);
+      const resultState = getSubmissionResultState(submission);
+      const userRecord = includeUser
+        ? (allUsers || []).find((user: any) => user.id === submission?.userId)
+        : dbUser;
+      const userName = normalizeText(userRecord?.name || userRecord?.email || submission?.userId || 'unknown');
+      const userEmail = normalizeText(userRecord?.email || '');
+      const payloadText = asJsonText(submission?.payload || null);
+      const submittedAtTs = submittedAt ? new Date(submittedAt).getTime() : 0;
+      const gradedAtTs = gradedAt ? new Date(gradedAt).getTime() : 0;
+
+      const search = [
+        submission?.id,
+        submission?.assignmentId,
+        meta.assignmentSlug,
+        meta.assignmentLabel,
+        meta.courseId,
+        meta.evalType,
+        meta.mode,
+        meta.noteType,
+        meta.noteTypeLabel,
+        answerText,
+        feedback,
+        userName,
+        userEmail,
+        payloadText,
+        meta?.evalPreview?.prompt,
+        ...(Array.isArray(meta?.evalPreview?.options) ? meta.evalPreview.options : []),
+      ]
+        .map((value) => normalizeTextLower(value))
+        .filter(Boolean)
+        .join(' ');
+
+      return {
+        submissionId: String(submission?.id || ''),
+        userId: String(submission?.userId || ''),
+        userName,
+        userEmail,
+        assignmentId: String(submission?.assignmentId || ''),
+        assignmentSlug: meta.assignmentSlug,
+        assignmentLabel: meta.assignmentLabel,
+        courseId: meta.courseId,
+        evalType: meta.evalType,
+        mode: meta.mode,
+        noteType: meta.noteType,
+        noteTypeLabel: meta.noteTypeLabel,
+        noteTypeOrder: meta.noteTypeOrder,
+        attempts,
+        score: scoreValue,
+        feedback,
+        evalPreview: meta.evalPreview,
+        evalPreviewAttr: toEvalPreviewAttr(meta.evalPreview),
+        submittedAt,
+        submittedAtTs,
+        gradedAt,
+        gradedAtTs,
+        resultState,
+        answerText,
+        payloadText,
+        reviewState: gradedAt ? 'reviewed' : 'pending',
+        submissionState: submittedAt ? 'submitted' : 'missing',
+        catalogSource: normalizeText(meta.catalogEntry?.sourcePath || ''),
+        search,
+      };
+    })
+    .sort((a, b) => b.submittedAtTs - a.submittedAtTs);
+};
+
+const teacherLogRows = isTeacher ? buildSubmissionLogRows(scopedTeacherSubmissions, { includeUser: true }) : [];
+const studentLogRows = !isTeacher ? buildSubmissionLogRows(scopedStudentSubmissions || [], { includeUser: false }) : [];
+const activeLogRows = isTeacher ? teacherLogRows : studentLogRows;
+const logEvalTypes = Array.from(new Set(activeLogRows.map((row) => row.evalType).filter(Boolean))).sort();
+const logModes = Array.from(new Set(activeLogRows.map((row) => row.mode).filter(Boolean))).sort();
+const logNoteTypes = Array.from(new Set(activeLogRows.map((row) => row.noteType).filter(Boolean))).sort(
+  (left, right) => (EVAL_NOTE_TYPE_ORDER[left as EvalNoteType] || 99) - (EVAL_NOTE_TYPE_ORDER[right as EvalNoteType] || 99),
+);
+const getNoteTypeDisplay = (value: string) => EVAL_NOTE_TYPE_LABEL[(value as EvalNoteType) || 'unknown'] || value;
+const dashboardLogData = {
+  teacher: teacherLogRows,
+  student: studentLogRows,
+  filters: {
+    evalTypes: logEvalTypes,
+    modes: logModes,
+    noteTypes: logNoteTypes.map((noteType) => ({
+      value: noteType,
+      label: getNoteTypeDisplay(noteType),
+    })),
+  },
+};
+const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\\u003c');
 ---
 
 <html lang="es">
@@ -331,14 +810,101 @@ const decodeUriSafe = (value: string | null | undefined) => {
       .enrollment-list { font-size: 0.85rem; }
       .enrollment-item { display: inline-block; padding: 0.2rem 0.5rem; background: var(--c-bg-mute); border-radius: 4px; margin: 0.2rem; }
       .submission-count { font-weight: 600; color: var(--c-link); }
-      .grade-link { color: var(--c-link); text-decoration: none; padding: 0.25rem 0.5rem; border-radius: 4px; border: 1px solid var(--c-border); font-size: 0.8rem; }
-      .grade-link:hover { background: var(--c-bg-mute); }
+      .inline-grade-note {
+        font-size: 0.75rem;
+        color: var(--c-fg-dim);
+        border: 1px solid var(--c-border);
+        border-radius: 999px;
+        padding: 0.12rem 0.45rem;
+        background: var(--c-bg-mute);
+      }
+      .table-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+      }
+      .icon-btn {
+        width: 30px;
+        height: 30px;
+        border: 1px solid var(--c-border);
+        border-radius: 6px;
+        background: var(--c-bg);
+        color: var(--c-fg);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        text-decoration: none;
+        transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+      }
+      .icon-btn svg {
+        width: 15px;
+        height: 15px;
+      }
+      .icon-btn:hover {
+        background: var(--c-bg-mute);
+        border-color: var(--c-link);
+        color: var(--c-link);
+      }
+      .icon-btn-danger:hover {
+        border-color: #dc2626;
+        color: #dc2626;
+      }
       .status-pending { color: #f57c00; }
       .status-graded { color: #388e3c; }
       .tabs { display: flex; gap: 1rem; border-bottom: 2px solid var(--c-border); margin-bottom: 2rem; }
       .tab { padding: 0.75rem 1.5rem; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -2px; font-weight: 500; transition: all 0.2s; }
       .tab:hover { background: var(--c-bg-mute); }
       .tab.active { border-bottom-color: var(--c-link); color: var(--c-link); }
+      .dashboard-scope-controls {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: flex-end;
+        gap: 0.8rem;
+        padding-bottom: 0.25rem;
+      }
+      .dashboard-scope-field {
+        display: inline-flex;
+        flex-direction: column;
+        gap: 0.22rem;
+        font-size: 0.78rem;
+        color: var(--c-fg-dim);
+      }
+      .dashboard-scope-field select {
+        min-width: 150px;
+        border: 1px solid var(--c-border);
+        border-radius: 7px;
+        background: var(--c-bg);
+        color: var(--c-fg);
+        padding: 0.34rem 0.48rem;
+      }
+      .deliveries-toolbar {
+        margin-bottom: 0.7rem;
+      }
+      .deliveries-subtabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-bottom: 0.95rem;
+      }
+      .deliveries-subtab {
+        border: 1px solid var(--c-border);
+        background: var(--c-bg);
+        color: var(--c-fg);
+        border-radius: 999px;
+        padding: 0.35rem 0.75rem;
+        font-size: 0.82rem;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .deliveries-subtab:hover {
+        border-color: var(--c-link);
+      }
+      .deliveries-subtab.active {
+        border-color: var(--c-link);
+        color: var(--c-link);
+        background: var(--c-bg-mute);
+      }
       .result-icon { font-size: 1rem; font-weight: 700; line-height: 1; display: inline-flex; align-items: center; justify-content: center; min-width: 1rem; }
       .result-icon.correct { color: #1f8f45; }
       .result-icon.incorrect { color: #c62828; }
@@ -457,14 +1023,140 @@ const decodeUriSafe = (value: string | null | undefined) => {
         width: 100%;
         border-collapse: collapse;
       }
+      .course-bulk-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.45rem;
+        margin: 0.35rem 0 0.8rem;
+        padding: 0.45rem 0.55rem;
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        background: color-mix(in srgb, var(--c-bg-mute) 70%, transparent);
+        font-size: 0.78rem;
+      }
+      .course-bulk-toolbar .bulk-hint {
+        color: var(--c-fg-dim);
+      }
+      .course-bulk-toolbar .bulk-count {
+        color: var(--c-fg-dim);
+        font-variant-numeric: tabular-nums;
+      }
+      .course-bulk-toolbar .bulk-spacer {
+        flex: 1 1 auto;
+      }
+      .course-bulk-toolbar button {
+        border: 1px solid var(--c-border);
+        border-radius: 6px;
+        background: var(--c-bg);
+        color: var(--c-fg);
+        font: inherit;
+        padding: 0.2rem 0.45rem;
+        cursor: pointer;
+      }
+      .grade-board-wrap {
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        overflow: auto;
+      }
+      .grade-board-table {
+        min-width: 640px;
+        font-size: 0.78rem;
+      }
+      .grade-board-table th,
+      .grade-board-table td {
+        white-space: nowrap;
+        text-align: center;
+        padding: 0.28rem 0.32rem;
+      }
+      .grade-board-table .group-start {
+        border-left: 2px solid color-mix(in srgb, var(--c-border) 70%, #ffffff 30%);
+      }
+      .grade-board-table .group-general {
+        background: color-mix(in srgb, var(--c-link) 20%, transparent);
+      }
+      .grade-board-table .lesson-group-even {
+        background: rgba(34, 197, 94, 0.12);
+      }
+      .grade-board-table .lesson-group-odd {
+        background: rgba(251, 191, 36, 0.12);
+      }
+      .grade-board-table th.lesson-group-header {
+        font-size: 0.74rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        background: var(--c-bg-mute);
+      }
+      .grade-board-table th.grade-board-final-header {
+        font-size: 0.74rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        background: var(--c-bg-mute);
+      }
+      .grade-board-table th.eval-header {
+        font-size: 0.74rem;
+      }
+      .grade-board-table th:first-child,
+      .grade-board-table td:first-child {
+        text-align: left;
+        position: sticky;
+        left: 0;
+        background: color-mix(in srgb, var(--c-bg, #111) 95%, #000 5%);
+        z-index: 3;
+        min-width: 172px;
+      }
+      .grade-board-table thead th:first-child {
+        z-index: 4;
+        background: var(--c-bg-mute);
+      }
+      .grade-board-table tbody td:first-child {
+        box-shadow: 8px 0 14px rgba(0, 0, 0, 0.2);
+      }
+      .grade-board-student {
+        display: grid;
+        gap: 0.1rem;
+      }
+      .grade-board-student small {
+        color: var(--c-fg-dim);
+        font-size: 0.72rem;
+      }
+      .grade-board-state {
+        margin-top: 0.2rem;
+        font-size: 0.7rem;
+        color: var(--c-fg-dim);
+      }
+      .grade-board-average {
+        font-weight: 600;
+      }
+      .grade-board-meta-input {
+        width: 82px;
+        max-width: 100%;
+        padding: 0.18rem 0.28rem;
+        border: 1px solid var(--c-border);
+        border-radius: 4px;
+        background: var(--c-bg);
+        color: var(--c-fg);
+        font: inherit;
+        font-size: 0.74rem;
+      }
+      .grade-turno-select {
+        width: 54px;
+      }
+      .grade-board-email {
+        font-size: 0.72rem;
+        color: var(--c-fg-dim);
+        max-width: 150px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
       .student-assignment-table th,
       .student-assignment-table td {
         border-bottom: 1px solid var(--c-border);
-        padding: 0.45rem;
+        padding: 0.3rem;
         text-align: center;
       }
       .student-assignment-table th {
-        font-size: 0.77rem;
+        font-size: 0.72rem;
         font-weight: 600;
         color: var(--c-fg-dim);
       }
@@ -481,10 +1173,178 @@ const decodeUriSafe = (value: string | null | undefined) => {
       .fold-level-4 {
         margin-left: 0.4rem;
       }
+      .grade-board-table tbody tr.is-row-selected td {
+        outline: 1px solid color-mix(in srgb, var(--c-link) 65%, #ffffff 35%);
+        outline-offset: -1px;
+        box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--c-link) 18%, transparent);
+      }
+      .grade-board-table tbody tr.is-row-selected td:first-child {
+        box-shadow:
+          inset 0 0 0 999px color-mix(in srgb, var(--c-link) 20%, transparent),
+          8px 0 14px rgba(0, 0, 0, 0.2);
+      }
+      .log-panel {
+        border: 1px solid var(--c-border);
+        border-radius: 10px;
+        background: var(--c-bg);
+        padding: 0.9rem;
+      }
+      .log-toolbar {
+        display: grid;
+        gap: 0.6rem;
+        grid-template-columns: 1.6fr 1fr 1fr 1fr;
+        margin-bottom: 0.8rem;
+      }
+      .log-input,
+      .log-select {
+        width: 100%;
+        padding: 0.45rem 0.55rem;
+        border: 1px solid var(--c-border);
+        border-radius: 6px;
+        background: var(--c-bg);
+        color: var(--c-fg);
+        font: inherit;
+        font-size: 0.84rem;
+      }
+      .log-count {
+        margin: 0 0 0.65rem 0;
+        font-size: 0.82rem;
+        color: var(--c-fg-dim);
+      }
+      .log-table-wrap {
+        overflow: auto;
+        max-height: min(70dvh, 900px);
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+      }
+      .log-table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 1180px;
+        font-size: 0.74rem;
+      }
+      .log-table th,
+      .log-table td {
+        border-bottom: 1px solid var(--c-border);
+        padding: 0.26rem 0.34rem;
+        text-align: left;
+        vertical-align: top;
+      }
+      .log-table th {
+        position: sticky;
+        top: 0;
+        background: var(--c-bg-mute);
+        z-index: 2;
+      }
+      .log-sort-btn {
+        border: none;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+      }
+      .log-sort-btn:hover {
+        color: var(--c-link);
+      }
+      .log-tag {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid var(--c-border);
+        border-radius: 999px;
+        padding: 0.1rem 0.45rem;
+        font-size: 0.74rem;
+        white-space: nowrap;
+      }
+      .log-answer {
+        max-width: 240px;
+        white-space: normal;
+      }
+      .log-payload {
+        display: inline-block;
+        max-width: 280px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .log-empty {
+        font-size: 0.85rem;
+        color: var(--c-fg-dim);
+      }
+      .eval-id-anchor {
+        border: none;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        cursor: help;
+        padding: 0;
+      }
+      .eval-id-anchor code {
+        text-decoration: underline dotted;
+        text-underline-offset: 2px;
+      }
+      .eval-preview-tooltip {
+        position: fixed;
+        top: 0;
+        left: 0;
+        z-index: 2400;
+        max-width: min(440px, 92vw);
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        background: var(--c-bg);
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2);
+        padding: 0.55rem 0.65rem;
+        pointer-events: none;
+      }
+      .eval-preview-tooltip[hidden] {
+        display: none !important;
+      }
+      .eval-preview-tooltip h4 {
+        margin: 0 0 0.4rem 0;
+        font-size: 0.85rem;
+      }
+      .eval-preview-tooltip p {
+        margin: 0 0 0.35rem 0;
+        font-size: 0.79rem;
+        line-height: 1.42;
+      }
+      .eval-preview-tooltip ul {
+        margin: 0 0 0.35rem 1rem;
+        padding: 0;
+        font-size: 0.79rem;
+        line-height: 1.4;
+      }
+      .eval-preview-tooltip li {
+        margin: 0 0 0.2rem 0;
+      }
+      .eval-preview-tooltip code {
+        font-size: 0.75rem;
+      }
+      @media (max-width: 960px) {
+        .log-toolbar {
+          grid-template-columns: 1fr;
+        }
+        .tabs {
+          flex-wrap: wrap;
+        }
+        .dashboard-scope-controls {
+          width: 100%;
+          margin-left: 0;
+          justify-content: flex-end;
+          flex-wrap: wrap;
+        }
+      }
     </style>
   </head>
   <body>
-    <Header />
+    <Header
+      courseId={activeCourseId}
+      activeCourseId={activeCourseId}
+      activeCourseCode={activeCourseCode}
+    />
     <main class="wrap">
       {isTeacher ? (
         <>
@@ -494,8 +1354,31 @@ const decodeUriSafe = (value: string | null | undefined) => {
           <div class="tabs">
             <div class="tab active" data-tab="users">Usuarios</div>
             <div class="tab" data-tab="enrollments">Inscripciones</div>
-            <div class="tab" data-tab="submissions">Entregas Recientes</div>
-            <div class="tab" data-tab="course-grades">Entregas por Curso</div>
+            <div class="tab" data-tab="deliveries">Entregas</div>
+            <div class="dashboard-scope-controls">
+              <label class="dashboard-scope-field">
+                <span>Curso</span>
+                <select data-dashboard-scope="course">
+                  {availableCourseMeta.length === 0 ? (
+                    <option value="">Sin cursos</option>
+                  ) : (
+                    availableCourseMeta.map((course) => (
+                      <option value={course.courseId} selected={course.courseId === activeCourseId}>
+                        {course.title}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
+              <label class="dashboard-scope-field">
+                <span>Año</span>
+                <select data-dashboard-scope="year">
+                  {availableYears.map((year) => (
+                    <option value={year} selected={year === activeYear}>{year}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
           </div>
 
           <div id="users-content">
@@ -550,7 +1433,25 @@ const decodeUriSafe = (value: string | null | undefined) => {
                         </div>
                       </td>
                       <td>
-                        <a href={`/admin/user/${user.id}`} class="grade-link">Ver detalles</a>
+                        <div class="table-actions">
+                          <a href={`/admin/user/${user.id}`} class="icon-btn" aria-label="Editar usuario" title="Editar usuario">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                              <path fill="currentColor" d="M3 17.25V21h3.75l11-11-3.75-3.75-11 11Zm18-11.5a1 1 0 0 0 0-1.41l-1.34-1.34a1 1 0 0 0-1.41 0l-1.05 1.05L19.95 6.8 21 5.75Z" />
+                            </svg>
+                          </a>
+                          <button
+                            type="button"
+                            class="icon-btn icon-btn-danger js-delete-user"
+                            data-user-id={user.id}
+                            data-user-name={user.name || user.email || user.id}
+                            aria-label="Eliminar usuario"
+                            title="Eliminar usuario"
+                          >
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                              <path fill="currentColor" d="M9 3h6l1 2h5v2H3V5h5l1-2Zm1 6h2v9h-2V9Zm4 0h2v9h-2V9ZM7 9h2v9H7V9Zm-1 12a2 2 0 0 1-2-2V8h16v11a2 2 0 0 1-2 2H6Z" />
+                            </svg>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -560,35 +1461,40 @@ const decodeUriSafe = (value: string | null | undefined) => {
           </div>
 
           <div id="enrollments-content" style="display: none;">
-            <h2>Inscripciones por Curso</h2>
-            
-            {courseEntries.map((course: any) => {
-              const courseEnrollments = allEnrollments.filter((e: any) => e.courseId === course.courseId);
-              
-              // Check if the current teacher is enrolled in this course
-              const isTeacherEnrolled = allEnrollments.some((e: any) => e.userId === dbUser.id && e.courseId === course.courseId);
+            <h2>Inscripciones</h2>
+            {(() => {
+              if (!activeCourseId) {
+                return (
+                  <div style="padding: 1rem; color: var(--c-fg-dim); font-style: italic;">
+                    Selecciona un curso activo para ver inscripciones.
+                  </div>
+                );
+              }
+
+              const courseEnrollments = scopedTeacherEnrollments.filter(
+                (enrollment: any) => canonicalizeCourseId(enrollment?.courseId) === activeCourseId,
+              );
+              const isTeacherEnrolled = allEnrollments.some(
+                (enrollment: any) =>
+                  enrollment.userId === dbUser.id &&
+                  canonicalizeCourseId(enrollment.courseId) === activeCourseId,
+              );
 
               return (
-                <div style="margin-bottom: 2rem; border: 1px solid var(--c-border); border-radius: 8px; overflow: hidden;">
-                  <div style="background: var(--c-bg-mute); padding: 0.75rem 1rem; border-bottom: 1px solid var(--c-border); display: flex; justify-content: space-between; align-items: center;">
-                    <h3 style="margin: 0; font-size: 1.1rem;">
-                      <a href={`/cursos/${course.slug}`} style="text-decoration: none; color: inherit;">
-                        {course.title}
-                      </a>
-                    </h3>
+                <>
+                  <div style="display: flex; justify-content: flex-end; align-items: center; margin-bottom: 0.85rem;">
                     {isTeacherEnrolled ? (
                       <span style="font-size: 0.85rem; color: var(--c-fg-dim); font-weight: 500;">✓ Inscrito</span>
                     ) : (
-                      <button type="button" class="enroll-btn" data-course-id={course.courseId}>Inscribirme</button>
+                      <button type="button" class="enroll-btn" data-course-id={activeCourseId}>Inscribirme</button>
                     )}
                   </div>
-                  
                   {courseEnrollments.length > 0 ? (
-                    <table class="admin-table" style="margin-top: 0; border: none;">
+                    <table class="admin-table" style="margin-top: 0;">
                       <thead>
                         <tr>
-                          <th style="border-top: none;">Usuario</th>
-                          <th style="border-top: none;">Rol</th>
+                          <th>Usuario</th>
+                          <th>Rol</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -609,16 +1515,32 @@ const decodeUriSafe = (value: string | null | undefined) => {
                     </table>
                   ) : (
                     <div style="padding: 1rem; color: var(--c-fg-dim); font-style: italic;">
-                      No hay estudiantes inscritos en este curso.
+                      No hay estudiantes inscritos en este curso para el año seleccionado.
                     </div>
                   )}
-                </div>
+                </>
               );
-            })}
+            })()}
           </div>
 
-          <div id="submissions-content" style="display: none;">
-            <h2>Entregas Recientes</h2>
+          <div id="deliveries-content" style="display: none;">
+            <h2>Entregas</h2>
+            <div class="deliveries-toolbar">
+              <input
+                type="search"
+                class="log-input"
+                data-deliveries-query
+                placeholder="Buscar por curso, tipo, usuario, respuesta, payload..."
+                aria-label="Buscar en entregas"
+              />
+            </div>
+            <div class="deliveries-subtabs">
+              <button type="button" class="deliveries-subtab active" data-delivery-view="recent">Recientes</button>
+              <button type="button" class="deliveries-subtab" data-delivery-view="course">Curso</button>
+              <button type="button" class="deliveries-subtab" data-delivery-view="log">Log</button>
+            </div>
+
+            <div id="deliveries-recent" data-delivery-panel="recent">
             <p class="fold-shortcuts">
               <strong>Atajos:</strong>
               <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>↑</kbd> fold all,
@@ -632,192 +1554,146 @@ const decodeUriSafe = (value: string | null | undefined) => {
                 return <p>No hay entregas recientes.</p>;
               }
 
-              const groupedByCourse = recentTeacherSubmissions.reduce((acc: any, sub: any) => {
-                const assignment = assignmentById.get(sub.assignmentId);
-                const assignmentSlug = String(assignment?.slug || sub.assignmentId || '');
-                const rawParts = assignmentSlug.replace(/^\/+/, '').split('/').filter(Boolean);
-                const decodedParts = rawParts.map((part: string) => decodeUriSafe(part));
-                const decodedCourseId = decodeUriSafe(assignment?.courseId || decodedParts[0] || 'sin-curso');
+              const groupedByType = recentTeacherSubmissions.reduce((acc: any, submission: any) => {
+                const meta = resolveSubmissionMeta(submission);
+                const noteTypeKey = meta.noteType || 'unknown';
 
-                let relativeParts = decodedParts;
-                if (decodedCourseId && relativeParts[0] === decodedCourseId) {
-                  relativeParts = relativeParts.slice(1);
-                } else if (!assignment?.courseId && relativeParts.length > 1) {
-                  relativeParts = relativeParts.slice(1);
+                if (!acc[noteTypeKey]) {
+                  acc[noteTypeKey] = {
+                    key: noteTypeKey,
+                    label: meta.noteTypeLabel,
+                    order: meta.noteTypeOrder,
+                    submissions: [],
+                  };
                 }
 
-                const noteKey = relativeParts[relativeParts.length - 1] || decodeUriSafe(sub.assignmentId);
-                const folderKey = relativeParts[0] || 'general';
-                const h1Key = relativeParts.length > 2 ? relativeParts.slice(1, -1).join(' / ') : '';
-
-                if (!acc[decodedCourseId]) acc[decodedCourseId] = {};
-                if (!acc[decodedCourseId][folderKey]) {
-                  acc[decodedCourseId][folderKey] = { notes: {}, h1Groups: {} };
-                }
-
-                if (h1Key) {
-                  if (!acc[decodedCourseId][folderKey].h1Groups[h1Key]) {
-                    acc[decodedCourseId][folderKey].h1Groups[h1Key] = { notes: {} };
-                  }
-                  if (!acc[decodedCourseId][folderKey].h1Groups[h1Key].notes[noteKey]) {
-                    acc[decodedCourseId][folderKey].h1Groups[h1Key].notes[noteKey] = [];
-                  }
-                  acc[decodedCourseId][folderKey].h1Groups[h1Key].notes[noteKey].push(sub);
-                } else {
-                  if (!acc[decodedCourseId][folderKey].notes[noteKey]) {
-                    acc[decodedCourseId][folderKey].notes[noteKey] = [];
-                  }
-                  acc[decodedCourseId][folderKey].notes[noteKey].push(sub);
-                }
-
+                acc[noteTypeKey].submissions.push({ submission, meta });
                 return acc;
               }, {});
 
-              return Object.entries(groupedByCourse).map(([courseId, folderGroups]: [string, any]) => {
-                const courseSubmissions = Object.values(folderGroups).flatMap((folderGroup: any) => {
-                  const directNotes = Object.values(folderGroup.notes || {}).flat();
-                  const nestedH1 = Object.values(folderGroup.h1Groups || {}).flatMap((h1Group: any) =>
-                    Object.values(h1Group.notes || {}).flat(),
-                  );
-                  return [...directNotes, ...nestedH1];
-                }) as any[];
-                const coursePending = courseSubmissions.filter((submission: any) => !submission.gradedAt).length;
+              const noteTypeGroups = Object.values(groupedByType || {}).sort((left: any, right: any) => {
+                if (left.order !== right.order) return left.order - right.order;
+                return String(left.label).localeCompare(String(right.label), 'es');
+              });
 
-                const renderNoteSection = (noteKey: string, noteSubmissions: any[], foldLevel: number) => {
-                  const pendingNote = noteSubmissions.filter((submission: any) => !submission.gradedAt).length;
-                  return (
-                    <section
-                      class:list={['fold-node', foldLevel === 3 ? 'fold-level-3' : '', foldLevel >= 4 ? 'fold-level-4' : '']}
-                      data-fold-level={foldLevel}
-                      data-fold-node
-                      data-fold-scope="submissions"
-                      style="margin-bottom: 0.5rem;"
-                    >
-                      <button type="button" class="fold-header" data-fold-toggle>
-                        <span class="fold-toggle-icon">▾</span>
-                        <span>📝 {decodeUriSafe(noteKey)}</span>
-                        <span class="fold-student-summary">{noteSubmissions.length} respuestas • {pendingNote} pendientes</span>
-                      </button>
-                      <div class="fold-children">
-                        <table class="admin-table" style="margin-top: 0;">
-                          <thead>
-                            <tr>
-                              <th>Usuario</th>
-                              <th>Tarea</th>
-                              <th>Entrega</th>
-                              <th>Respuesta</th>
-                              <th>Resultado</th>
-                              <th>Punto (x/10)</th>
-                              <th>Retroalimentación</th>
-                              <th>Acciones</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {noteSubmissions.map((sub: any) => {
-                              const submitter = allUsers && allUsers.find((u: any) => u.id === sub.userId);
-                              const resultState = getSubmissionResultState(sub);
-                              const answerText = getSubmissionAnswerText(sub, assignmentById);
-                              const assignment = assignmentById.get(sub.assignmentId);
-                              const assignmentSlug = assignment?.slug || sub.assignmentId;
-                              const assignmentLabel = decodeUriSafe(assignmentSlug.split('/').pop() || assignmentSlug);
-
-                              return (
-                                <tr>
-                                  <td>{submitter?.name || 'Usuario desconocido'}</td>
-                                  <td style="font-size: 0.85rem;" title={assignmentSlug}>{assignmentLabel}</td>
-                                  <td style="font-size: 0.85rem;">{formatSubmissionDate(sub.submittedAt)}</td>
-                                  <td style="max-width: 320px; font-size: 0.84rem;">{answerText}</td>
-                                  <td style="text-align: center;">
-                                    <span class:list={['result-icon', resultState]}>{getResultIcon(resultState)}</span>
-                                  </td>
-                                  <td style="text-align: center;">
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      max="10"
-                                      step="0.1"
-                                      value={sub.score !== null && sub.score !== undefined ? sub.score : ''}
-                                      placeholder="-"
-                                      class="quick-score-input"
-                                      data-submission-id={sub.id}
-                                    />
-                                  </td>
-                                  <td>
-                                    <input
-                                      type="text"
-                                      class="quick-feedback-input"
-                                      data-submission-id={sub.id}
-                                      value={sub.feedback || ''}
-                                      placeholder="Enter para guardar"
-                                    />
-                                  </td>
-                                  <td>
-                                    <a href={`/admin/grade/${sub.id}`} class="grade-link">
-                                      {sub.gradedAt ? 'Ver' : 'Calificar'}
-                                    </a>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </section>
-                  );
-                };
+              return noteTypeGroups.map((group: any) => {
+                const pendingByType = group.submissions.filter((entry: any) => !entry.submission?.gradedAt).length;
 
                 return (
-                  <section class="fold-node" data-fold-level="1" data-fold-node data-fold-scope="submissions" style="margin-bottom: 0.85rem;">
+                  <section
+                    class="fold-node fold-level-1"
+                    data-fold-level="1"
+                    data-fold-node
+                    data-fold-scope="submissions"
+                    data-submission-type-group
+                    style="margin-bottom: 0.55rem;"
+                  >
                     <button type="button" class="fold-header" data-fold-toggle>
                       <span class="fold-toggle-icon">▾</span>
-                      <span>📚 {decodeUriSafe(courseId)}</span>
-                      <span class="fold-student-summary">{courseSubmissions.length} entregas • {coursePending} pendientes</span>
+                      <span>🧩 {group.label}</span>
+                      <span class="fold-student-summary">{group.submissions.length} respuestas • {pendingByType} pendientes</span>
                     </button>
                     <div class="fold-children">
-                      {Object.entries(folderGroups).map(([folderKey, folderGroup]: [string, any]) => {
-                        const folderSubmissions = [
-                          ...Object.values(folderGroup.notes || {}).flat(),
-                          ...Object.values(folderGroup.h1Groups || {}).flatMap((h1Group: any) =>
-                            Object.values(h1Group.notes || {}).flat(),
-                          ),
-                        ] as any[];
-                        const pendingFolder = folderSubmissions.filter((submission: any) => !submission.gradedAt).length;
+                      <table class="admin-table" data-submission-table style="margin-top: 0;">
+                        <thead>
+                          <tr>
+                            <th>Usuario</th>
+                            <th>Clase</th>
+                            <th>ID</th>
+                            <th>Entrega</th>
+                            <th>Respuesta</th>
+                            <th>Resultado</th>
+                            <th>Punto (x/10)</th>
+                            <th>Retroalimentación</th>
+                            <th>Acciones</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {group.submissions.map((entry: any) => {
+                            const sub = entry.submission;
+                            const meta = entry.meta;
+                            const submitter = allUsers && allUsers.find((u: any) => u.id === sub.userId);
+                            const resultState = getSubmissionResultState(sub);
+                            const answerText = getSubmissionAnswerText(sub, assignmentById);
+                            const evalPreviewAttr = toEvalPreviewAttr(meta.evalPreview);
+                            const rowSearch = [
+                              submitter?.name,
+                              submitter?.email,
+                              meta.assignmentLabel,
+                              meta.assignmentSlug,
+                              meta.courseId,
+                              meta.noteTypeLabel,
+                              meta.evalType,
+                              answerText,
+                              sub.feedback,
+                            ]
+                              .map((value) => normalizeTextLower(value))
+                              .filter(Boolean)
+                              .join(' ');
 
-                        return (
-                          <section class="fold-node fold-level-2" data-fold-level="2" data-fold-node data-fold-scope="submissions" style="margin-bottom: 0.55rem;">
-                            <button type="button" class="fold-header" data-fold-toggle>
-                              <span class="fold-toggle-icon">▾</span>
-                              <span>📁 {decodeUriSafe(folderKey)}</span>
-                              <span class="fold-student-summary">{folderSubmissions.length} entregas • {pendingFolder} pendientes</span>
-                            </button>
-                            <div class="fold-children">
-                              {Object.entries(folderGroup.notes || {}).map(([noteKey, noteSubmissions]: [string, any]) =>
-                                renderNoteSection(noteKey, noteSubmissions as any[], 3),
-                              )}
-
-                              {Object.entries(folderGroup.h1Groups || {}).map(([h1Key, h1Group]: [string, any]) => {
-                                const h1Submissions = Object.values(h1Group.notes || {}).flat() as any[];
-                                const h1Pending = h1Submissions.filter((submission: any) => !submission.gradedAt).length;
-
-                                return (
-                                  <section class="fold-node fold-level-3" data-fold-level="3" data-fold-node data-fold-scope="submissions" style="margin-bottom: 0.5rem;">
-                                    <button type="button" class="fold-header" data-fold-toggle>
-                                      <span class="fold-toggle-icon">▾</span>
-                                      <span># {decodeUriSafe(h1Key)}</span>
-                                      <span class="fold-student-summary">{h1Submissions.length} respuestas • {h1Pending} pendientes</span>
+                            return (
+                              <tr data-submission-row data-submission-id={sub.id} data-search={rowSearch}>
+                                <td>{submitter?.name || 'Usuario desconocido'}</td>
+                                <td style="font-size: 0.85rem;" title={meta.assignmentSlug}>{meta.assignmentLabel}</td>
+                                <td style="font-size: 0.78rem;">
+                                  <button
+                                    type="button"
+                                    class="eval-id-anchor"
+                                    data-eval-preview={evalPreviewAttr}
+                                    aria-label={`Ver bloque eval ${sub.assignmentId}`}
+                                  >
+                                    <code>{sub.assignmentId}</code>
+                                  </button>
+                                </td>
+                                <td style="font-size: 0.85rem;">{formatSubmissionDate(sub.submittedAt)}</td>
+                                <td style="max-width: 320px; font-size: 0.84rem;">{answerText}</td>
+                                <td style="text-align: center;">
+                                  <span class:list={['result-icon', resultState]}>{getResultIcon(resultState)}</span>
+                                </td>
+                                <td style="text-align: center;">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="10"
+                                    step="0.1"
+                                    value={sub.score !== null && sub.score !== undefined ? sub.score : ''}
+                                    placeholder="-"
+                                    class="quick-score-input"
+                                    data-submission-id={sub.id}
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    type="text"
+                                    class="quick-feedback-input"
+                                    data-submission-id={sub.id}
+                                    value={sub.feedback || ''}
+                                    placeholder="Enter para guardar"
+                                  />
+                                </td>
+                                <td>
+                                  <div class="table-actions">
+                                    <span class="inline-grade-note">
+                                      {sub.gradedAt ? 'Auto + editado' : 'Auto'}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      class="icon-btn icon-btn-danger js-delete-submission"
+                                      data-submission-id={sub.id}
+                                      aria-label="Eliminar entrega"
+                                      title="Eliminar entrega"
+                                    >
+                                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path fill="currentColor" d="M9 3h6l1 2h5v2H3V5h5l1-2Zm1 6h2v9h-2V9Zm4 0h2v9h-2V9ZM7 9h2v9H7V9Zm-1 12a2 2 0 0 1-2-2V8h16v11a2 2 0 0 1-2 2H6Z" />
+                                      </svg>
                                     </button>
-                                    <div class="fold-children">
-                                      {Object.entries(h1Group.notes || {}).map(([noteKey, noteSubmissions]: [string, any]) =>
-                                        renderNoteSection(noteKey, noteSubmissions as any[], 4),
-                                      )}
-                                    </div>
-                                  </section>
-                                );
-                              })}
-                            </div>
-                          </section>
-                        );
-                      })}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   </section>
                 );
@@ -825,8 +1701,7 @@ const decodeUriSafe = (value: string | null | undefined) => {
             })()}
           </div>
 
-          <div id="course-grades-content" style="display: none;">
-            <h2>Entregas por Curso</h2>
+          <div id="deliveries-course" data-delivery-panel="course" style="display: none;">
             <p class="course-grades-shortcuts">
               <strong>Atajos:</strong>
               <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>↑</kbd> fold all,
@@ -834,146 +1709,407 @@ const decodeUriSafe = (value: string | null | undefined) => {
               <kbd>⌘</kbd> + <kbd>↑</kbd> fold un nivel,
               <kbd>⌘</kbd> + <kbd>↓</kbd> unfold un nivel.
             </p>
+            <div class="course-bulk-toolbar" data-course-bulk-toolbar>
+              <span class="bulk-hint">Edición masiva: <kbd>Alt</kbd> + click para seleccionar filas.</span>
+              <span class="bulk-spacer"></span>
+              <label for="bulk-turno-select">Turno:</label>
+              <select id="bulk-turno-select" class="grade-board-meta-input grade-turno-select" data-bulk-turno>
+                <option value="">-</option>
+                <option value="M">M</option>
+                <option value="T">T</option>
+                <option value="N">N</option>
+              </select>
+              <button type="button" data-bulk-apply-turno>Aplicar</button>
+              <button type="button" data-bulk-clear-selection>Limpiar selección</button>
+              <span class="bulk-count" data-bulk-count>0 seleccionados</span>
+            </div>
 
             {allEnrollments && allSubmissions && allUsers && allAssignments && (() => {
-              const courseGroups = allEnrollments.reduce((acc: any, enroll: any) => {
+              const enrollmentSource = scopedTeacherEnrollments;
+
+              const courseGroups = enrollmentSource.reduce((acc, enroll) => {
                 if (!acc[enroll.courseId]) acc[enroll.courseId] = [];
                 acc[enroll.courseId].push(enroll);
                 return acc;
               }, {});
+              const usersById = new Map((allUsers || []).map((user) => [user.id, user]));
 
-              return Object.entries(courseGroups).map(([courseId, enrolls]: [string, any]) => {
-                const courseAssignments = allAssignments.filter((assignment: any) => assignment.courseId === courseId);
-                const assignmentIds = courseAssignments.map((assignment: any) => assignment.id).sort();
-                const courseSubmissions = allSubmissions.filter((submission: any) => assignmentIds.includes(submission.assignmentId));
+              return Object.entries(courseGroups)
+                .sort(([left], [right]) => String(left).localeCompare(String(right), 'es'))
+                .map(([courseId, enrolls]) => {
+                  const courseAssignments = allAssignments
+                    .filter((assignment) => assignment.courseId === courseId)
+                    .sort((left, right) => {
+                      const leftKey = String(left.slug || left.id || '');
+                      const rightKey = String(right.slug || right.id || '');
+                      return leftKey.localeCompare(rightKey, 'es');
+                    });
+                  const assignmentsByPage = courseAssignments.reduce((acc, assignment) => {
+                    const assignmentSlug = String(assignment.slug || assignment.id || '');
+                    const coursePrefix = `${courseId}/`;
+                    const pageSlug = assignmentSlug.startsWith(coursePrefix)
+                      ? assignmentSlug.slice(coursePrefix.length)
+                      : assignmentSlug;
+                    const page = pageSlug || 'other';
+                    if (!acc[page]) acc[page] = [];
+                    acc[page].push(assignment);
+                    return acc;
+                  }, {});
+                  const lessonGroups = Object.entries(assignmentsByPage)
+                    .sort(([left], [right]) => String(left).localeCompare(String(right), 'es'))
+                    .map(([lessonSlug, lessonAssignments]) => ({
+                      lessonSlug,
+                      lessonLabel: decodeUriSafe(lessonSlug),
+                      assignments: [...lessonAssignments].sort((left, right) => {
+                        const leftLabel = decodeUriSafe(String(left.id || '')).toLowerCase();
+                        const rightLabel = decodeUriSafe(String(right.id || '')).toLowerCase();
+                        return leftLabel.localeCompare(rightLabel, 'es');
+                      }),
+                    }));
+                  const flatAssignments = lessonGroups.flatMap((lesson) => lesson.assignments);
+                  const assignmentIdSet = new Set(flatAssignments.map((assignment) => assignment.id));
+                  const courseSubmissionsAllYears = scopedTeacherSubmissions.filter((submission) =>
+                    assignmentIdSet.has(submission.assignmentId),
+                  );
+                  const yearSet = new Set([activeYear]);
+                  courseSubmissionsAllYears.forEach((submission) => {
+                    yearSet.add(getSubmissionYear(submission));
+                  });
+                  const years = Array.from(yearSet).sort((left, right) => {
+                    const numericDiff = Number(right) - Number(left);
+                    if (!Number.isNaN(numericDiff) && numericDiff !== 0) return numericDiff;
+                    return String(right).localeCompare(String(left), 'es');
+                  });
 
-                const assignmentsByPage = courseAssignments.reduce((acc: any, assignment: any) => {
-                  const page = assignment.slug.replace(`${courseId}/`, '') || 'other';
-                  if (!acc[page]) acc[page] = [];
-                  acc[page].push(assignment);
-                  return acc;
-                }, {});
+                  const currentStudents = enrolls
+                    .filter((enrollment) => normalizeRole(enrollment?.roleInCourse) === 'student')
+                    .map((enrollment) => usersById.get(enrollment.userId))
+                    .filter(Boolean);
 
-                const students = enrolls
-                  .filter((enrollment: any) => enrollment.roleInCourse === 'student')
-                  .map((enrollment: any) => allUsers.find((user: any) => user.id === enrollment.userId))
-                  .filter(Boolean);
+                  if (currentStudents.length === 0 && courseSubmissionsAllYears.length === 0) return null;
 
-                if (students.length === 0) return null;
+                  const enrollmentsByStudent = new Map(
+                    enrolls
+                      .filter((enrollment) => normalizeRole(enrollment?.roleInCourse) === 'student')
+                      .map((enrollment) => [enrollment.userId, enrollment]),
+                  );
 
-                const totalPending = courseSubmissions.filter((submission: any) => !submission.gradedAt).length;
+                  return (
+                    <section data-course-group style="margin-bottom: 0.9rem;">
+                      {flatAssignments.length === 0 ? (
+                        <p class="student-empty">No hay bloques de evaluación registrados en este curso.</p>
+                      ) : (
+                        years.map((year, yearIndex) => {
+                            const yearSubmissions = courseSubmissionsAllYears.filter(
+                              (submission) => getSubmissionYear(submission) === year,
+                            );
+                            const submissionMap = new Map();
+                            yearSubmissions.forEach((submission) => {
+                              submissionMap.set(`${submission.userId}::${submission.assignmentId}`, submission);
+                            });
 
-                return (
-                  <section class="fold-node" data-fold-level="1" data-fold-node data-fold-scope="course-grades" style="margin-bottom: 0.9rem;">
-                    <button type="button" class="fold-header" data-fold-toggle>
-                      <span class="fold-toggle-icon">▾</span>
-                      <span>📚 {decodeUriSafe(courseId)}</span>
-                      <span class="fold-student-summary">{students.length} estudiantes • {totalPending} pendientes</span>
-                    </button>
-                    <div class="fold-children">
-                      {Object.entries(assignmentsByPage).map(([page, assignmentsForPage]: [string, any]) => {
-                        const pageAssignmentIds = assignmentsForPage.map((assignment: any) => assignment.id);
+                            const yearStudentIds = new Set(currentStudents.map((student) => String(student?.id || '')));
+                            yearSubmissions.forEach((submission) => {
+                              const studentId = String(submission?.userId || '');
+                              if (studentId) yearStudentIds.add(studentId);
+                            });
+                            const students = Array.from(yearStudentIds)
+                              .map((studentId) => usersById.get(studentId))
+                              .filter(Boolean)
+                              .sort((left, right) =>
+                                String(left?.name || left?.email || '').localeCompare(
+                                  String(right?.name || right?.email || ''),
+                                  'es',
+                                ),
+                              );
 
-                        return (
-                          <section class="fold-node fold-level-2" data-fold-level="2" data-fold-node data-fold-scope="course-grades" style="margin-bottom: 0.55rem;">
-                            <button type="button" class="fold-header" data-fold-toggle>
-                              <span class="fold-toggle-icon">▾</span>
-                              <span>📄 {decodeUriSafe(page)}</span>
-                              <span class="fold-student-summary">{assignmentsForPage.length} entregas</span>
-                            </button>
-                            <div class="fold-children">
-                              {students.map((student: any) => {
-                                const studentSubmissions = courseSubmissions.filter((submission: any) =>
-                                  submission.userId === student.id && pageAssignmentIds.includes(submission.assignmentId),
-                                );
+                            if (students.length === 0) return null;
 
-                                const studentScores = studentSubmissions
-                                  .map((submission: any) =>
-                                    submission.score !== null && submission.score !== undefined ? Number(submission.score) : null,
-                                  )
-                                  .filter((score: any) => score !== null) as number[];
+                            const yearPending = yearSubmissions.filter((submission) => !submission.gradedAt).length;
 
-                                const average = studentScores.length > 0
-                                  ? (studentScores.reduce((sum: number, score: number) => sum + score, 0) / studentScores.length).toFixed(1)
-                                  : '-';
-
-                                const panelKey = `${courseId}__${page}__${student.id}`
-                                  .replace(/[^a-zA-Z0-9_-]/g, '_')
-                                  .slice(0, 120);
-
-                                return (
-                                  <article class="fold-node fold-level-3" data-fold-level="3" data-fold-node data-fold-scope="course-grades" style="margin-bottom: 0.45rem;">
-                                    <button type="button" class="fold-header" data-fold-toggle>
-                                      <span class="fold-toggle-icon">▾</span>
-                                      <span>👤 {student.name}</span>
-                                      <span class="fold-student-summary" data-average-for={panelKey}>Promedio: {average}</span>
-                                    </button>
-                                    <div class="fold-children">
-                                      <table class="student-assignment-table">
-                                        <thead>
-                                          <tr>
-                                            <th>Asignación</th>
-                                            <th>Nota (x/10)</th>
-                                            <th>Estado</th>
-                                          </tr>
-                                        </thead>
-                                        <tbody>
-                                          {assignmentsForPage.map((assignment: any) => {
-                                            const submission = studentSubmissions.find((sub: any) => sub.assignmentId === assignment.id);
-                                            const assignmentLabel = decodeUriSafe(assignment.id.split('/').pop() || assignment.id);
+                            return (
+                              <section
+                                class="fold-node fold-level-2"
+                                data-fold-level="2"
+                                data-fold-node
+                                data-fold-scope="course-grades"
+                                data-course-year-group
+                                data-search={`${normalizeTextLower(courseId)} ${normalizeTextLower(year)}`}
+                                style="margin-bottom: 0.6rem;"
+                              >
+                                <button type="button" class="fold-header" data-fold-toggle>
+                                  <span class="fold-toggle-icon">▾</span>
+                                  <span>🗓 {year}</span>
+                                  <span class="fold-student-summary">{students.length} estudiantes • {yearPending} pendientes</span>
+                                </button>
+                                <div class="fold-children">
+                                  <div class="grade-board-wrap">
+                                    <table class="student-assignment-table grade-board-table">
+                                      <thead>
+                                        <tr>
+                                          <th rowspan="2">Nombre</th>
+                                          <th rowspan="2">Turno</th>
+                                          <th rowspan="2">Email</th>
+                                          <th colspan="3" class:list={['grade-board-final-header', 'group-general', 'group-start']}>General</th>
+                                          {lessonGroups.map((lesson, lessonIndex) => (
+                                            <th
+                                              class:list={[
+                                                'lesson-group-header',
+                                                lessonIndex % 2 === 0 ? 'lesson-group-even' : 'lesson-group-odd',
+                                                'group-start',
+                                              ]}
+                                              colspan={Math.max(lesson.assignments.length, 1)}
+                                              title={lesson.lessonSlug}
+                                            >
+                                              {lesson.lessonLabel}
+                                            </th>
+                                          ))}
+                                        </tr>
+                                        <tr>
+                                          <th class:list={['group-general', 'group-start']}>Promedio</th>
+                                          <th class="group-general">Concepto</th>
+                                          <th class="group-general">Grupo</th>
+                                          {lessonGroups.map((lesson, lessonIndex) => lesson.assignments.map((assignment, assignmentIndex) => {
+                                            const assignmentLabel = decodeUriSafe(String(assignment.id || '').split('/').pop() || assignment.id);
                                             return (
-                                              <tr>
-                                                <td>{assignmentLabel}</td>
-                                                <td>
-                                                  {submission ? (
-                                                    <input
-                                                      type="number"
-                                                      min="0"
-                                                      max="10"
-                                                      step="0.1"
-                                                      value={submission.score !== null && submission.score !== undefined ? submission.score : ''}
-                                                      placeholder="-"
-                                                      data-submission-id={submission.id}
-                                                      data-assignment-id={assignment.id}
-                                                      data-student-panel={panelKey}
-                                                      class="grade-input"
-                                                      style="width: 66px; padding: 0.25rem; text-align: center; border: 1px solid var(--c-border); border-radius: 4px; background: var(--c-bg); font-size: 0.9rem;"
-                                                    />
-                                                  ) : (
-                                                    <span style="color: var(--c-fg-dim);">-</span>
-                                                  )}
-                                                </td>
-                                                <td>
-                                                  {submission?.gradedAt ? (
-                                                    <span class="status-graded">✓ Calificada</span>
-                                                  ) : submission ? (
-                                                    <span class="status-pending">⏳ Pendiente</span>
-                                                  ) : (
-                                                    <span style="color: var(--c-fg-dim);">Sin entrega</span>
-                                                  )}
-                                                </td>
-                                              </tr>
+                                              <th
+                                                class:list={[
+                                                  'eval-header',
+                                                  lessonIndex % 2 === 0 ? 'lesson-group-even' : 'lesson-group-odd',
+                                                  assignmentIndex === 0 ? 'group-start' : '',
+                                                ]}
+                                                title={assignment.id}
+                                              >
+                                                {assignmentLabel}
+                                              </th>
                                             );
-                                          })}
-                                        </tbody>
-                                      </table>
-                                    </div>
-                                  </article>
-                                );
-                              })}
-                            </div>
-                          </section>
-                        );
-                      })}
-                    </div>
-                  </section>
-                );
-              });
+                                          }))}
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {students.map((student) => {
+                                          const panelKey = `${courseId}__${year}__${student.id}`
+                                            .replace(/[^a-zA-Z0-9_-]/g, '_')
+                                            .slice(0, 140);
+                                          const scores = flatAssignments
+                                            .map((assignment) => {
+                                              const submission = submissionMap.get(`${student.id}::${assignment.id}`);
+                                              if (!submission) return null;
+                                              if (submission.score === null || submission.score === undefined) return null;
+                                              const value = Number(submission.score);
+                                              return Number.isNaN(value) ? null : value;
+                                            })
+                                            .filter((value) => value !== null);
+                                          const average = scores.length > 0
+                                            ? (scores.reduce((sum, value) => sum + value, 0) / scores.length).toFixed(1)
+                                            : '-';
+                                          const studentEnrollment = enrollmentsByStudent.get(student.id);
+                                          const metaKey = `${normalizeTextLower(courseId)}::${year}::${student.id}`;
+                                          const savedMeta = courseStudentMetaByKey.get(metaKey);
+                                          const turnoRaw = normalizeText(savedMeta?.turno || studentEnrollment?.turno || student?.turno || '').toUpperCase();
+                                          const turnoValue = ['M', 'T', 'N'].includes(turnoRaw) ? turnoRaw : 'M';
+                                          const groupValue = normalizeText(
+                                            savedMeta?.grupo
+                                              || studentEnrollment?.group
+                                              || studentEnrollment?.grupo
+                                              || student?.group
+                                              || student?.grupo
+                                              || '',
+                                          );
+                                          const conceptValue = normalizeText(
+                                            savedMeta?.concepto
+                                              || studentEnrollment?.concept
+                                              || studentEnrollment?.concepto
+                                              || '',
+                                          );
+                                          const rowSearch = [
+                                            courseId,
+                                            year,
+                                            student?.name,
+                                            student?.email,
+                                            turnoValue,
+                                            groupValue,
+                                            conceptValue,
+                                            ...lessonGroups.map((lesson) => lesson.lessonLabel),
+                                            ...flatAssignments.map((assignment) => assignment.id),
+                                          ]
+                                            .map((value) => normalizeTextLower(value))
+                                            .filter(Boolean)
+                                            .join(' ');
+
+                                          return (
+                                            <tr
+                                              data-course-row
+                                              data-course-id={courseId}
+                                              data-year={year}
+                                              data-student-id={student.id}
+                                              data-search={rowSearch}
+                                            >
+                                              <td>
+                                                <div class="grade-board-student">
+                                                  <span>{student?.name || student?.email || student?.id}</span>
+                                                </div>
+                                              </td>
+                                              <td>
+                                                <select
+                                                  class="grade-board-meta-input grade-turno-select"
+                                                  data-course-id={courseId}
+                                                  data-year={year}
+                                                  data-student-id={student.id}
+                                                >
+                                                  <option value="M" selected={turnoValue === 'M'}>M</option>
+                                                  <option value="T" selected={turnoValue === 'T'}>T</option>
+                                                  <option value="N" selected={turnoValue === 'N'}>N</option>
+                                                </select>
+                                              </td>
+                                              <td class="grade-board-email">
+                                                {student?.email || student?.id}
+                                              </td>
+                                              <td class:list={['grade-board-average', 'group-general', 'group-start']} data-average-for={panelKey}>
+                                                {average}
+                                              </td>
+                                              <td class="group-general">
+                                                <input
+                                                  type="number"
+                                                  min="0"
+                                                  max="10"
+                                                  step="0.1"
+                                                  class="grade-board-meta-input grade-concept-input"
+                                                  data-course-id={courseId}
+                                                  data-year={year}
+                                                  data-student-id={student.id}
+                                                  value={conceptValue}
+                                                  placeholder="Concepto"
+                                                />
+                                              </td>
+                                              <td class="group-general">
+                                                <input
+                                                  type="number"
+                                                  min="0"
+                                                  step="1"
+                                                  class="grade-board-meta-input grade-group-input"
+                                                  data-course-id={courseId}
+                                                  data-year={year}
+                                                  data-student-id={student.id}
+                                                  value={groupValue}
+                                                  placeholder="Grupo"
+                                                />
+                                              </td>
+                                              {lessonGroups.map((lesson, lessonIndex) => lesson.assignments.map((assignment, assignmentIndex) => {
+                                                const assignmentLabel = decodeUriSafe(String(assignment.id || '').split('/').pop() || assignment.id);
+                                                const submission = submissionMap.get(`${student.id}::${assignment.id}`);
+                                                const statusLabel = submission?.gradedAt
+                                                  ? 'calificada'
+                                                  : submission
+                                                    ? 'pendiente'
+                                                    : 'sin entrega';
+
+                                                return (
+                                                  <td
+                                                    class:list={[
+                                                      lessonIndex % 2 === 0 ? 'lesson-group-even' : 'lesson-group-odd',
+                                                      assignmentIndex === 0 ? 'group-start' : '',
+                                                    ]}
+                                                    title={`${assignmentLabel} • ${statusLabel}`}
+                                                  >
+                                                    {submission ? (
+                                                      <div>
+                                                        <input
+                                                          type="number"
+                                                          min="0"
+                                                          max="10"
+                                                          step="0.1"
+                                                          value={submission.score !== null && submission.score !== undefined ? submission.score : ''}
+                                                          placeholder="-"
+                                                          data-submission-id={submission.id}
+                                                          data-assignment-id={assignment.id}
+                                                          data-student-panel={panelKey}
+                                                          class="grade-input"
+                                                          style="width: 56px; padding: 0.18rem; text-align: center; border: 1px solid var(--c-border); border-radius: 4px; background: var(--c-bg); font-size: 0.74rem;"
+                                                        />
+                                                        <div class="grade-board-state">{statusLabel}</div>
+                                                      </div>
+                                                    ) : (
+                                                      <span style="color: var(--c-fg-dim);">-</span>
+                                                    )}
+                                                  </td>
+                                                );
+                                              }))}
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              </section>
+                            );
+                          })
+                      )}
+                    </section>
+                  );
+                });
             })()}
           </div>
 
+          <div id="deliveries-log" data-delivery-panel="log" style="display: none;">
+            <p class="log-empty">
+              Registro completo de eventos de evaluación para todos los cursos en los que estás inscripto como docente.
+            </p>
+            <section class="log-panel" data-log-panel data-log-scope="teacher" data-show-user="true">
+              <div class="log-toolbar">
+                <input
+                  type="search"
+                  class="log-input"
+                  data-log-query
+                  placeholder="Buscar en log"
+                  aria-label="Buscar en log"
+                />
+                <select class="log-select" data-log-filter="evalType" aria-label="Filtrar por tipo de evaluación">
+                  <option value="">Todos los eval type</option>
+                </select>
+                <select class="log-select" data-log-filter="mode" aria-label="Filtrar por modo">
+                  <option value="">Todos los modos</option>
+                </select>
+                <select class="log-select" data-log-filter="noteType" aria-label="Filtrar por tipo de nota">
+                  <option value="">Todos los tipos de nota</option>
+                </select>
+              </div>
+              <p class="log-empty" data-log-summary></p>
+              <div class="log-table-wrap">
+                <table class="log-table">
+                  <thead>
+                    <tr>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="submittedAtTs">Envío</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="gradedAtTs">Revisión</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="courseId">Curso</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="noteTypeOrder">Tipo Nota</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="evalType">Eval Type</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="mode">Mode</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="userName">Usuario</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="assignmentLabel">Clase</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="assignmentId">ID</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="attempts">Attempt</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="score">Score</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="resultState">Result</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="submissionState">Submission</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="reviewState">Review</button></th>
+                      <th>Respuesta</th>
+                      <th>Payload</th>
+                      <th>Feedback</th>
+                      <th>ID Submission</th>
+                      <th>Source</th>
+                    </tr>
+                  </thead>
+                  <tbody data-log-body></tbody>
+                </table>
+              </div>
+              <p class="log-empty" data-log-empty hidden>No hay resultados para los filtros actuales.</p>
+            </section>
+          </div>
+          </div>
+
           <script>
-            const foldableTabs = new Set(['course-grades', 'submissions']);
             const foldStates = {};
 
             function getFoldState(scope) {
@@ -992,31 +2128,239 @@ const decodeUriSafe = (value: string | null | undefined) => {
               return activeTab ? activeTab.getAttribute('data-tab') : null;
             }
 
-            document.querySelectorAll('.tab').forEach(tab => {
-              tab.addEventListener('click', () => {
-                // Remove active from all
-                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-                document.querySelectorAll('[id$="-content"]').forEach(c => c.style.display = 'none');
-                
-                // Add active to clicked
-                tab.classList.add('active');
-                const tabName = tab.getAttribute('data-tab');
-                const content = document.getElementById(`${tabName}-content`);
-                if (content) content.style.display = 'block';
-                
-                // Initialize autosave for grade inputs when switching to course grades tab
-                if (tabName === 'course-grades') {
-                  initializeGradeAutosave();
-                  initializeCorrectionFolding('course-grades');
-                }
-                if (tabName === 'submissions') {
-                  initializeSubmissionQuickEditors();
-                  initializeCorrectionFolding('submissions');
-                }
-              });
-            });
+            function getActiveDeliveryView() {
+              const activeSubtab = document.querySelector('.deliveries-subtab.active');
+              return activeSubtab ? String(activeSubtab.getAttribute('data-delivery-view') || 'recent') : 'recent';
+            }
 
-            // Debounce function for autosave
+            function getActiveFoldScope() {
+              const activeTabName = getActiveTabName();
+              if (activeTabName !== 'deliveries') return null;
+              const view = getActiveDeliveryView();
+              if (view === 'recent') return 'submissions';
+              if (view === 'course') return 'course-grades';
+              return null;
+            }
+
+            function showMainTab(tabName) {
+              document.querySelectorAll('.tab').forEach((tab) => tab.classList.remove('active'));
+              document.querySelectorAll('[id$="-content"]').forEach((content) => {
+                content.style.display = 'none';
+              });
+
+              const tabNode = document.querySelector(`.tab[data-tab="${tabName}"]`);
+              if (tabNode) tabNode.classList.add('active');
+              const contentNode = document.getElementById(`${tabName}-content`);
+              if (contentNode) contentNode.style.display = 'block';
+
+              if (tabName === 'deliveries') {
+                initializeDeliveriesTab();
+              }
+            }
+
+            function bindMainTabs() {
+              document.querySelectorAll('.tab').forEach((tab) => {
+                if (tab.dataset.bound === 'true') return;
+                tab.dataset.bound = 'true';
+                tab.addEventListener('click', () => {
+                  const tabName = String(tab.getAttribute('data-tab') || '');
+                  if (!tabName) return;
+                  showMainTab(tabName);
+                });
+              });
+            }
+
+            function updateDashboardScopeQuery(nextCourseId, nextYear) {
+              const url = new URL(window.location.href);
+              if (nextCourseId) {
+                url.searchParams.set('course', nextCourseId);
+              } else {
+                url.searchParams.delete('course');
+              }
+              if (nextYear) {
+                url.searchParams.set('year', nextYear);
+              } else {
+                url.searchParams.delete('year');
+              }
+
+              const activeTabName = getActiveTabName();
+              if (activeTabName) {
+                url.searchParams.set('tab', activeTabName);
+                if (activeTabName === 'deliveries') {
+                  url.searchParams.set('deliveryView', getActiveDeliveryView());
+                } else {
+                  url.searchParams.delete('deliveryView');
+                }
+              }
+              window.location.href = `${url.pathname}${url.search}${url.hash}`;
+            }
+
+            function initializeDashboardScopeSelectors() {
+              const courseSelect = document.querySelector('[data-dashboard-scope="course"]');
+              const yearSelect = document.querySelector('[data-dashboard-scope="year"]');
+              if (!(courseSelect instanceof HTMLSelectElement) || !(yearSelect instanceof HTMLSelectElement)) {
+                return;
+              }
+              if (courseSelect.dataset.boundScope !== 'true') {
+                courseSelect.dataset.boundScope = 'true';
+                courseSelect.addEventListener('change', () => {
+                  updateDashboardScopeQuery(courseSelect.value, yearSelect.value);
+                });
+              }
+              if (yearSelect.dataset.boundScope !== 'true') {
+                yearSelect.dataset.boundScope = 'true';
+                yearSelect.addEventListener('change', () => {
+                  updateDashboardScopeQuery(courseSelect.value, yearSelect.value);
+                });
+              }
+            }
+
+            function restoreDashboardTabFromQuery() {
+              const params = new URLSearchParams(window.location.search);
+              const tab = String(params.get('tab') || '').trim();
+              const deliveryView = String(params.get('deliveryView') || '').trim();
+              if (tab && ['users', 'enrollments', 'deliveries'].includes(tab)) {
+                showMainTab(tab);
+              }
+              if (tab === 'deliveries' && deliveryView) {
+                switchDeliveryView(deliveryView);
+              }
+            }
+
+            function switchDeliveryView(view) {
+              const requestedView = ['recent', 'course', 'log'].includes(view) ? view : 'recent';
+              document.querySelectorAll('.deliveries-subtab').forEach((subtab) => {
+                subtab.classList.toggle('active', subtab.getAttribute('data-delivery-view') === requestedView);
+              });
+              document.querySelectorAll('[data-delivery-panel]').forEach((panel) => {
+                panel.style.display = panel.getAttribute('data-delivery-panel') === requestedView ? 'block' : 'none';
+              });
+
+              if (requestedView === 'recent') {
+                initializeSubmissionQuickEditors();
+                initializeSubmissionDeleteButtons();
+                initializeCorrectionFolding('submissions');
+              }
+              if (requestedView === 'course') {
+                initializeGradeAutosave();
+                initializeCorrectionFolding('course-grades');
+              }
+              if (requestedView === 'log') {
+                if (typeof initializeDashboardLogPanels === 'function') {
+                  initializeDashboardLogPanels();
+                }
+              }
+
+              const queryInput = document.querySelector('[data-deliveries-query]');
+              const queryValue = queryInput instanceof HTMLInputElement ? queryInput.value : '';
+              applyDeliveriesSearch(queryValue);
+            }
+
+            function bindDeliverySubtabs() {
+              document.querySelectorAll('.deliveries-subtab').forEach((subtab) => {
+                if (subtab.dataset.bound === 'true') return;
+                subtab.dataset.bound = 'true';
+                subtab.addEventListener('click', () => {
+                  const view = String(subtab.getAttribute('data-delivery-view') || 'recent');
+                  switchDeliveryView(view);
+                });
+              });
+            }
+
+            function includesQuery(value, query) {
+              if (!query) return true;
+              return String(value || '').toLowerCase().includes(query);
+            }
+
+            function applyRecentSearch(query) {
+              const rows = Array.from(document.querySelectorAll('#deliveries-recent [data-submission-row]'));
+              rows.forEach((row) => {
+                const search = row.getAttribute('data-search') || '';
+                row.hidden = !includesQuery(search, query);
+              });
+
+              document.querySelectorAll('#deliveries-recent [data-submission-type-group]').forEach((group) => {
+                const visibleRows = group.querySelectorAll('[data-submission-row]:not([hidden])').length;
+                group.hidden = visibleRows === 0;
+                if (query && visibleRows > 0) group.classList.remove('is-collapsed');
+              });
+            }
+
+            function applyCourseSearch(query) {
+              const rows = Array.from(document.querySelectorAll('#deliveries-course [data-course-row]'));
+              rows.forEach((row) => {
+                const search = row.getAttribute('data-search') || '';
+                row.hidden = !includesQuery(search, query);
+              });
+
+              document.querySelectorAll('#deliveries-course [data-course-year-group]').forEach((group) => {
+                const visibleRows = group.querySelectorAll('[data-course-row]:not([hidden])').length;
+                group.hidden = visibleRows === 0;
+                if (query && visibleRows > 0) group.classList.remove('is-collapsed');
+              });
+
+              document.querySelectorAll('#deliveries-course [data-course-group]').forEach((group) => {
+                const visibleYearGroups = group.querySelectorAll('[data-course-year-group]:not([hidden])').length;
+                group.hidden = visibleYearGroups === 0;
+                if (query && visibleYearGroups > 0) group.classList.remove('is-collapsed');
+              });
+            }
+
+            function applyLogSearch(query) {
+              document.querySelectorAll('#deliveries-log [data-log-panel]').forEach((panel) => {
+                panel.dispatchEvent(new CustomEvent('dashboard-log-query', {
+                  detail: { query },
+                  bubbles: false,
+                }));
+              });
+
+              const logQueryInput = document.querySelector('#deliveries-log [data-log-query]');
+              if (!(logQueryInput instanceof HTMLInputElement)) return;
+              if (logQueryInput.value === query) return;
+              logQueryInput.value = query;
+              logQueryInput.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+
+            function applyDeliveriesSearch(rawValue) {
+              const query = String(rawValue || '').trim().toLowerCase();
+              const activeView = getActiveDeliveryView();
+              if (activeView === 'recent') {
+                applyRecentSearch(query);
+                return;
+              }
+              if (activeView === 'course') {
+                applyCourseSearch(query);
+                return;
+              }
+              applyLogSearch(query);
+            }
+
+            function initializeDeliveriesSearch() {
+              const input = document.querySelector('[data-deliveries-query]');
+              if (!(input instanceof HTMLInputElement)) return;
+              if (input.dataset.bound === 'true') return;
+              input.dataset.bound = 'true';
+              input.addEventListener('input', () => {
+                applyDeliveriesSearch(input.value);
+              });
+              applyDeliveriesSearch(input.value);
+            }
+
+            function initializeDeliveriesTab() {
+              bindDeliverySubtabs();
+              initializeDeliveriesSearch();
+              initializeSubmissionQuickEditors();
+              initializeSubmissionDeleteButtons();
+              initializeGradeAutosave();
+              initializeCorrectionFolding('submissions');
+              initializeCorrectionFolding('course-grades');
+              initializeUserDeleteButtons();
+              if (typeof initializeDashboardLogPanels === 'function') {
+                initializeDashboardLogPanels();
+              }
+              switchDeliveryView(getActiveDeliveryView());
+            }
+
             function debounce(func, wait) {
               let timeout;
               return function executedFunction(...args) {
@@ -1029,37 +2373,31 @@ const decodeUriSafe = (value: string | null | undefined) => {
               };
             }
 
-            // Autosave grade changes
             async function saveGrade(input) {
               const submissionId = input.dataset.submissionId;
               const score = parseFloat(input.value);
-              
-              if (!submissionId || isNaN(score)) return;
-              
-              // Visual feedback - change border color
-              input.style.borderColor = '#ffa500'; // Orange = saving
-              
+
+              if (!submissionId || Number.isNaN(score)) return;
+
+              input.style.borderColor = '#ffa500';
+
               try {
                 const response = await fetch(`/api/grade/quick-update`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
                     submissionId: submissionId,
-                    score: score
-                  })
+                    score: score,
+                  }),
                 });
-                
+
                 if (response.ok) {
-                  // Success - green border briefly
                   input.style.borderColor = '#4caf50';
                   setTimeout(() => {
                     input.style.borderColor = '';
                   }, 1000);
-                  
-                  // Update row average
                   updateRowAverage(input);
                 } else {
-                  // Error - red border
                   input.style.borderColor = '#f44336';
                   setTimeout(() => {
                     input.style.borderColor = '';
@@ -1074,7 +2412,6 @@ const decodeUriSafe = (value: string | null | undefined) => {
               }
             }
 
-            // Update student panel average after grade change
             function updateRowAverage(input) {
               const panelKey = input.dataset.studentPanel;
               if (!panelKey) return;
@@ -1091,30 +2428,284 @@ const decodeUriSafe = (value: string | null | undefined) => {
               if (!averageElement) return;
 
               if (scores.length === 0) {
-                averageElement.textContent = 'Promedio: -';
+                averageElement.textContent = '-';
                 return;
               }
 
               const average = (scores.reduce((sum, value) => sum + value, 0) / scores.length).toFixed(1);
-              averageElement.textContent = `Promedio: ${average}`;
+              averageElement.textContent = average;
             }
 
             const debouncedSaveGrade = debounce(saveGrade, 800);
 
+            async function saveCourseStudentMeta(row, input) {
+              if (!(row instanceof HTMLElement) || !(input instanceof HTMLElement)) return;
+
+              const courseId = String(row.getAttribute('data-course-id') || '').trim();
+              const studentId = String(row.getAttribute('data-student-id') || '').trim();
+              const year = String(row.getAttribute('data-year') || '').trim();
+              if (!courseId || !studentId || !year) return;
+
+              const turnoInput = row.querySelector('.grade-turno-select');
+              const conceptInput = row.querySelector('.grade-concept-input');
+              const groupInput = row.querySelector('.grade-group-input');
+              if (!(turnoInput instanceof HTMLSelectElement)) return;
+              if (!(conceptInput instanceof HTMLInputElement)) return;
+              if (!(groupInput instanceof HTMLInputElement)) return;
+
+              const payload = {
+                courseId,
+                studentId,
+                year,
+                turno: String(turnoInput.value || ''),
+                concepto: String(conceptInput.value || ''),
+                grupo: String(groupInput.value || ''),
+              };
+
+              markQuickState(input, 'quick-saving');
+
+              try {
+                const response = await fetch('/api/grade/course-student-meta', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(payload),
+                });
+
+                if (!response.ok) {
+                  markQuickState(input, 'quick-error');
+                  return;
+                }
+
+                const result = await response.json().catch(() => ({}));
+                const meta = result?.meta || {};
+                if (typeof meta.turno === 'string' && ['M', 'T', 'N'].includes(meta.turno)) {
+                  turnoInput.value = meta.turno;
+                }
+                if (typeof meta.concepto === 'string') {
+                  conceptInput.value = meta.concepto;
+                }
+                if (typeof meta.grupo === 'string') {
+                  groupInput.value = meta.grupo;
+                }
+                markQuickState(input, 'quick-success');
+              } catch (error) {
+                console.error('Error saving course student meta:', error);
+                markQuickState(input, 'quick-error');
+              }
+            }
+
+            const debouncedSaveCourseStudentMeta = debounce((row, input) => {
+              saveCourseStudentMeta(row, input);
+            }, 700);
+
+            const selectedCourseRowKeys = new Set();
+
+            function getCourseRowKey(row) {
+              if (!(row instanceof HTMLElement)) return '';
+              const courseId = String(row.getAttribute('data-course-id') || '').trim();
+              const year = String(row.getAttribute('data-year') || '').trim();
+              const studentId = String(row.getAttribute('data-student-id') || '').trim();
+              if (!courseId || !year || !studentId) return '';
+              return `${courseId}::${year}::${studentId}`;
+            }
+
+            function getCourseRowByKey(key) {
+              if (!key) return null;
+              const [courseId = '', year = '', studentId = ''] = String(key).split('::');
+              if (!courseId || !year || !studentId) return null;
+              return document.querySelector(
+                `[data-course-row][data-course-id="${CSS.escape(courseId)}"][data-year="${CSS.escape(year)}"][data-student-id="${CSS.escape(studentId)}"]`,
+              );
+            }
+
+            function getSelectedCourseRows() {
+              return Array.from(selectedCourseRowKeys)
+                .map((key) => getCourseRowByKey(key))
+                .filter((row) => row instanceof HTMLElement && row.isConnected);
+            }
+
+            function updateCourseBulkSelectionUI() {
+              const countNode = document.querySelector('[data-bulk-count]');
+              if (countNode instanceof HTMLElement) {
+                countNode.textContent = `${selectedCourseRowKeys.size} seleccionados`;
+              }
+            }
+
+            function setCourseRowSelected(row, selected) {
+              const key = getCourseRowKey(row);
+              if (!key) return;
+
+              if (selected) {
+                selectedCourseRowKeys.add(key);
+                row.classList.add('is-row-selected');
+              } else {
+                selectedCourseRowKeys.delete(key);
+                row.classList.remove('is-row-selected');
+              }
+              updateCourseBulkSelectionUI();
+            }
+
+            function clearCourseRowSelection() {
+              getSelectedCourseRows().forEach((row) => row.classList.remove('is-row-selected'));
+              selectedCourseRowKeys.clear();
+              updateCourseBulkSelectionUI();
+            }
+
+            function propagateMetaValueToSelectedRows(sourceRow, field, value) {
+              if (!(sourceRow instanceof HTMLElement)) return;
+              const sourceKey = getCourseRowKey(sourceRow);
+              if (!sourceKey || selectedCourseRowKeys.size < 2 || !selectedCourseRowKeys.has(sourceKey)) return;
+
+              const selectorByField = {
+                turno: '.grade-turno-select',
+                concepto: '.grade-concept-input',
+                grupo: '.grade-group-input',
+              };
+              const selector = selectorByField[field];
+              if (!selector) return;
+
+              getSelectedCourseRows().forEach((row) => {
+                const rowKey = getCourseRowKey(row);
+                if (!rowKey || rowKey === sourceKey) return;
+
+                const input = row.querySelector(selector);
+                if (
+                  !(
+                    input instanceof HTMLInputElement ||
+                    input instanceof HTMLSelectElement
+                  )
+                ) {
+                  return;
+                }
+                if (String(input.value || '') === String(value || '')) return;
+
+                input.value = String(value || '');
+                saveCourseStudentMeta(row, input);
+              });
+            }
+
+            function applyTurnoToSelectedRows(turnoValue) {
+              const normalizedTurno = String(turnoValue || '').trim().toUpperCase();
+              if (!['M', 'T', 'N'].includes(normalizedTurno)) return;
+
+              getSelectedCourseRows().forEach((row) => {
+                const input = row.querySelector('.grade-turno-select');
+                if (!(input instanceof HTMLSelectElement)) return;
+                if (input.value === normalizedTurno) return;
+                input.value = normalizedTurno;
+                saveCourseStudentMeta(row, input);
+              });
+            }
+
+            function initializeCourseBulkEditing() {
+              const panel = document.getElementById('deliveries-course');
+              if (!(panel instanceof HTMLElement)) return;
+              if (panel.dataset.bulkBound === 'true') return;
+              panel.dataset.bulkBound = 'true';
+
+              panel.addEventListener('click', (event) => {
+                if (!event.altKey) return;
+                const target = event.target;
+                if (!(target instanceof Element)) return;
+                const row = target.closest('[data-course-row]');
+                if (!(row instanceof HTMLElement)) return;
+                event.preventDefault();
+                event.stopPropagation();
+                const alreadySelected = row.classList.contains('is-row-selected');
+                setCourseRowSelected(row, !alreadySelected);
+              });
+
+              const bulkTurnoInput = panel.querySelector('[data-bulk-turno]');
+              const applyTurnoButton = panel.querySelector('[data-bulk-apply-turno]');
+              const clearButton = panel.querySelector('[data-bulk-clear-selection]');
+
+              if (bulkTurnoInput instanceof HTMLSelectElement && applyTurnoButton instanceof HTMLButtonElement) {
+                applyTurnoButton.addEventListener('click', () => {
+                  applyTurnoToSelectedRows(bulkTurnoInput.value);
+                });
+              }
+
+              if (clearButton instanceof HTMLButtonElement) {
+                clearButton.addEventListener('click', () => {
+                  clearCourseRowSelection();
+                });
+              }
+
+              updateCourseBulkSelectionUI();
+            }
+
             function initializeGradeAutosave() {
               const gradeInputs = document.querySelectorAll('.grade-input');
-              
-              gradeInputs.forEach(input => {
-                // Remove existing listeners to avoid duplicates
+              const turnoInputs = document.querySelectorAll('.grade-turno-select');
+              const conceptInputs = document.querySelectorAll('.grade-concept-input');
+              const groupInputs = document.querySelectorAll('.grade-group-input');
+
+              gradeInputs.forEach((input) => {
                 input.removeEventListener('input', input._autosaveHandler);
-                
-                // Create and store handler
-                input._autosaveHandler = (e) => {
-                  debouncedSaveGrade(e.target);
+                input._autosaveHandler = (event) => {
+                  debouncedSaveGrade(event.target);
                 };
-                
                 input.addEventListener('input', input._autosaveHandler);
               });
+
+              turnoInputs.forEach((input) => {
+                if (!(input instanceof HTMLSelectElement)) return;
+                if (input.dataset.boundMeta === 'true') return;
+                input.dataset.boundMeta = 'true';
+                input.addEventListener('change', () => {
+                  const row = input.closest('[data-course-row]');
+                  saveCourseStudentMeta(row, input);
+                  propagateMetaValueToSelectedRows(row, 'turno', input.value);
+                });
+              });
+
+              conceptInputs.forEach((input) => {
+                if (!(input instanceof HTMLInputElement)) return;
+                if (input.dataset.boundMeta === 'true') return;
+                input.dataset.boundMeta = 'true';
+
+                input.addEventListener('input', () => {
+                  const row = input.closest('[data-course-row]');
+                  debouncedSaveCourseStudentMeta(row, input);
+                });
+                input.addEventListener('blur', () => {
+                  const row = input.closest('[data-course-row]');
+                  saveCourseStudentMeta(row, input);
+                  propagateMetaValueToSelectedRows(row, 'concepto', input.value);
+                });
+                input.addEventListener('keydown', (event) => {
+                  if (event.key !== 'Enter') return;
+                  event.preventDefault();
+                  const row = input.closest('[data-course-row]');
+                  saveCourseStudentMeta(row, input);
+                  propagateMetaValueToSelectedRows(row, 'concepto', input.value);
+                });
+              });
+
+              groupInputs.forEach((input) => {
+                if (!(input instanceof HTMLInputElement)) return;
+                if (input.dataset.boundMeta === 'true') return;
+                input.dataset.boundMeta = 'true';
+
+                input.addEventListener('input', () => {
+                  const row = input.closest('[data-course-row]');
+                  debouncedSaveCourseStudentMeta(row, input);
+                });
+                input.addEventListener('blur', () => {
+                  const row = input.closest('[data-course-row]');
+                  saveCourseStudentMeta(row, input);
+                  propagateMetaValueToSelectedRows(row, 'grupo', input.value);
+                });
+                input.addEventListener('keydown', (event) => {
+                  if (event.key !== 'Enter') return;
+                  event.preventDefault();
+                  const row = input.closest('[data-course-row]');
+                  saveCourseStudentMeta(row, input);
+                  propagateMetaValueToSelectedRows(row, 'grupo', input.value);
+                });
+              });
+
+              initializeCourseBulkEditing();
             }
 
             function applyFoldDepth(scope) {
@@ -1176,33 +2767,33 @@ const decodeUriSafe = (value: string | null | undefined) => {
                 }
               }
 
-              const activeTabName = getActiveTabName();
-              if (!activeTabName || !foldableTabs.has(activeTabName)) return;
-              if (!initializeCorrectionFolding(activeTabName)) return;
+              const scope = getActiveFoldScope();
+              if (!scope) return;
+              if (!initializeCorrectionFolding(scope)) return;
 
-              const state = getFoldState(activeTabName);
+              const state = getFoldState(scope);
 
               if (event.shiftKey && event.key === 'ArrowUp') {
                 event.preventDefault();
-                setFoldDepth(activeTabName, state.maxLevel);
+                setFoldDepth(scope, state.maxLevel);
                 return;
               }
 
               if (event.shiftKey && event.key === 'ArrowDown') {
                 event.preventDefault();
-                setFoldDepth(activeTabName, 0);
+                setFoldDepth(scope, 0);
                 return;
               }
 
               if (!event.shiftKey && event.key === 'ArrowUp') {
                 event.preventDefault();
-                setFoldDepth(activeTabName, state.depth + 1);
+                setFoldDepth(scope, state.depth + 1);
                 return;
               }
 
               if (!event.shiftKey && event.key === 'ArrowDown') {
                 event.preventDefault();
-                setFoldDepth(activeTabName, state.depth - 1);
+                setFoldDepth(scope, state.depth - 1);
               }
             }
 
@@ -1288,16 +2879,78 @@ const decodeUriSafe = (value: string | null | undefined) => {
               });
             }
 
-            // Initialize on load for active tab
-            document.addEventListener('DOMContentLoaded', () => {
-              const activeTab = document.querySelector('.tab.active');
-              if (activeTab && activeTab.getAttribute('data-tab') === 'course-grades') {
-                initializeGradeAutosave();
-                initializeCorrectionFolding('course-grades');
+            async function handleDeleteSubmission(button) {
+              const submissionId = String(button.getAttribute('data-submission-id') || '').trim();
+              if (!submissionId) return;
+              const confirmed = window.confirm('¿Eliminar esta entrega? Esta acción no se puede deshacer.');
+              if (!confirmed) return;
+
+              button.disabled = true;
+              try {
+                const response = await fetch(`/api/submissions/${submissionId}`, {
+                  method: 'DELETE',
+                });
+                if (!response.ok) {
+                  const payload = await response.json().catch(() => ({}));
+                  throw new Error(payload?.error || 'No se pudo eliminar la entrega');
+                }
+                window.location.reload();
+              } catch (error) {
+                console.error('Error deleting submission:', error);
+                alert(error?.message || 'No se pudo eliminar la entrega');
+                button.disabled = false;
               }
-              if (activeTab && activeTab.getAttribute('data-tab') === 'submissions') {
-                initializeSubmissionQuickEditors();
-                initializeCorrectionFolding('submissions');
+            }
+
+            function initializeSubmissionDeleteButtons() {
+              document.querySelectorAll('.js-delete-submission').forEach((button) => {
+                if (button.dataset.bound === 'true') return;
+                button.dataset.bound = 'true';
+                button.addEventListener('click', () => handleDeleteSubmission(button));
+              });
+            }
+
+            async function handleDeleteUser(button) {
+              const userId = String(button.getAttribute('data-user-id') || '').trim();
+              const userName = String(button.getAttribute('data-user-name') || userId).trim();
+              if (!userId) return;
+
+              const confirmed = window.confirm(`¿Eliminar usuario "${userName}"? Se eliminarán sus inscripciones y entregas.`);
+              if (!confirmed) return;
+
+              button.disabled = true;
+              try {
+                const response = await fetch(`/api/admin/users/${userId}`, {
+                  method: 'DELETE',
+                });
+                if (!response.ok) {
+                  const payload = await response.json().catch(() => ({}));
+                  throw new Error(payload?.error || 'No se pudo eliminar el usuario');
+                }
+                window.location.reload();
+              } catch (error) {
+                console.error('Error deleting user:', error);
+                alert(error?.message || 'No se pudo eliminar el usuario');
+                button.disabled = false;
+              }
+            }
+
+            function initializeUserDeleteButtons() {
+              document.querySelectorAll('.js-delete-user').forEach((button) => {
+                if (button.dataset.bound === 'true') return;
+                button.dataset.bound = 'true';
+                button.addEventListener('click', () => handleDeleteUser(button));
+              });
+            }
+
+            document.addEventListener('DOMContentLoaded', () => {
+              bindMainTabs();
+              initializeDashboardScopeSelectors();
+              initializeUserDeleteButtons();
+              restoreDashboardTabFromQuery();
+              const activeTab = getActiveTabName();
+              if (activeTab === 'deliveries') {
+                initializeDeliveriesTab();
               }
               document.addEventListener('keydown', handleFoldShortcuts);
             });
@@ -1332,13 +2985,14 @@ const decodeUriSafe = (value: string | null | undefined) => {
 
           <section class="student-section">
             <h2 class="group-title">Entregas</h2>
-            {studentSubmissions.length === 0 ? (
+            {scopedStudentSubmissions.length === 0 ? (
               <p class="student-empty">No registras entregas todavía.</p>
             ) : (
               <table class="admin-table">
                 <thead>
                   <tr>
-                    <th>Tarea</th>
+                    <th>Clase</th>
+                    <th>ID</th>
                     <th>Curso</th>
                     <th>Fecha</th>
                     <th>Estado</th>
@@ -1346,14 +3000,26 @@ const decodeUriSafe = (value: string | null | undefined) => {
                   </tr>
                 </thead>
                 <tbody>
-                  {studentSubmissions.map((sub: any) => {
+                  {scopedStudentSubmissions.map((sub: any) => {
                     const assignment = studentAssignmentById.get(sub.assignmentId);
                     const assignmentSlug = String(assignment?.slug || sub.assignmentId || '');
                     const assignmentLabel = decodeUriSafe(assignmentSlug.split('/').pop() || assignmentSlug);
                     const courseLabel = decodeUriSafe(assignment?.courseId || assignmentSlug.split('/')[0] || '—');
+                    const meta = resolveSubmissionMeta(sub);
+                    const evalPreviewAttr = toEvalPreviewAttr(meta.evalPreview);
                     return (
                       <tr>
                         <td title={assignmentSlug}>{assignmentLabel}</td>
+                        <td>
+                          <button
+                            type="button"
+                            class="eval-id-anchor"
+                            data-eval-preview={evalPreviewAttr}
+                            aria-label={`Ver bloque eval ${sub.assignmentId}`}
+                          >
+                            <code>{sub.assignmentId}</code>
+                          </button>
+                        </td>
                         <td>{courseLabel}</td>
                         <td>{formatSubmissionDate(sub.submittedAt)}</td>
                         <td>
@@ -1371,42 +3037,520 @@ const decodeUriSafe = (value: string | null | undefined) => {
               </table>
             )}
           </section>
+
+          <section class="student-section">
+            <h2 class="group-title">Log</h2>
+            <div class="log-panel" data-log-panel data-log-scope="student" data-show-user="false">
+              <div class="log-toolbar">
+                <input
+                  type="search"
+                  class="log-input"
+                  data-log-query
+                  placeholder="Buscar por curso, assignment, type, payload..."
+                  aria-label="Buscar en log"
+                />
+                <select class="log-select" data-log-filter="evalType" aria-label="Filtrar por tipo de evaluación">
+                  <option value="">Todos los eval type</option>
+                </select>
+                <select class="log-select" data-log-filter="mode" aria-label="Filtrar por modo">
+                  <option value="">Todos los modos</option>
+                </select>
+                <select class="log-select" data-log-filter="noteType" aria-label="Filtrar por tipo de nota">
+                  <option value="">Todos los tipos de nota</option>
+                </select>
+              </div>
+              <p class="log-empty" data-log-summary></p>
+              <div class="log-table-wrap">
+                <table class="log-table">
+                  <thead>
+                    <tr>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="submittedAtTs">Envío</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="gradedAtTs">Revisión</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="courseId">Curso</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="noteTypeOrder">Tipo Nota</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="evalType">Eval Type</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="mode">Mode</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="assignmentLabel">Clase</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="assignmentId">ID</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="attempts">Attempt</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="score">Score</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="resultState">Result</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="submissionState">Submission</button></th>
+                      <th><button type="button" class="log-sort-btn" data-log-sort="reviewState">Review</button></th>
+                      <th>Respuesta</th>
+                      <th>Payload</th>
+                      <th>Feedback</th>
+                      <th>ID Submission</th>
+                      <th>Source</th>
+                    </tr>
+                  </thead>
+                  <tbody data-log-body></tbody>
+                </table>
+              </div>
+              <p class="log-empty" data-log-empty hidden>No hay resultados para los filtros actuales.</p>
+            </div>
+          </section>
         </>
       )}
     </main>
-    
-    <script>
-      // Handle AJAX Enrollment
-      document.querySelectorAll('.enroll-btn').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
-          const target = e.target as HTMLButtonElement;
-          const courseId = target.dataset.courseId;
-          
-          target.textContent = 'Inscribiendo...';
-          target.disabled = true;
+    <script type="application/json" id="dashboard-log-data" set:html={dashboardLogDataJson}></script>
 
-          try {
-            const res = await fetch('/api/enroll', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ courseId })
+    <script>
+      const escapeHtml = (value) =>
+        String(value ?? '')
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#039;');
+
+      const renderInlineMarkdown = (value) => {
+        const escaped = escapeHtml(value ?? '');
+        return escaped
+          .replace(/`([^`]+)`/g, '<code>$1</code>')
+          .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      };
+
+      const renderSimpleMarkdown = (markdown) => {
+        const lines = String(markdown || '').split('\n');
+        let html = '';
+        let inList = false;
+
+        lines.forEach((line) => {
+          const raw = String(line || '');
+          const trimmed = raw.trim();
+
+          if (!trimmed) {
+            if (inList) {
+              html += '</ul>';
+              inList = false;
+            }
+            return;
+          }
+
+          if (trimmed.startsWith('- ')) {
+            if (!inList) {
+              html += '<ul>';
+              inList = true;
+            }
+            html += `<li>${renderInlineMarkdown(trimmed.slice(2))}</li>`;
+            return;
+          }
+
+          if (inList) {
+            html += '</ul>';
+            inList = false;
+          }
+
+          if (trimmed.startsWith('### ')) {
+            html += `<h4>${renderInlineMarkdown(trimmed.slice(4))}</h4>`;
+            return;
+          }
+
+          html += `<p>${renderInlineMarkdown(trimmed)}</p>`;
+        });
+
+        if (inList) html += '</ul>';
+        return html;
+      };
+
+      const buildEvalPreviewMarkdown = (preview) => {
+        const options = Array.isArray(preview?.options)
+          ? preview.options.map((option) => String(option || '').trim()).filter(Boolean)
+          : [];
+
+        const lines = [
+          '### Bloque eval',
+          `- **id**: \`${preview?.id || '-'}\``,
+          `- **type**: \`${preview?.type || 'unknown'}\``,
+          `- **mode**: \`${preview?.mode || 'unknown'}\``,
+          `- **prompt**: ${preview?.prompt ? String(preview.prompt) : '—'}`,
+          '- **options**:',
+        ];
+
+        if (options.length === 0) {
+          lines.push('- _(sin opciones)_');
+        } else {
+          options.forEach((option, index) => {
+            lines.push(`- ${index + 1}. ${option}`);
+          });
+        }
+
+        return lines.join('\n');
+      };
+
+      const parseEvalPreviewAttr = (encodedPreview) => {
+        if (!encodedPreview) return null;
+        try {
+          const parsed = JSON.parse(decodeURIComponent(String(encodedPreview)));
+          if (!parsed || typeof parsed !== 'object') return null;
+          return {
+            id: String(parsed.id || '-'),
+            type: String(parsed.type || 'unknown'),
+            mode: String(parsed.mode || 'unknown'),
+            prompt: String(parsed.prompt || ''),
+            options: Array.isArray(parsed.options)
+              ? parsed.options.map((item) => String(item || '')).filter(Boolean)
+              : [],
+          };
+        } catch {
+          return null;
+        }
+      };
+
+      const ensureEvalPreviewTooltip = () => {
+        let tooltip = document.getElementById('eval-preview-tooltip');
+        if (tooltip instanceof HTMLElement) return tooltip;
+
+        tooltip = document.createElement('div');
+        tooltip.id = 'eval-preview-tooltip';
+        tooltip.className = 'eval-preview-tooltip';
+        tooltip.hidden = true;
+        tooltip.setAttribute('role', 'tooltip');
+        document.body.appendChild(tooltip);
+        return tooltip;
+      };
+
+      const positionEvalPreviewTooltip = (tooltip, x, y) => {
+        const gap = 14;
+        const maxX = window.innerWidth - tooltip.offsetWidth - gap;
+        const maxY = window.innerHeight - tooltip.offsetHeight - gap;
+        const nextLeft = Math.min(Math.max(gap, x + gap), Math.max(gap, maxX));
+        const nextTop = Math.min(Math.max(gap, y + gap), Math.max(gap, maxY));
+        tooltip.style.left = `${nextLeft}px`;
+        tooltip.style.top = `${nextTop}px`;
+      };
+
+      let activeEvalPreviewAnchor = null;
+
+      const showEvalPreviewTooltip = (anchor, coords) => {
+        if (!(anchor instanceof HTMLElement)) return;
+        const preview = parseEvalPreviewAttr(anchor.getAttribute('data-eval-preview'));
+        if (!preview) return;
+
+        const tooltip = ensureEvalPreviewTooltip();
+        const markdown = buildEvalPreviewMarkdown(preview);
+        tooltip.innerHTML = renderSimpleMarkdown(markdown);
+        tooltip.hidden = false;
+
+        const fallbackX = window.innerWidth / 2;
+        const fallbackY = 28;
+        positionEvalPreviewTooltip(
+          tooltip,
+          Number.isFinite(coords?.x) ? coords.x : fallbackX,
+          Number.isFinite(coords?.y) ? coords.y : fallbackY,
+        );
+        activeEvalPreviewAnchor = anchor;
+      };
+
+      const hideEvalPreviewTooltip = (anchor = null) => {
+        if (anchor && activeEvalPreviewAnchor && anchor !== activeEvalPreviewAnchor) return;
+        const tooltip = ensureEvalPreviewTooltip();
+        tooltip.hidden = true;
+        activeEvalPreviewAnchor = null;
+      };
+
+      const attachEvalPreviewHandlers = (root = document) => {
+        if (!(root instanceof Element || root instanceof Document || root instanceof DocumentFragment)) return;
+        root.querySelectorAll('[data-eval-preview]').forEach((node) => {
+          if (!(node instanceof HTMLElement)) return;
+          if (node.dataset.evalPreviewBound === 'true') return;
+          node.dataset.evalPreviewBound = 'true';
+
+          node.addEventListener('mouseenter', (event) => {
+            showEvalPreviewTooltip(node, {
+              x: Number(event?.clientX || 0),
+              y: Number(event?.clientY || 0),
             });
-            
-            if (res.ok) {
-              window.location.reload();
+          });
+
+          node.addEventListener('mousemove', (event) => {
+            if (activeEvalPreviewAnchor !== node) return;
+            const tooltip = ensureEvalPreviewTooltip();
+            positionEvalPreviewTooltip(tooltip, Number(event?.clientX || 0), Number(event?.clientY || 0));
+          });
+
+          node.addEventListener('mouseleave', () => {
+            hideEvalPreviewTooltip(node);
+          });
+
+          node.addEventListener('focus', () => {
+            const rect = node.getBoundingClientRect();
+            showEvalPreviewTooltip(node, {
+              x: rect.left + rect.width / 2,
+              y: rect.bottom + 8,
+            });
+          });
+
+          node.addEventListener('blur', () => {
+            hideEvalPreviewTooltip(node);
+          });
+        });
+      };
+
+      const getLogData = () => {
+        const node = document.getElementById('dashboard-log-data');
+        if (!(node instanceof HTMLScriptElement)) return { teacher: [], student: [], filters: {} };
+        try {
+          const parsed = JSON.parse(node.textContent || '{}');
+          return {
+            teacher: Array.isArray(parsed.teacher) ? parsed.teacher : [],
+            student: Array.isArray(parsed.student) ? parsed.student : [],
+            filters: parsed.filters && typeof parsed.filters === 'object' ? parsed.filters : {},
+          };
+        } catch {
+          return { teacher: [], student: [], filters: {} };
+        }
+      };
+
+      const compareValues = (left, right) => {
+        const a = left ?? '';
+        const b = right ?? '';
+        if (typeof a === 'number' && typeof b === 'number') return a - b;
+        return String(a).localeCompare(String(b), 'es', { sensitivity: 'base' });
+      };
+
+      const mountLogPanel = (panel, rows, filtersMeta) => {
+        if (!(panel instanceof HTMLElement) || panel.dataset.logMounted === 'true') return;
+        panel.dataset.logMounted = 'true';
+
+        const queryInput = panel.querySelector('[data-log-query]');
+        const filterType = panel.querySelector('[data-log-filter="evalType"]');
+        const filterMode = panel.querySelector('[data-log-filter="mode"]');
+        const filterNoteType = panel.querySelector('[data-log-filter="noteType"]');
+        const body = panel.querySelector('[data-log-body]');
+        const emptyNode = panel.querySelector('[data-log-empty]');
+        const summaryNode = panel.querySelector('[data-log-summary]');
+        const showUser = panel.dataset.showUser === 'true';
+
+        if (
+          !(queryInput instanceof HTMLInputElement) ||
+          !(filterType instanceof HTMLSelectElement) ||
+          !(filterMode instanceof HTMLSelectElement) ||
+          !(filterNoteType instanceof HTMLSelectElement) ||
+          !(body instanceof HTMLElement)
+        ) {
+          return;
+        }
+
+        const noteTypeLabelByValue = new Map(
+          Array.isArray(filtersMeta?.noteTypes)
+            ? filtersMeta.noteTypes.map((entry) => [String(entry.value || ''), String(entry.label || entry.value || '')])
+            : [],
+        );
+
+        const setOptions = (select, values, labelResolver = (value) => value) => {
+          const base = Array.from(select.options).slice(0, 1);
+          select.innerHTML = '';
+          base.forEach((option) => select.appendChild(option));
+          values.forEach((value) => {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = labelResolver(value);
+            select.appendChild(option);
+          });
+        };
+
+        const evalTypes = Array.from(new Set(rows.map((row) => String(row.evalType || '')).filter(Boolean))).sort();
+        const modes = Array.from(new Set(rows.map((row) => String(row.mode || '')).filter(Boolean))).sort();
+        const noteTypes = Array.from(new Set(rows.map((row) => String(row.noteType || '')).filter(Boolean))).sort(
+          (left, right) => {
+            const leftRow = rows.find((row) => row.noteType === left);
+            const rightRow = rows.find((row) => row.noteType === right);
+            return Number(leftRow?.noteTypeOrder || 99) - Number(rightRow?.noteTypeOrder || 99);
+          },
+        );
+
+        setOptions(filterType, evalTypes);
+        setOptions(filterMode, modes);
+        setOptions(filterNoteType, noteTypes, (value) => noteTypeLabelByValue.get(value) || value);
+
+        const state = {
+          query: '',
+          evalType: '',
+          mode: '',
+          noteType: '',
+          sortKey: 'submittedAtTs',
+          sortDirection: 'desc',
+        };
+
+        const getRowMarkup = (row) => {
+          const score = row.score === null || row.score === undefined || Number.isNaN(Number(row.score))
+            ? '-'
+            : Number(row.score).toFixed(1);
+          const noteTypeLabel = row.noteTypeLabel || noteTypeLabelByValue.get(String(row.noteType || '')) || row.noteType || '-';
+          const previewAttr = escapeHtml(String(row.evalPreviewAttr || ''));
+          const assignmentIdSafe = escapeHtml(row.assignmentId || '-');
+          const evalIdMarkup = `
+            <button type="button" class="eval-id-anchor" data-eval-preview="${previewAttr}" aria-label="Preview eval ${assignmentIdSafe}">
+              <code>${assignmentIdSafe}</code>
+            </button>
+          `;
+
+          const cells = [
+            `<td>${escapeHtml(row.submittedAt || '-')}</td>`,
+            `<td>${escapeHtml(row.gradedAt || '-')}</td>`,
+            `<td>${escapeHtml(row.courseId || '-')}</td>`,
+            `<td><span class="log-tag">${escapeHtml(noteTypeLabel)}</span></td>`,
+            `<td><span class="log-tag">${escapeHtml(row.evalType || '-')}</span></td>`,
+            `<td><span class="log-tag">${escapeHtml(row.mode || '-')}</span></td>`,
+          ];
+
+          if (showUser) {
+            cells.push(
+              `<td>${escapeHtml(row.userName || '-')}<br><small>${escapeHtml(row.userEmail || '')}</small></td>`,
+            );
+          }
+
+          cells.push(
+            `<td title="${escapeHtml(row.assignmentSlug || '')}">${escapeHtml(row.assignmentLabel || row.assignmentId || '-')}</td>`,
+            `<td>${evalIdMarkup}</td>`,
+            `<td>${escapeHtml(row.attempts ?? 0)}</td>`,
+            `<td>${escapeHtml(score)}</td>`,
+            `<td>${escapeHtml(row.resultState || '-')}</td>`,
+            `<td>${escapeHtml(row.submissionState || '-')}</td>`,
+            `<td>${escapeHtml(row.reviewState || '-')}</td>`,
+            `<td class="log-answer">${escapeHtml(row.answerText || '-')}</td>`,
+            `<td><span class="log-payload" title="${escapeHtml(row.payloadText || '')}">${escapeHtml(row.payloadText || '-')}</span></td>`,
+            `<td>${escapeHtml(row.feedback || '-')}</td>`,
+            `<td><code>${escapeHtml(row.submissionId || '-')}</code></td>`,
+            `<td title="${escapeHtml(row.catalogSource || '')}">${escapeHtml(row.catalogSource || '-')}</td>`,
+          );
+
+          return `<tr>${cells.join('')}</tr>`;
+        };
+
+        const render = () => {
+          const query = state.query.trim().toLowerCase();
+          const filtered = rows.filter((row) => {
+            if (state.evalType && String(row.evalType || '') !== state.evalType) return false;
+            if (state.mode && String(row.mode || '') !== state.mode) return false;
+            if (state.noteType && String(row.noteType || '') !== state.noteType) return false;
+            if (!query) return true;
+            return String(row.search || '').includes(query);
+          });
+
+          filtered.sort((left, right) => {
+            const compare = compareValues(left[state.sortKey], right[state.sortKey]);
+            return state.sortDirection === 'asc' ? compare : -compare;
+          });
+
+          hideEvalPreviewTooltip();
+          body.innerHTML = filtered.map(getRowMarkup).join('');
+          attachEvalPreviewHandlers(body);
+          if (emptyNode instanceof HTMLElement) emptyNode.hidden = filtered.length !== 0;
+          if (summaryNode instanceof HTMLElement) {
+            summaryNode.textContent = `${filtered.length} / ${rows.length} registros`;
+          }
+        };
+
+        queryInput.addEventListener('input', () => {
+          state.query = queryInput.value || '';
+          render();
+        });
+
+        panel.addEventListener('dashboard-log-query', (event) => {
+          const nextQuery = String(event?.detail?.query || '');
+          if (queryInput.value !== nextQuery) {
+            queryInput.value = nextQuery;
+          }
+          state.query = nextQuery;
+          render();
+        });
+
+        filterType.addEventListener('change', () => {
+          state.evalType = filterType.value || '';
+          render();
+        });
+
+        filterMode.addEventListener('change', () => {
+          state.mode = filterMode.value || '';
+          render();
+        });
+
+        filterNoteType.addEventListener('change', () => {
+          state.noteType = filterNoteType.value || '';
+          render();
+        });
+
+        panel.querySelectorAll('[data-log-sort]').forEach((button) => {
+          button.addEventListener('click', () => {
+            const nextKey = String(button.getAttribute('data-log-sort') || '');
+            if (!nextKey) return;
+            if (state.sortKey === nextKey) {
+              state.sortDirection = state.sortDirection === 'asc' ? 'desc' : 'asc';
             } else {
+              state.sortKey = nextKey;
+              state.sortDirection = 'desc';
+            }
+            render();
+          });
+        });
+
+        render();
+      };
+
+      const initializeDashboardLogPanels = () => {
+        const data = getLogData();
+        document.querySelectorAll('[data-log-panel]').forEach((panel) => {
+          const scope = String(panel.getAttribute('data-log-scope') || '').trim();
+          const rows = scope === 'teacher' ? data.teacher : data.student;
+          mountLogPanel(panel, rows, data.filters || {});
+        });
+      };
+
+      const initializeEnrollButtons = () => {
+        document.querySelectorAll('.enroll-btn').forEach((btn) => {
+          if (btn.dataset.bound === 'true') return;
+          btn.dataset.bound = 'true';
+
+          btn.addEventListener('click', async (event) => {
+            const target = event.currentTarget;
+            if (!(target instanceof HTMLButtonElement)) return;
+            const courseId = target.dataset.courseId;
+            if (!courseId) return;
+
+            target.textContent = 'Inscribiendo...';
+            target.disabled = true;
+
+            try {
+              const res = await fetch('/api/enroll', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ courseId }),
+              });
+
+              if (res.ok) {
+                window.location.reload();
+                return;
+              }
+
               alert('Error al inscribirse. Intente nuevamente.');
-              target.textContent = 'Inscribirse';
+              target.textContent = 'Inscribirme';
+              target.disabled = false;
+            } catch (err) {
+              console.error(err);
+              alert('Error de conexión');
+              target.textContent = 'Inscribirme';
               target.disabled = false;
             }
-          } catch (err) {
-            console.error(err);
-            alert('Error de conexión');
-            target.textContent = 'Inscribirse';
-            target.disabled = false;
-          }
+          });
         });
-      });
+      };
+
+      const bootDashboardEnhancements = () => {
+        initializeDashboardLogPanels();
+        initializeEnrollButtons();
+        attachEvalPreviewHandlers(document);
+      };
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bootDashboardEnhancements, { once: true });
+      } else {
+        bootDashboardEnhancements();
+      }
+
+      document.addEventListener('astro:page-load', bootDashboardEnhancements);
     </script>
     <Footer />
   </body>

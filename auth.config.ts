@@ -22,6 +22,14 @@ function firstNonLocalUrl(...values: Array<string | undefined>): string | undefi
   }
 }
 
+function sanitizeInternalPath(value?: string | null): string {
+  if (!value) return "";
+  const trimmed = String(value).trim();
+  if (!trimmed.startsWith("/") || trimmed.startsWith("//")) return "";
+  if (trimmed.startsWith("/api/auth")) return "";
+  return trimmed;
+}
+
 const runtimeAuthUrl = normalizeUrl(
   process.env.AUTH_URL || process.env.NEXTAUTH_URL
 );
@@ -50,11 +58,61 @@ export default defineConfig({
   ],
   secret: import.meta.env.AUTH_SECRET,
   callbacks: {
+    async jwt({ token, user, profile }) {
+      const userImage =
+        typeof user?.image === "string" ? user.image.trim() : "";
+      const profileImage =
+        typeof (profile as any)?.picture === "string"
+          ? String((profile as any).picture).trim()
+          : "";
+
+      if (userImage) token.picture = userImage;
+      else if (!token.picture && profileImage) token.picture = profileImage;
+
+      if (!token.name && user?.name) token.name = user.name;
+      if (!token.email && user?.email) token.email = user.email;
+
+      return token;
+    },
+    async session({ session, token }) {
+      if (session?.user) {
+        const tokenImage =
+          typeof token?.picture === "string" ? token.picture.trim() : "";
+        const tokenName = typeof token?.name === "string" ? token.name : "";
+        const tokenEmail = typeof token?.email === "string" ? token.email : "";
+
+        if (!session.user.image && tokenImage) session.user.image = tokenImage;
+        if (!session.user.name && tokenName) session.user.name = tokenName;
+        if (!session.user.email && tokenEmail) session.user.email = tokenEmail;
+      }
+
+      return session;
+    },
     async redirect({ url, baseUrl }) {
-      // Redirect to home page after login
-      if (url.startsWith(baseUrl)) return url;
-      else if (url.startsWith("/")) return `${baseUrl}${url}`;
-      return baseUrl;
+      const normalizedBase = baseUrl.replace(/\/$/, "");
+      let target: URL | null = null;
+
+      try {
+        target = url.startsWith("/")
+          ? new URL(url, normalizedBase)
+          : new URL(url);
+      } catch {
+        target = null;
+      }
+
+      if (!target || target.origin !== normalizedBase) {
+        return `${normalizedBase}/dashboard`;
+      }
+
+      if (target.pathname === "/login") {
+        const redirectPath = sanitizeInternalPath(
+          target.searchParams.get("redirect")
+        );
+        if (redirectPath) return `${normalizedBase}${redirectPath}`;
+        return `${normalizedBase}/dashboard`;
+      }
+
+      return target.toString();
     },
   },
 });

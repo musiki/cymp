@@ -54,10 +54,10 @@ Dado el siguiente gráfico cartesiano que contempla la variable tiempo en el eje
 
 ![](https://i.imgur.com/1fbgnzW.png)
 
-Seleccione una o más de una:
+Seleccione una o más de una (pregunta1):
 
 ```eval
-id: i1-acústica-cuestionario1-pregunta1
+id: pregunta1
 type: mcq
 mode: self
 points: 1
@@ -79,7 +79,7 @@ Dado el siguiente gráfico cartesiano que contempla la variable tiempo en el eje
 Seleccione una:
 
 ```eval
-id: i1-acústica-cuestionario1-pregunta2
+id: pregunta2
 type: mcq
 mode: self
 allowEdit: true
@@ -212,7 +212,7 @@ Las diferencias no reflejan un valor constante mientras que las divisiones sí, 
 
 ## Progresiones
 ```eval
-id: i1-acústica-cuestionario1-pregunta3
+id: pregunta3
 type: mcq
 mode: self
 points: 1
@@ -229,7 +229,7 @@ explanation: ""
 
 ## Progresiones
 ```eval
-id: i1-acústica-cuestionario1-pregunta4
+id: pregunta4
 type: mcq
 mode: self
 points: 1
@@ -248,7 +248,7 @@ explanation: ""
 
 ## Progresiones
 ```eval
-id: i1-acústica-cuestionario1-pregunta5
+id: pregunta5
 type: mcq
 mode: self
 points: 1
@@ -265,7 +265,7 @@ explanation: ""
 
 ## Progresiones
 ```eval
-id: i1-acústica-cuestionario1-pregunta4
+id: pregunta6
 type: mcq
 mode: self
 points: 1
@@ -282,7 +282,7 @@ explanation: ""
 
 ## Progresiones
 ```eval
-id: i1-acústica-cuestionario1-pregunta4
+id: pregunta7
 type: mcq
 mode: self
 points: 1
@@ -300,7 +300,7 @@ explanation: ""
 
 ## Progresiones
 ```eval
-id: i1-acústica-cuestionario1-pregunta4
+id: pregunta8
 type: mcq
 mode: self
 points: 1

@@ -769,4 +769,3 @@ flowchart TB
 ---
 
 Para saber mas...[[00-moc/generatividad MOC]]
-

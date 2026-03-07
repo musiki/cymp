@@ -1,5 +1,7 @@
 import type { APIRoute } from 'astro';
 import { createClient } from '@supabase/supabase-js';
+import { buildEvalCatalog, type EvalCatalogEntry } from '../../../lib/eval-catalog';
+import { canonicalizeCourseId, canonicalizeCourseSlugPath } from '../../../lib/course-alias';
 
 function json(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -27,6 +29,251 @@ function cleanString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+const EVAL_CATALOG_TTL_MS = 60_000;
+const LIVE_ROUTE_SLUG_RE = /^live\/[0-9a-f-]+$/i;
+
+let evalCatalogCache:
+  | {
+      loadedAt: number;
+      data: Awaited<ReturnType<typeof buildEvalCatalog>>;
+    }
+  | null = null;
+
+function normalizeSlugPath(value: string): string {
+  return cleanString(value).replace(/^\/+|\/+$/g, '');
+}
+
+function isLiveRouteSlug(value: string): boolean {
+  return LIVE_ROUTE_SLUG_RE.test(normalizeSlugPath(value));
+}
+
+async function getCachedEvalCatalog() {
+  const now = Date.now();
+  if (!evalCatalogCache || now - evalCatalogCache.loadedAt > EVAL_CATALOG_TTL_MS) {
+    evalCatalogCache = {
+      loadedAt: now,
+      data: await buildEvalCatalog(),
+    };
+  }
+  return evalCatalogCache.data;
+}
+
+async function resolveAssignmentLocation(
+  evalId: string,
+  requestedCourseId: string,
+  requestedPageSlug: string,
+): Promise<{ slug: string; courseId: string; catalogEntry: EvalCatalogEntry | null }> {
+  const normalizedRequestedCourseId = await canonicalizeCourseId(requestedCourseId);
+  const normalizedRequestedSlug = await canonicalizeCourseSlugPath(
+    normalizeSlugPath(requestedPageSlug),
+    normalizedRequestedCourseId,
+  );
+  const safeRequestedSlug = isLiveRouteSlug(normalizedRequestedSlug) ? '' : normalizedRequestedSlug;
+
+  const evalCatalog = await getCachedEvalCatalog();
+  const entries = evalCatalog.get(evalId) || [];
+  if (entries.length === 0) {
+    return {
+      slug: safeRequestedSlug,
+      courseId: normalizedRequestedCourseId,
+      catalogEntry: null,
+    };
+  }
+
+  const selected =
+    entries.find((entry) => {
+      const entryCourseId = cleanString(entry.courseId).toLowerCase();
+      return entryCourseId && entryCourseId === normalizedRequestedCourseId.toLowerCase();
+    }) || entries[0];
+
+  const catalogSlug = normalizeSlugPath(selected.entryId);
+  const catalogCourseId = await canonicalizeCourseId(
+    cleanString(selected.courseId) ||
+    cleanString(catalogSlug.split('/')[0]) ||
+    normalizedRequestedCourseId,
+  );
+
+  return {
+    slug: safeRequestedSlug || catalogSlug,
+    courseId: catalogCourseId,
+    catalogEntry: selected ?? null,
+  };
+}
+
+function valuesDiffer(left: unknown, right: unknown): boolean {
+  const normalize = (value: unknown): unknown => {
+    if (value instanceof Date) return value.toISOString();
+    return value ?? null;
+  };
+
+  const l = normalize(left);
+  const r = normalize(right);
+
+  if (typeof l === 'string' || typeof r === 'string') {
+    return String(l ?? '') !== String(r ?? '');
+  }
+
+  if (typeof l === 'number' || typeof r === 'number') {
+    const ln = Number(l ?? NaN);
+    const rn = Number(r ?? NaN);
+    if (Number.isNaN(ln) && Number.isNaN(rn)) return false;
+    return ln !== rn;
+  }
+
+  return JSON.stringify(l) !== JSON.stringify(r);
+}
+
+function extractColumnNameFromError(message: string): string {
+  if (!message) return '';
+
+  const patterns = [
+    /Could not find the '([^']+)' column/i,
+    /column "([^"]+)" of relation/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = message.match(pattern);
+    if (match?.[1]) return cleanString(match[1]);
+  }
+
+  return '';
+}
+
+async function updateAssignmentSafe(
+  supabase: ReturnType<typeof createClient>,
+  assignmentId: string,
+  payload: Record<string, unknown>,
+) {
+  let draft = { ...payload };
+  let attempts = 0;
+
+  while (Object.keys(draft).length > 0 && attempts < 12) {
+    attempts += 1;
+    const { error } = await supabase.from('Assignment').update(draft).eq('id', assignmentId);
+    if (!error) return;
+
+    const missingColumn = extractColumnNameFromError(String(error.message || ''));
+    if (missingColumn && Object.prototype.hasOwnProperty.call(draft, missingColumn)) {
+      delete draft[missingColumn];
+      continue;
+    }
+
+    // Retry once without JSON-ish fields if their type differs from the current schema.
+    if (Object.prototype.hasOwnProperty.call(draft, 'settings')) {
+      delete draft.settings;
+      continue;
+    }
+
+    throw error;
+  }
+}
+
+function buildAssignmentMetadataPayload(
+  evalId: string,
+  finalCourseId: string,
+  finalSlug: string,
+  catalogEntry: EvalCatalogEntry | null,
+  existingAssignment: Record<string, unknown> | null,
+): Record<string, unknown> {
+  if (!catalogEntry) return {};
+
+  const title = cleanString(catalogEntry.entryTitle || evalId);
+  const prompt = cleanString(catalogEntry.prompt);
+  const description = prompt || cleanString(catalogEntry.entryId);
+
+  const candidateFields: Record<string, unknown> = {
+    courseId: finalCourseId,
+    slug: finalSlug,
+    title,
+    description,
+    type: cleanString(catalogEntry.evalType || 'unknown'),
+    mode: cleanString(catalogEntry.mode || 'self'),
+    prompt,
+    points: Number(catalogEntry.points || 0) || 0,
+    lessonId: cleanString(catalogEntry.entryId),
+    sourcePath: cleanString(catalogEntry.sourcePath),
+    noteType: cleanString(catalogEntry.noteType),
+    noteTypeLabel: cleanString(catalogEntry.noteTypeLabel),
+    contentHash: cleanString(catalogEntry.contentHash),
+    contentVersion: cleanString(catalogEntry.contentVersion),
+    settings: {
+      evalId,
+      evalType: cleanString(catalogEntry.evalType || 'unknown'),
+      mode: cleanString(catalogEntry.mode || 'self'),
+      prompt,
+      options: Array.isArray(catalogEntry.options) ? catalogEntry.options : [],
+      sourceCollection: cleanString(catalogEntry.sourceCollection),
+      entryId: cleanString(catalogEntry.entryId),
+      entryTitle: title,
+      noteType: cleanString(catalogEntry.noteType),
+      noteTypeLabel: cleanString(catalogEntry.noteTypeLabel),
+      sourcePath: cleanString(catalogEntry.sourcePath),
+      contentHash: cleanString(catalogEntry.contentHash),
+      contentVersion: cleanString(catalogEntry.contentVersion),
+      evalSnapshot:
+        catalogEntry.evalSnapshot && typeof catalogEntry.evalSnapshot === 'object'
+          ? catalogEntry.evalSnapshot
+          : {},
+    },
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (!existingAssignment) return candidateFields;
+
+  const existingKeys = new Set(Object.keys(existingAssignment));
+  const updatePayload: Record<string, unknown> = {};
+  Object.entries(candidateFields).forEach(([key, value]) => {
+    if (!existingKeys.has(key)) return;
+    if (valuesDiffer(existingAssignment[key], value)) {
+      updatePayload[key] = value;
+    }
+  });
+
+  return updatePayload;
+}
+
+function asPayloadRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return { ...(value as Record<string, unknown>) };
+  }
+  return {};
+}
+
+function buildSubmissionPayloadWithAudit(
+  payload: Record<string, unknown>,
+  evalId: string,
+  assignmentId: string,
+  finalCourseId: string,
+  finalSlug: string,
+  catalogEntry: EvalCatalogEntry | null,
+) {
+  const nowIso = new Date().toISOString();
+  const basePayload = asPayloadRecord(payload);
+  const sourceSnapshot =
+    catalogEntry?.evalSnapshot && typeof catalogEntry.evalSnapshot === 'object'
+      ? catalogEntry.evalSnapshot
+      : null;
+
+  return {
+    ...basePayload,
+    _audit: {
+      evalId,
+      assignmentId,
+      courseId: finalCourseId,
+      pageSlug: finalSlug,
+      contentHash: cleanString(catalogEntry?.contentHash || ''),
+      contentVersion: cleanString(catalogEntry?.contentVersion || ''),
+      noteType: cleanString(catalogEntry?.noteType || ''),
+      noteTypeLabel: cleanString(catalogEntry?.noteTypeLabel || ''),
+      sourceCollection: cleanString(catalogEntry?.sourceCollection || ''),
+      sourcePath: cleanString(catalogEntry?.sourcePath || ''),
+      snapshot: sourceSnapshot,
+      syncedAt: nowIso,
+      submittedAt: nowIso,
+    },
+  };
+}
+
 export const POST: APIRoute = async ({ request, locals }) => {
   const session = (locals as any).session;
   const currentUser = session?.user;
@@ -43,8 +290,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
     const evalId = cleanString(body?.evalId);
     const answer = body?.answer;
     const isCorrect = typeof body?.isCorrect === 'boolean' ? body.isCorrect : undefined;
-    const courseId = cleanString(body?.courseId);
-    const pageSlug = cleanString(body?.pageSlug);
+    const requestedCourseId = await canonicalizeCourseId(cleanString(body?.courseId));
+    const requestedPageSlug = await canonicalizeCourseSlugPath(
+      normalizeSlugPath(body?.pageSlug),
+      requestedCourseId,
+    );
     const feedback = cleanString(body?.feedback);
     const score = normalizeScore(body?.score);
     const markAsGraded = Boolean(body?.markAsGraded) || score !== null;
@@ -135,19 +385,68 @@ export const POST: APIRoute = async ({ request, locals }) => {
     }
 
     // 3) Ensure assignment exists
+    const {
+      slug: catalogSlug,
+      courseId: catalogCourseId,
+      catalogEntry,
+    } = await resolveAssignmentLocation(
+      evalId,
+      requestedCourseId,
+      requestedPageSlug,
+    );
+
     const { data: assignment, error: assignmentFindError } = await supabase
       .from('Assignment')
-      .select('id, courseId')
+      .select('*')
       .eq('id', evalId)
       .maybeSingle();
 
     if (assignmentFindError) throw assignmentFindError;
 
-    const finalCourseId = courseId || assignment?.courseId || 'ejemplo-generative-art';
+    const assignmentCourseId = await canonicalizeCourseId(assignment?.courseId || '');
+    const finalCourseId =
+      assignmentCourseId ||
+      catalogCourseId ||
+      requestedCourseId ||
+      cleanString(catalogSlug.split('/')[0]) ||
+      'sin-curso';
+    const finalSlug = catalogSlug || `${finalCourseId}/assignment/${evalId}`;
+    const payloadWithAudit = buildSubmissionPayloadWithAudit(
+      payload,
+      evalId,
+      evalId,
+      finalCourseId,
+      finalSlug,
+      catalogEntry,
+    );
 
-    if (!assignment) {
-      const finalSlug = pageSlug || `${finalCourseId}/assignment/${evalId}`;
+    let assignmentRow: Record<string, unknown> | null = assignment || null;
 
+    if (assignmentRow) {
+      const assignmentSlug = normalizeSlugPath(String(assignmentRow.slug || ''));
+      const shouldUpdateSlug = !assignmentSlug || isLiveRouteSlug(assignmentSlug);
+      const shouldUpdateCourse =
+        !cleanString(assignmentRow.courseId) ||
+        cleanString(assignmentRow.courseId).toLowerCase() === 'ejemplo-generative-art';
+
+      if (shouldUpdateSlug || shouldUpdateCourse) {
+        const updatePayload: Record<string, unknown> = {};
+        if (shouldUpdateSlug) updatePayload.slug = finalSlug;
+        if (shouldUpdateCourse) updatePayload.courseId = finalCourseId;
+
+        if (Object.keys(updatePayload).length > 0) {
+          const { error: assignmentUpdateError } = await supabase
+            .from('Assignment')
+            .update(updatePayload)
+            .eq('id', evalId);
+
+          if (assignmentUpdateError) throw assignmentUpdateError;
+          assignmentRow = { ...assignmentRow, ...updatePayload };
+        }
+      }
+    }
+
+    if (!assignmentRow) {
       const assignmentBase = {
         id: evalId,
         courseId: finalCourseId,
@@ -173,6 +472,31 @@ export const POST: APIRoute = async ({ request, locals }) => {
           throw withWeight.error;
         }
       }
+
+      const { data: createdAssignment, error: createdAssignmentError } = await supabase
+        .from('Assignment')
+        .select('*')
+        .eq('id', evalId)
+        .maybeSingle();
+
+      if (createdAssignmentError) throw createdAssignmentError;
+      assignmentRow = createdAssignment || assignmentBase;
+    }
+
+    const metadataUpdate = buildAssignmentMetadataPayload(
+      evalId,
+      finalCourseId,
+      finalSlug,
+      catalogEntry,
+      assignmentRow,
+    );
+
+    if (Object.keys(metadataUpdate).length > 0) {
+      await updateAssignmentSafe(supabase, evalId, metadataUpdate);
+      assignmentRow = {
+        ...(assignmentRow || {}),
+        ...metadataUpdate,
+      };
     }
 
     let enrolledInCourse = false;
@@ -216,7 +540,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     const finalScore = score !== null ? score : fallbackBinaryScore;
 
     const baseUpdate: Record<string, unknown> = {
-      payload,
+      payload: payloadWithAudit,
       attempts: ((existing?.attempts as number) || 0) + 1,
       submittedAt: new Date(),
     };
@@ -247,7 +571,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       const insertPayload: Record<string, unknown> = {
         userId: targetUser.id,
         assignmentId: evalId,
-        payload,
+        payload: payloadWithAudit,
         attempts: 1,
         submittedAt: new Date(),
       };

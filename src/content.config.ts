@@ -2,8 +2,12 @@ import { defineCollection, z } from 'astro:content';
 import { glob } from 'astro/loaders';
 
 const content = defineCollection({
-	// Load all Markdown and MDX files from content directories (excluding blog and cursos)
-	loader: glob({ base: './src/content', pattern: '**/!(blog|cursos)/**/*.{md,mdx}' }),
+		// Load markdown from src/content excluding blog and cursos explicitly.
+		// Extglob-based exclusion was matching nested course paths unintentionally.
+		loader: glob({
+			base: './src/content',
+			pattern: ['**/*.{md,mdx}', '!blog/**', '!cursos/**'],
+		}),
 	// Schema for Obsidian-based content - very flexible to handle various YAML frontmatter
 	schema: z.object({
 		tag: z.string().or(z.array(z.string())).optional().nullable(),
@@ -38,6 +42,8 @@ const cursos = defineCollection({
 			instructors: z.union([z.string(), z.array(z.string())]).optional(),
 			// Academic year in bachelor context (e.g. "1er año", 2).
 			year: z.union([z.number(), z.string()]).optional(),
+			// Short visible code (e.g. "CIM1", "CAYC-06") used in header/filters.
+			code: z.string().optional(),
 			// Legacy compatibility while frontmatter migrates.
 			level: z.union([z.enum(['beginner', 'intermediate', 'advanced']), z.string()]).optional(),
 			duration: z.string().optional(),

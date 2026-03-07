@@ -1,0 +1,165 @@
+---
+type Props = {
+  studentId?: string;
+  courseId?: string;
+  courseIds?: string[];
+  pageSlug?: string;
+  hasClasstimeEval?: boolean;
+  classtimeEvalIds?: string[];
+};
+
+const {
+  studentId = '',
+  courseId = '',
+  courseIds = [],
+  pageSlug = '',
+  hasClasstimeEval = false,
+  classtimeEvalIds = [],
+} = Astro.props as Props;
+
+const serializedCourseIds = Array.isArray(courseIds) ? JSON.stringify(courseIds) : '[]';
+const serializedClasstimeEvalIds = Array.isArray(classtimeEvalIds)
+  ? JSON.stringify(classtimeEvalIds)
+  : '[]';
+---
+
+<div
+  id="live-interaction-beacon"
+  class="live-beacon"
+  data-student-id={studentId}
+  data-course-id={courseId}
+  data-course-ids={serializedCourseIds}
+  data-page-slug={pageSlug}
+  data-has-classtime={hasClasstimeEval ? 'true' : 'false'}
+  data-classtime-eval-ids={serializedClasstimeEvalIds}
+  hidden
+>
+  <button
+    type="button"
+    class="live-beacon-button"
+    data-live-beacon-button
+    aria-live="polite"
+    aria-label="Ir a interacción en vivo"
+  >
+    <span class="live-beacon-led" data-live-beacon-led aria-hidden="true"></span>
+    <span class="live-beacon-countdown" data-live-beacon-countdown hidden></span>
+    <span class="sr-only" data-live-beacon-label>Interacción en vivo activa</span>
+  </button>
+</div>
+
+<script>
+  import { mountLiveInteractionBeacon } from '../lib/live/beacon-client.mjs';
+
+  let teardown = null;
+
+  const mount = () => {
+    const root = document.getElementById('live-interaction-beacon');
+    if (!root) return;
+
+    if (typeof teardown === 'function') {
+      teardown();
+      teardown = null;
+    }
+
+    const nextTeardown = mountLiveInteractionBeacon(root);
+    teardown = typeof nextTeardown === 'function' ? nextTeardown : null;
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', mount, { once: true });
+  } else {
+    mount();
+  }
+  document.addEventListener('astro:page-load', mount);
+  window.addEventListener('beforeunload', () => {
+    if (typeof teardown === 'function') teardown();
+    teardown = null;
+  });
+</script>
+
+<style>
+  .live-beacon {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .live-beacon-button {
+    border: none;
+    background: transparent;
+    color: #fff;
+    border-radius: 999px;
+    padding: 0.12rem 0.18rem;
+    font: inherit;
+    font-size: 0.72rem;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .live-beacon.is-live .live-beacon-button {
+    animation: beacon-pulse 1.2s ease-in-out infinite;
+  }
+
+  .live-beacon.is-closing .live-beacon-button {
+    font-weight: 700;
+  }
+
+  .live-beacon.is-idle .live-beacon-button {
+    cursor: default;
+  }
+
+  .live-beacon-led {
+    width: 0.68rem;
+    height: 0.68rem;
+    border-radius: 999px;
+    background: #ff3030;
+    box-shadow: 0 0 0 0 rgba(255, 48, 48, 0.56);
+    flex: 0 0 auto;
+  }
+
+  .live-beacon-led.is-closing {
+    background: #ff5555;
+    box-shadow: 0 0 0 2px rgba(255, 85, 85, 0.36);
+  }
+
+  .live-beacon-led.is-idle {
+    background: #7c7c7c;
+    box-shadow: 0 0 0 1px rgba(192, 192, 192, 0.32);
+  }
+
+  .live-beacon-countdown {
+    min-width: 2.9rem;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: #ff8a80;
+    font-weight: 700;
+  }
+
+  @keyframes beacon-pulse {
+    0% {
+      transform: scale(1);
+      opacity: 1;
+    }
+    50% {
+      transform: scale(1.08);
+      opacity: 0.72;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .live-beacon.is-live .live-beacon-button {
+      animation: none;
+    }
+  }
+
+  :global(.dark) .live-beacon-button {
+    color: #f7f7f7;
+  }
+</style>

@@ -2,10 +2,7 @@
 import BaseHead from '../components/BaseHead.astro';
 import Footer from '../components/Footer.astro';
 import Header from '../components/Header.astro';
-import GraphModal from '../components/GraphModal.astro';
 
-import fs from 'node:fs';
-import path from 'node:path';
 import matter from 'gray-matter';
 
 import '../styles/theme.css';
@@ -24,21 +21,13 @@ function encodePath(p) {
 }
 
 // --- LÓGICA PÚBLICA DE CARGA DE DATOS ---
-// Escanear TODO el contenido de `src/content`
-const ROOT = path.resolve('src/content');
-const files = [];
-(function walk(dir) {
-  if (!fs.existsSync(dir)) return;
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    const p = path.join(dir, e.name);
-    if (e.isDirectory()) { 
-      walk(p);
-    }
-    else if (/\.(md|mdx)$/i.test(e.name)) {
-      files.push(p);
-    }
-  }
-})(ROOT); // Podríamos empezar a caminar desde carpetas de cursos específicos
+// Cargar TODO `src/content` con Vite glob para que HMR detecte cambios .md/.mdx en dev.
+const CONTENT_GLOB_PREFIX = '/src/content/';
+const rawContentFiles = import.meta.glob('/src/content/**/*.{md,mdx}', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+}) as Record<string, string>;
 
 // Helper to create clean slugs
 function createCleanSlug(filename) {
@@ -53,9 +42,11 @@ function createCleanSlug(filename) {
 
 // 3. Procesar solo los archivos a los que el usuario tiene acceso
 const entries = await Promise.all(
-  files.map(async (abs) => {
-    const rel = abs.slice(ROOT.length + 1);
-    const posix = rel.split(path.sep).join('/');
+  Object.entries(rawContentFiles).map(async ([filePath, raw]) => {
+    const rel = filePath.startsWith(CONTENT_GLOB_PREFIX)
+      ? filePath.slice(CONTENT_GLOB_PREFIX.length)
+      : filePath.replace(/^\/+/, '');
+    const posix = rel.split('\\').join('/');
     const fullSlug = posix.replace(/\.(md|mdx)$/i, '');
     const segs = fullSlug.split('/');
     const filename = segs[segs.length - 1];
@@ -63,7 +54,6 @@ const entries = await Promise.all(
     // Create clean slug from just the filename
     const slug = createCleanSlug(filename);
 
-    const raw = fs.readFileSync(abs, 'utf8');
     const fm = matter(raw);
 
     const hasDataview = raw.includes('```dataview');
@@ -212,7 +202,6 @@ const groupedEntries = validEntries.reduce((acc, entry) => {
     </style>
   </head>
   <body>
-    <GraphModal />
     <Header />
     <main class="wrap">
       <div class="page-header">
@@ -284,16 +273,6 @@ const groupedEntries = validEntries.reduce((acc, entry) => {
         };
       });
     })();
-  </script>
-  <script>
-    document.getElementById('graph-toggle')?.addEventListener('click', () => {
-      const event = new KeyboardEvent('keydown', {
-        key: 'g',
-        bubbles: true,
-        cancelable: true,
-      });
-      document.dispatchEvent(event);
-    });
   </script>
   <style>
     .page-header {

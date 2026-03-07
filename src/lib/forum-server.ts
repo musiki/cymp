@@ -88,12 +88,41 @@ export async function ensureDbUserFromSession(
 
   const { data: existing, error: existingError } = await supabase
     .from('User')
-    .select('id, email, name, role')
+    .select('id, email, name, role, image')
     .eq('email', email)
     .maybeSingle();
 
   if (existingError) throw existingError;
-  if (existing) return normalizeDbUser(existing);
+  if (existing) {
+    const sessionName = cleanString(session?.user?.name ?? '', 160);
+    const sessionImage = cleanString(session?.user?.image ?? '', 1024);
+
+    const nextName = sessionName || cleanString(existing.name ?? email, 160) || email;
+    const nextImage = sessionImage || existing.image || null;
+
+    const shouldUpdateName = Boolean(sessionName) && nextName !== (existing.name ?? '');
+    const shouldUpdateImage = Boolean(sessionImage) && nextImage !== (existing.image ?? null);
+
+    if (shouldUpdateName || shouldUpdateImage) {
+      const { error: updateError } = await supabase
+        .from('User')
+        .update({
+          name: shouldUpdateName ? nextName : existing.name,
+          image: shouldUpdateImage ? nextImage : existing.image,
+          updatedAt: new Date().toISOString(),
+        })
+        .eq('id', existing.id);
+
+      if (updateError) {
+        console.error('Failed to update session profile fields in User table:', updateError);
+      } else {
+        if (shouldUpdateName) existing.name = nextName;
+        if (shouldUpdateImage) existing.image = nextImage;
+      }
+    }
+
+    return normalizeDbUser(existing);
+  }
 
   const now = new Date().toISOString();
   const insertPayload = {
@@ -148,22 +177,12 @@ export async function getForumCourseAccess(
   user: ForumDbUser,
   courseId: string,
 ): Promise<ForumCourseAccess> {
-  const isTeacher = user.role === 'teacher';
+  const normalizedGlobalRole = String(user.role || '').trim().toLowerCase();
   const isPublic = await isPublicCourse(courseId);
-
-  if (isTeacher) {
-    return {
-      canRead: true,
-      canWrite: true,
-      isPublicCourse: isPublic,
-      isEnrolled: true,
-      isTeacher: true,
-    };
-  }
 
   const { data: enrollment, error: enrollmentError } = await supabase
     .from('Enrollment')
-    .select('id')
+    .select('id, roleInCourse')
     .eq('userId', user.id)
     .eq('courseId', courseId)
     .maybeSingle();
@@ -171,12 +190,16 @@ export async function getForumCourseAccess(
   if (enrollmentError) throw enrollmentError;
 
   const isEnrolled = Boolean(enrollment);
+  const isTeacherInCourse =
+    isEnrolled &&
+    (String((enrollment as any)?.roleInCourse || '').trim().toLowerCase() === 'teacher' ||
+      normalizedGlobalRole === 'teacher');
 
   return {
-    canRead: isEnrolled || isPublic,
+    canRead: isEnrolled,
     canWrite: isEnrolled,
     isPublicCourse: isPublic,
     isEnrolled,
-    isTeacher: false,
+    isTeacher: isTeacherInCourse,
   };
 }

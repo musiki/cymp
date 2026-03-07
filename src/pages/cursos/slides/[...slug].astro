@@ -1,0 +1,112 @@
+---
+export const prerender = false;
+
+import { getCollection, getEntry, render } from 'astro:content';
+import { createClient } from '@supabase/supabase-js';
+import RevealSlidesLayout from '../../../layouts/RevealSlidesLayout.astro';
+
+const rawSlug = Astro.params.slug;
+if (!rawSlug) return Astro.redirect('/cursos');
+
+const slug = rawSlug
+  .split('/')
+  .map((segment) => {
+    try {
+      return decodeURIComponent(segment);
+    } catch {
+      return segment;
+    }
+  })
+  .join('/');
+
+const parts = slug.split('/');
+const courseSlug = parts[0];
+const isCourseForumPage = parts.length === 2 && parts[1] === 'foro';
+
+const courseIndex = await getEntry('cursos', `${courseSlug}/_index`);
+if (!courseIndex) return Astro.redirect('/cursos');
+
+const session = (Astro.locals as any).session;
+const hasAccess = courseIndex.data.public || session;
+if (!hasAccess) return Astro.redirect('/login');
+
+const supabase = createClient(import.meta.env.SUPABASE_URL, import.meta.env.SUPABASE_KEY);
+const normalizeRole = (value: unknown) => String(value || '').trim().toLowerCase();
+
+let sessionEnrollmentRole = '';
+if (session?.user?.email) {
+  const { data: resolvedUser, error: resolvedUserError } = await supabase
+    .from('User')
+    .select('id, email')
+    .eq('email', String(session.user.email).trim())
+    .maybeSingle();
+
+  if (resolvedUserError) {
+    console.error('Error resolving session user for slides page:', resolvedUserError);
+  } else if (resolvedUser) {
+    const { data: enrollment, error: enrollmentError } = await supabase
+      .from('Enrollment')
+      .select('roleInCourse')
+      .eq('userId', resolvedUser.id)
+      .eq('courseId', courseSlug)
+      .maybeSingle();
+
+    if (enrollmentError) {
+      console.error('Error resolving enrollment role for slides page:', enrollmentError);
+    } else {
+      sessionEnrollmentRole = String(enrollment?.roleInCourse || '').trim();
+    }
+  }
+}
+
+const canManageLiveInteractions = normalizeRole(sessionEnrollmentRole) === 'teacher';
+const hasCourseEnrollment = Boolean(sessionEnrollmentRole);
+
+const allLessons = (await getCollection('cursos'))
+  .filter((entry) => entry.id.startsWith(`${courseSlug}/`) && !entry.id.endsWith('_index'))
+  .sort((a, b) => (a.data.order || 0) - (b.data.order || 0));
+
+let currentEntry;
+if (parts.length === 1 || isCourseForumPage) {
+  currentEntry = courseIndex;
+} else {
+  const lessonPath = parts.slice(1).join('/');
+  currentEntry = allLessons.find((lesson) => lesson.id === `${courseSlug}/${lessonPath}`);
+  if (!currentEntry) {
+    return Astro.redirect(`/cursos/${encodeURIComponent(courseSlug)}`);
+  }
+
+  const visibility = currentEntry.data.visibility;
+  if (visibility === 'enrolled-only') {
+    if (!session) {
+      return Astro.redirect(`/login?redirect=/cursos/${encodeURIComponent(slug)}`);
+    }
+
+    if (!canManageLiveInteractions && !hasCourseEnrollment) {
+      return Astro.redirect(`/cursos/${encodeURIComponent(courseSlug)}`);
+    }
+  }
+}
+
+const { Content } = await render(currentEntry);
+
+const title = currentEntry.data.title || courseIndex.data.title || 'Slides';
+const description = currentEntry.data.description || courseIndex.data.description || '';
+const defaultSlideTheme = '/inc/reveal/themes/zztt-reveal.css';
+const slideThemeFromData =
+  (currentEntry.data as Record<string, unknown>).slideTheme ||
+  (currentEntry.data as Record<string, unknown>).revealTheme;
+const slideTheme =
+  typeof slideThemeFromData === 'string' && slideThemeFromData.trim()
+    ? slideThemeFromData.trim()
+    : defaultSlideTheme;
+---
+
+<RevealSlidesLayout
+  title={title}
+  description={description}
+  slideTheme={slideTheme}
+  canManageLive={canManageLiveInteractions}
+>
+  <Content />
+</RevealSlidesLayout>

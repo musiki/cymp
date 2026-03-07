@@ -1,16 +1,21 @@
 ---
 type: course
-title: "Instrumento I acústica y organología"
-description: "introducción a los instrumentos musicales"
-instructor: 
-- Luciano Azzigotti
-- Agustín Salzano
-- Emanuel Juliá
-year: "1er año"
-duration: "14 semanas"
+title: Instrumento I acústica y organología
+description: introducción a los instrumentos musicales
+instructor:
+  - Luciano Azzigotti
+  - Agustín Salzano
+  - Emanuel Juliá
+year: 1
+duration: 14 semanas
 public: false
-coverImage: "https://i.imgur.com/dZ0GlW1.png"
-tags: ["instrumentos", "acústica", "organología", "cognición digital musical"]
+coverImage: https://i.imgur.com/dZ0GlW1.png
+tags:
+  - instrumentos
+  - acústica
+  - organología
+  - cognición-digital-musical
+id: i1
 ---
 
  <img src="https://i.imgur.com/3dKJzNX.png" width="140px" height="40px" alt="GitHub Logo">

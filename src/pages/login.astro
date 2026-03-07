@@ -3,6 +3,24 @@ import BaseHead from "../components/BaseHead.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
 import { SignIn } from "auth-astro/components";
+
+const session = (Astro.locals as any).session;
+
+const toSafeRedirect = (value: unknown): string => {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (!text) return "";
+    if (!text.startsWith("/") || text.startsWith("//")) return "";
+    if (text.startsWith("/login")) return "";
+    if (text.startsWith("/api/auth")) return "";
+    return text;
+};
+
+const requestedRedirect = toSafeRedirect(Astro.url.searchParams.get("redirect"));
+const callbackPath = requestedRedirect || "/dashboard";
+
+if (session?.user?.email) {
+    return Astro.redirect(callbackPath);
+}
 ---
 <html lang="es">
 <head>
@@ -39,7 +57,7 @@ import { SignIn } from "auth-astro/components";
     <main class="wrap">
         <h1>Iniciar Sesión</h1>
         <div class="provider-login">
-            <SignIn provider="google">Continuar con Google</SignIn>
+            <SignIn provider="google" options={{ callbackUrl: callbackPath }}>Continuar con Google</SignIn>
         </div>
     </main>
     <Footer />

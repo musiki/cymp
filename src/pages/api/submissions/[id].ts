@@ -19,7 +19,7 @@ export const DELETE: APIRoute = async ({ params, locals }) => {
   try {
     const { data: user, error: userError } = await supabase
       .from('User')
-      .select('id')
+      .select('id, role')
       .eq('email', currentUser.email)
       .single();
 
@@ -27,22 +27,35 @@ export const DELETE: APIRoute = async ({ params, locals }) => {
       return json({ error: 'User not found' }, 404);
     }
 
-    const { data: submission, error: submissionError } = await supabase
-      .from('Submission')
-      .select('id')
-      .eq('id', submissionId)
-      .eq('userId', user.id)
-      .single();
+    const isTeacher = String(user.role || '').trim().toLowerCase() === 'teacher';
+    let deleteQuery = supabase.from('Submission').delete().eq('id', submissionId);
 
-    if (submissionError || !submission) {
-      return json({ error: 'Submission not found' }, 404);
+    if (!isTeacher) {
+      const { data: submission, error: submissionError } = await supabase
+        .from('Submission')
+        .select('id')
+        .eq('id', submissionId)
+        .eq('userId', user.id)
+        .maybeSingle();
+
+      if (submissionError || !submission) {
+        return json({ error: 'Submission not found' }, 404);
+      }
+
+      deleteQuery = deleteQuery.eq('userId', user.id);
+    } else {
+      const { data: submission, error: submissionError } = await supabase
+        .from('Submission')
+        .select('id')
+        .eq('id', submissionId)
+        .maybeSingle();
+
+      if (submissionError || !submission) {
+        return json({ error: 'Submission not found' }, 404);
+      }
     }
 
-    const { error: deleteError } = await supabase
-      .from('Submission')
-      .delete()
-      .eq('id', submissionId)
-      .eq('userId', user.id);
+    const { error: deleteError } = await deleteQuery;
 
     if (deleteError) throw deleteError;
 

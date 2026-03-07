@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
+    "test": "node --test \"src/lib/live/*.test.mjs\"",
     "preflight": "bash scripts/preflight.sh",
     "content:pull": "node scripts/pull-sources.mjs",
     "content:assemble:dry": "node scripts/assemble-content.mjs",
