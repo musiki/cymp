@@ -3,6 +3,7 @@ import { getCollection } from 'astro:content';
 type CourseAliasCache = {
   loadedAt: number;
   aliasToCanonical: Map<string, string>;
+  canonicalToAliases: Map<string, string[]>;
 };
 
 const CACHE_TTL_MS = 60_000;
@@ -19,13 +20,33 @@ const toAliasSlug = (value: unknown) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 
-const ensureAliasMap = async () => {
+const appendAlias = (
+  canonicalToAliases: Map<string, string[]>,
+  canonicalId: string,
+  alias: unknown,
+) => {
+  const normalizedAlias = normalizeText(alias);
+  if (!normalizedAlias) return;
+
+  const aliases = canonicalToAliases.get(canonicalId) || [];
+  const pushIfMissing = (value: string) => {
+    if (!value) return;
+    if (!aliases.includes(value)) aliases.push(value);
+  };
+
+  pushIfMissing(normalizedAlias);
+  pushIfMissing(toAliasSlug(normalizedAlias));
+  canonicalToAliases.set(canonicalId, aliases);
+};
+
+const ensureAliasCache = async () => {
   const now = Date.now();
   if (cache && now - cache.loadedAt < CACHE_TTL_MS) {
-    return cache.aliasToCanonical;
+    return cache;
   }
 
   const aliasToCanonical = new Map<string, string>();
+  const canonicalToAliases = new Map<string, string[]>();
   const courses = await getCollection('cursos');
 
   for (const course of courses) {
@@ -43,15 +64,17 @@ const ensureAliasMap = async () => {
       aliasToCanonical.set(normalizeKey(normalizedAlias), canonicalId);
       const slugAlias = toAliasSlug(normalizedAlias);
       if (slugAlias) aliasToCanonical.set(slugAlias, canonicalId);
+      appendAlias(canonicalToAliases, canonicalId, normalizedAlias);
     }
   }
 
   cache = {
     loadedAt: now,
     aliasToCanonical,
+    canonicalToAliases,
   };
 
-  return aliasToCanonical;
+  return cache;
 };
 
 export async function canonicalizeCourseId(value: unknown): Promise<string> {
@@ -65,12 +88,33 @@ export async function canonicalizeCourseId(value: unknown): Promise<string> {
     decoded = raw;
   }
 
-  const aliasMap = await ensureAliasMap();
+  const { aliasToCanonical } = await ensureAliasCache();
   return (
-    aliasMap.get(normalizeKey(decoded))
-    || aliasMap.get(toAliasSlug(decoded))
+    aliasToCanonical.get(normalizeKey(decoded))
+    || aliasToCanonical.get(toAliasSlug(decoded))
     || decoded
   );
+}
+
+export async function getCourseAliases(value: unknown): Promise<string[]> {
+  const raw = normalizeText(value);
+  if (!raw) return [];
+
+  let decoded = raw;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    decoded = raw;
+  }
+
+  const { aliasToCanonical, canonicalToAliases } = await ensureAliasCache();
+  const canonicalId =
+    aliasToCanonical.get(normalizeKey(decoded))
+    || aliasToCanonical.get(toAliasSlug(decoded))
+    || decoded;
+
+  const aliases = canonicalToAliases.get(canonicalId) || [canonicalId];
+  return Array.from(new Set([decoded, canonicalId, ...aliases].filter(Boolean)));
 }
 
 export async function canonicalizeCourseSlugPath(

@@ -670,6 +670,15 @@ const availableYears = (() => {
     yearSet.add(getSubmissionYear(submission));
   });
 
+  if (isTeacher) {
+    (allLiveClassSessions || []).forEach((session: any) => {
+      if (!isTeacherOwnedLiveSession(session)) return;
+      const sessionCourseId = getLiveRecordCourseId(session);
+      if (activeCourseId && sessionCourseId !== activeCourseId) return;
+      yearSet.add(getLiveSessionYear(session));
+    });
+  }
+
   const years = Array.from(yearSet)
     .filter((year) => /^\d{4}$/.test(String(year || '')))
     .sort((left, right) => Number(right) - Number(left));

@@ -1,7 +1,7 @@
 import type { Session } from '@auth/core/types';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { getEntry } from 'astro:content';
-import { canonicalizeCourseId } from './course-alias';
+import { canonicalizeCourseId, getCourseAliases } from './course-alias';
 
 export type ForumDbUser = {
   id: string;
@@ -180,19 +180,24 @@ export async function getForumCourseAccess(
   courseId: string,
 ): Promise<ForumCourseAccess> {
   const normalizedCourseId = await canonicalizeCourseId(courseId);
+  const courseAliases = await getCourseAliases(normalizedCourseId || courseId);
   const normalizedGlobalRole = String(user.role || '').trim().toLowerCase();
   const isPublic = await isPublicCourse(normalizedCourseId);
 
-  const { data: enrollment, error: enrollmentError } = await supabase
+  const { data: enrollments, error: enrollmentError } = await supabase
     .from('Enrollment')
-    .select('id, roleInCourse')
+    .select('id, roleInCourse, courseId')
     .eq('userId', user.id)
-    .eq('courseId', normalizedCourseId)
-    .maybeSingle();
+    .in('courseId', courseAliases.length > 0 ? courseAliases : [normalizedCourseId || courseId]);
 
   if (enrollmentError) throw enrollmentError;
 
-  const isEnrolled = Boolean(enrollment);
+  const matchingEnrollments = Array.isArray(enrollments) ? enrollments : [];
+  const enrollment =
+    matchingEnrollments.find(
+      (row: any) => String(row?.roleInCourse || '').trim().toLowerCase() === 'teacher',
+    ) || matchingEnrollments[0] || null;
+  const isEnrolled = matchingEnrollments.length > 0;
   const isTeacherInCourse =
     isEnrolled &&
     (String((enrollment as any)?.roleInCourse || '').trim().toLowerCase() === 'teacher' ||

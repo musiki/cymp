@@ -10,7 +10,7 @@ import {
   ensureDbUserFromSession,
   getForumCourseAccess,
 } from '../lib/forum-server';
-import { canonicalizeCourseId } from '../lib/course-alias';
+import { canonicalizeCourseId, getCourseAliases } from '../lib/course-alias';
 
 type CourseMeta = {
   courseId: string;
@@ -102,6 +102,7 @@ let activeForumDescription = 'Foro general del curso.';
 
 if (activeCourse) {
   const courseId = activeCourse.courseId;
+  const courseAliases = await getCourseAliases(courseId);
   const buildForumHref = (view: 'board' | 'lesson', scope: string) =>
     `/foro?course=${encodeURIComponent(courseId)}&view=${encodeURIComponent(view)}&scope=${encodeURIComponent(scope)}`;
   const lessonEntries = allCourseEntries
@@ -126,7 +127,7 @@ if (activeCourse) {
     const { data: boardData, error: boardError } = await supabase
       .from('ForumBoard')
       .select('slug, title, isDefault, isArchived')
-      .eq('courseId', courseId)
+      .in('courseId', courseAliases.length > 0 ? courseAliases : [courseId])
       .eq('isArchived', false)
       .order('isDefault', { ascending: false })
       .order('title', { ascending: true });
@@ -137,7 +138,7 @@ if (activeCourse) {
     const { data: threadData, error: threadError } = await supabase
       .from('ForumThread')
       .select('id, lessonSlug, createdAt, updatedAt')
-      .eq('courseId', courseId)
+      .in('courseId', courseAliases.length > 0 ? courseAliases : [courseId])
       .limit(2000);
 
     if (threadError) throw threadError;

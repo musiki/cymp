@@ -2,9 +2,9 @@
 export const prerender = false;
 
 import { getCollection, getEntry, render } from 'astro:content';
-import { createClient } from '@supabase/supabase-js';
 import RevealSlidesLayout from '../../../layouts/RevealSlidesLayout.astro';
 import { canonicalizeCourseId } from '../../../lib/course-alias';
+import { resolveLiveManageAccess } from '../../../lib/live/access';
 import {
   buildCourseHref,
   buildCourseLessonPathIndex,
@@ -48,36 +48,9 @@ const session = (Astro.locals as any).session;
 const hasAccess = courseIndex.data.public || session;
 if (!hasAccess) return Astro.redirect('/login');
 
-const supabase = createClient(import.meta.env.SUPABASE_URL, import.meta.env.SUPABASE_KEY);
-const normalizeRole = (value: unknown) => String(value || '').trim().toLowerCase();
-
-let sessionEnrollmentRole = '';
-if (session?.user?.email) {
-  const { data: resolvedUser, error: resolvedUserError } = await supabase
-    .from('User')
-    .select('id, email')
-    .eq('email', String(session.user.email).trim())
-    .maybeSingle();
-
-  if (resolvedUserError) {
-    console.error('Error resolving session user for slides page:', resolvedUserError);
-  } else if (resolvedUser) {
-    const { data: enrollment, error: enrollmentError } = await supabase
-      .from('Enrollment')
-      .select('roleInCourse')
-      .eq('userId', resolvedUser.id)
-      .eq('courseId', courseSlug)
-      .maybeSingle();
-
-    if (enrollmentError) {
-      console.error('Error resolving enrollment role for slides page:', enrollmentError);
-    } else {
-      sessionEnrollmentRole = String(enrollment?.roleInCourse || '').trim();
-    }
-  }
-}
-
-const canManageLiveInteractions = normalizeRole(sessionEnrollmentRole) === 'teacher';
+const liveAccess = await resolveLiveManageAccess(session, canonicalCourseId || requestedCoursePathSegment);
+const sessionEnrollmentRole = String(liveAccess.enrollmentRole || '').trim();
+const canManageLiveInteractions = liveAccess.canManage;
 const hasCourseEnrollment = Boolean(sessionEnrollmentRole);
 
 const allLessons = (await getCollection('cursos'))

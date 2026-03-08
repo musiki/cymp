@@ -1,6 +1,7 @@
 import type { Session } from '@auth/core/types';
 import { getCollection } from 'astro:content';
 import { createClient } from '@supabase/supabase-js';
+import { canonicalizeCourseId } from '../course-alias';
 import { buildCourseLessonPathIndex, buildCourseSlideLessonHref } from '../course-routing';
 
 export type RoomPresentationOption = {
@@ -66,7 +67,9 @@ export const listRoomPresentationOptions = async ({
             .eq('userId', userId);
 
           for (const enrollment of Array.isArray(enrollments) ? enrollments : []) {
-            const courseId = normalizeText((enrollment as { courseId?: string | null }).courseId);
+            const courseId = await canonicalizeCourseId(
+              normalizeText((enrollment as { courseId?: string | null }).courseId),
+            );
             if (courseId) accessibleCourseIds.add(courseId);
           }
         }

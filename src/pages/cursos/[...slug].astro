@@ -6,8 +6,9 @@ import BaseHead from '../../components/BaseHead.astro';
 import Header from '../../components/Header.astro';
 import Footer from '../../components/Footer.astro';
 import { createClient } from '@supabase/supabase-js';
-import { canonicalizeCourseId } from '../../lib/course-alias';
+import { canonicalizeCourseId, getCourseAliases } from '../../lib/course-alias';
 import { createSupabaseServerClient } from '../../lib/forum-server';
+import { resolveLiveManageAccess } from '../../lib/live/access';
 import {
   buildCourseHref,
   buildCourseLessonHref,
@@ -57,39 +58,13 @@ if (!session && !isPublicCourse) return Astro.redirect(`/login?redirect=/cursos/
 const supabase = createClient(import.meta.env.SUPABASE_URL, import.meta.env.SUPABASE_KEY);
 const normalizeRole = (value: unknown) => String(value || '').trim().toLowerCase();
 const normalizeForumBoardSlug = (value: unknown) => String(value || '').trim().toLowerCase() || 'general';
-
-let sessionDbUser: any = null;
-let sessionEnrollmentRole = '';
-if (session?.user?.email) {
-  const { data: resolvedUser, error: resolvedUserError } = await supabase
-    .from('User')
-    .select('id, email, role')
-    .eq('email', String(session.user.email).trim())
-    .maybeSingle();
-
-  if (resolvedUserError) {
-    console.error('Error resolving session user for course page:', resolvedUserError);
-  } else if (resolvedUser) {
-    sessionDbUser = resolvedUser;
-    const { data: enrollment, error: enrollmentError } = await supabase
-      .from('Enrollment')
-      .select('roleInCourse')
-      .eq('userId', resolvedUser.id)
-      .eq('courseId', canonicalCourseId)
-      .maybeSingle();
-
-    if (enrollmentError) {
-      console.error('Error resolving enrollment role for course page:', enrollmentError);
-    } else {
-      sessionEnrollmentRole = String(enrollment?.roleInCourse || '').trim();
-    }
-  }
-}
-
-const canManageLiveInteractions = normalizeRole(sessionEnrollmentRole) === 'teacher';
+const courseIdAliases = await getCourseAliases(canonicalCourseId || requestedCoursePathSegment);
+const liveAccess = await resolveLiveManageAccess(session, canonicalCourseId || requestedCoursePathSegment);
+const sessionEnrollmentRole = String(liveAccess.enrollmentRole || '').trim();
+const canManageLiveInteractions = liveAccess.canManage || normalizeRole(sessionEnrollmentRole) === 'teacher';
 const hasCourseEnrollment = Boolean(sessionEnrollmentRole);
 
-if (session && !hasCourseEnrollment) {
+if (session && !hasCourseEnrollment && !canManageLiveInteractions) {
   return Astro.redirect('/cursos');
 }
 
@@ -190,11 +165,10 @@ let initialCourseForumBoards: Array<{ slug: string; title: string; description: 
 if (hasSessionUser && (canonicalCourseId || courseSlug)) {
   try {
     const forumSupabase = createSupabaseServerClient({ requireServiceRole: true });
-    const forumCourseId = canonicalCourseId || courseSlug;
     const { data: rawBoards, error: rawBoardsError } = await forumSupabase
       .from('ForumBoard')
       .select('slug, title, description, isDefault, isArchived')
-      .eq('courseId', forumCourseId)
+      .in('courseId', courseIdAliases.length > 0 ? courseIdAliases : [canonicalCourseId || courseSlug])
       .eq('isArchived', false)
       .order('isDefault', { ascending: false })
       .order('title', { ascending: true });
@@ -1585,6 +1559,9 @@ if (hasSessionUser && (canonicalCourseId || courseSlug)) {
       data-left-open="true"
       data-right-open={isLessonPage ? 'true' : 'false'}
       data-has-right-sidebar={isLessonPage ? 'true' : 'false'}
+      data-can-manage-live-interactions={canManageLiveInteractions ? 'true' : 'false'}
+      data-live-course-id={canonicalCourseId || courseSlug}
+      data-live-page-slug={livePageSlug}
     >
       <button
         type="button"
@@ -2042,16 +2019,23 @@ if (hasSessionUser && (canonicalCourseId || courseSlug)) {
       document.addEventListener('astro:page-load', mountCourseLayout);
     </script>
 
-    <script
-      type="module"
-      define:vars={{
-        canManageLiveInteractions,
-        canonicalLiveCourseId: canonicalCourseId || courseSlug,
-        canonicalLivePageSlug: livePageSlug,
-      }}
-    >
+    <script type="module">
       import { subscribeToLive } from '../../lib/live/client.mjs';
       import { formatCountdown, getRemainingMs } from '../../lib/live/countdown.mjs';
+
+      const courseLayoutRoot = document.querySelector('[data-course-layout-root]');
+      const canManageLiveInteractions =
+        courseLayoutRoot instanceof HTMLElement
+          ? courseLayoutRoot.dataset.canManageLiveInteractions === 'true'
+          : false;
+      const canonicalLiveCourseId =
+        courseLayoutRoot instanceof HTMLElement
+          ? String(courseLayoutRoot.dataset.liveCourseId || '').trim()
+          : '';
+      const canonicalLivePageSlug =
+        courseLayoutRoot instanceof HTMLElement
+          ? String(courseLayoutRoot.dataset.livePageSlug || '').trim()
+          : '';
 
       let userSubmissions = {};
       let hasEvalBlocks = false;

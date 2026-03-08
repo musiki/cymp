@@ -7,7 +7,7 @@ import {
   getForumCourseAccess,
   json,
 } from '../../../lib/forum-server';
-import { canonicalizeCourseId } from '../../../lib/course-alias';
+import { canonicalizeCourseId, getCourseAliases } from '../../../lib/course-alias';
 
 const BOARD_TITLE_MAX = 90;
 const BOARD_DESCRIPTION_MAX = 260;
@@ -53,12 +53,13 @@ function slugifyBoard(value: string): string {
 async function ensureDefaultBoard(
   supabase: ReturnType<typeof createSupabaseServerClient>,
   courseId: string,
+  courseAliases: string[],
   createdByUserId: string,
 ): Promise<void> {
   const { data: existingDefault, error: existingError } = await supabase
     .from('ForumBoard')
     .select('id')
-    .eq('courseId', courseId)
+    .in('courseId', courseAliases.length > 0 ? courseAliases : [courseId])
     .eq('slug', 'general')
     .eq('isArchived', false)
     .maybeSingle();
@@ -91,11 +92,12 @@ async function ensureDefaultBoard(
 async function listBoards(
   supabase: ReturnType<typeof createSupabaseServerClient>,
   courseId: string,
+  courseAliases: string[],
 ): Promise<BoardRow[]> {
   const { data: boards, error: boardsError } = await supabase
     .from('ForumBoard')
     .select('id, courseId, slug, title, description, isDefault, isArchived, createdAt, updatedAt')
-    .eq('courseId', courseId)
+    .in('courseId', courseAliases.length > 0 ? courseAliases : [courseId])
     .eq('isArchived', false)
     .order('isDefault', { ascending: false })
     .order('title', { ascending: true });
@@ -113,6 +115,7 @@ export const GET: APIRoute = async ({ request, locals }) => {
   const url = new URL(request.url);
   const courseId = await canonicalizeCourseId(cleanString(url.searchParams.get('courseId'), 120));
   if (!courseId) return json({ error: 'courseId is required' }, 400);
+  const courseAliases = await getCourseAliases(courseId);
 
   const supabase = createSupabaseServerClient({ requireServiceRole: true });
 
@@ -125,8 +128,8 @@ export const GET: APIRoute = async ({ request, locals }) => {
       return json({ error: 'Forbidden' }, 403);
     }
 
-    await ensureDefaultBoard(supabase, courseId, dbUser.id);
-    const boards = await listBoards(supabase, courseId);
+    await ensureDefaultBoard(supabase, courseId, courseAliases, dbUser.id);
+    const boards = await listBoards(supabase, courseId, courseAliases);
 
     return json(
       {
@@ -160,6 +163,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const providedSlug = cleanString(body?.slug, BOARD_SLUG_MAX);
 
   if (!courseId) return json({ error: 'courseId is required' }, 400);
+  const courseAliases = await getCourseAliases(courseId);
   if (title.length < 3) return json({ error: 'Title must be at least 3 characters' }, 400);
 
   const slugBase = providedSlug || title;
@@ -180,7 +184,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       return json({ error: 'Only teachers can create alternative forums' }, 403);
     }
 
-    await ensureDefaultBoard(supabase, courseId, dbUser.id);
+    await ensureDefaultBoard(supabase, courseId, courseAliases, dbUser.id);
 
     const now = new Date().toISOString();
     const insertPayload = {

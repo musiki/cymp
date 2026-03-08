@@ -8,7 +8,7 @@ import {
   getForumCourseAccess,
   json,
 } from '../../../lib/forum-server';
-import { canonicalizeCourseId } from '../../../lib/course-alias';
+import { canonicalizeCourseId, getCourseAliases } from '../../../lib/course-alias';
 
 const THREAD_TITLE_MAX = 140;
 const THREAD_BODY_MAX = 4000;
@@ -82,6 +82,7 @@ function resolveForumScopeKey(params: { lessonSlug: string; boardSlug: string })
 async function ensureBoardExists(
   supabase: SupabaseClient,
   courseId: string,
+  courseAliases: string[],
   boardSlug: string,
 ): Promise<boolean> {
   const normalized = normalizeBoardSlug(boardSlug);
@@ -90,7 +91,7 @@ async function ensureBoardExists(
   const { data: board, error: boardError } = await supabase
     .from('ForumBoard')
     .select('id')
-    .eq('courseId', courseId)
+    .in('courseId', courseAliases.length > 0 ? courseAliases : [courseId])
     .eq('slug', normalized)
     .eq('isArchived', false)
     .maybeSingle();
@@ -121,6 +122,7 @@ export const GET: APIRoute = async ({ request, locals }) => {
 
   const url = new URL(request.url);
   const courseId = await canonicalizeCourseId(cleanString(url.searchParams.get('courseId'), 120));
+  const courseAliases = await getCourseAliases(courseId);
   const lessonSlug = cleanString(url.searchParams.get('lessonSlug'), 240);
   const boardSlug = cleanString(url.searchParams.get('boardSlug'), 120);
 
@@ -146,7 +148,7 @@ export const GET: APIRoute = async ({ request, locals }) => {
     }
 
     if (boardSlug) {
-      const exists = await ensureBoardExists(supabase, courseId, boardSlug);
+      const exists = await ensureBoardExists(supabase, courseId, courseAliases, boardSlug);
       if (!exists) return json({ error: 'Board not found' }, 404);
     }
 
@@ -155,7 +157,7 @@ export const GET: APIRoute = async ({ request, locals }) => {
     const { data: threadsRaw, error: threadsError } = await supabase
       .from('ForumThread')
       .select('id, title, createdByUserId, createdAt, updatedAt, isPinned, isLocked')
-      .eq('courseId', courseId)
+      .in('courseId', courseAliases.length > 0 ? courseAliases : [courseId])
       .eq('lessonSlug', forumScopeKey)
       .order('isPinned', { ascending: false })
       .order('updatedAt', { ascending: false })
@@ -260,6 +262,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   }
 
   const courseId = await canonicalizeCourseId(cleanString(body?.courseId, 120));
+  const courseAliases = await getCourseAliases(courseId);
   const lessonSlug = cleanString(body?.lessonSlug, 240);
   const boardSlug = cleanString(body?.boardSlug, 120);
   const title = cleanString(body?.title, THREAD_TITLE_MAX);
@@ -293,7 +296,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     }
 
     if (boardSlug) {
-      const exists = await ensureBoardExists(supabase, courseId, boardSlug);
+      const exists = await ensureBoardExists(supabase, courseId, courseAliases, boardSlug);
       if (!exists) return json({ error: 'Board not found' }, 404);
     }
 
