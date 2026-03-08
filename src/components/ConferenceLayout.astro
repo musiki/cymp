@@ -50,6 +50,7 @@ if (
   data-conference-root
   data-livekit-url={livekitUrl}
   data-course-id={courseId}
+  data-sidebar-collapsed="false"
 >
   <section class="conference-stage-frame">
     <section class="conference-stage" data-stage data-layout={defaultLayout}>
@@ -147,7 +148,24 @@ if (
       </section>
 
       <section class="conference-sidebar-section">
-        <div class="conference-sidebar-heading">CHAT</div>
+        <div class="conference-sidebar-heading conference-sidebar-heading--chat">
+          <span>CHAT</span>
+          <button
+            type="button"
+            class="conference-hand-button"
+            data-action="raise-hand"
+            aria-label="Levantar la mano"
+            title="Levantar la mano (M)"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" class="conference-icon">
+              <path
+                d="M8.2 11.2V5.9a1.2 1.2 0 1 1 2.4 0v4.3h.8V4.8a1.2 1.2 0 1 1 2.4 0v5.4h.8V6.1a1.2 1.2 0 1 1 2.4 0v5.3h.8V8.3a1.2 1.2 0 1 1 2.4 0v6.2c0 3.3-2.7 6-6 6h-1.4c-1.8 0-3.5-.8-4.6-2.2L5 14.8a1.5 1.5 0 0 1 2.4-1.8l.8 1.1V11.2Z"
+                fill="currentColor"
+              />
+            </svg>
+            <span class="conference-sr-only">Raise hand</span>
+          </button>
+        </div>
         <div class="conference-chat">
           <ul class="conference-chat-list" data-chat-list>
             <li class="conference-chat-empty">No hay mensajes todavia.</li>
@@ -189,6 +207,22 @@ if (
       </section>
     </div>
   </aside>
+
+  <button
+    type="button"
+    class="conference-sidebar-toggle"
+    data-action="sidebar-toggle"
+    aria-label="Plegar sidebar"
+    title="Plegar sidebar (Cmd/Ctrl + Shift + /)"
+  >
+    <svg viewBox="0 0 24 24" aria-hidden="true" class="conference-icon">
+      <path
+        d="M15.4 6.6 10 12l5.4 5.4-1.4 1.4L7.2 12l6.8-6.8 1.4 1.4Z"
+        fill="currentColor"
+      />
+    </svg>
+    <span class="conference-sr-only">Toggle sidebar</span>
+  </button>
 
   <footer class="conference-bottombar">
     <div class="conference-bar-group conference-bar-group--session">
@@ -353,6 +387,7 @@ if (
     <article class="conference-tile conference-tile--participant">
       <div class="conference-tile-media" data-card-media></div>
       <div class="conference-empty conference-empty--tile" data-card-placeholder></div>
+      <span class="conference-tile-hand" data-card-hand hidden>✋</span>
       <footer class="conference-tile-meta">
         <strong data-card-name>Participant</strong>
       </footer>
@@ -438,6 +473,7 @@ if (
 
   .conference-shell {
     --conference-bar-height: 42px;
+    --conference-sidebar-size: clamp(300px, 22vw, 420px);
     --conference-line: rgba(255, 255, 255, 0.12);
     --conference-line-soft: rgba(255, 255, 255, 0.06);
     --conference-fg: #f5f7fb;
@@ -452,11 +488,15 @@ if (
     min-height: 100vh;
     min-height: 100dvh;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(300px, 22vw);
+    grid-template-columns: minmax(0, 1fr) var(--conference-sidebar-size);
     background: #000;
     color: var(--conference-fg);
     overflow: hidden;
     padding-bottom: var(--conference-bar-height);
+  }
+
+  .conference-shell[data-sidebar-collapsed='true'] {
+    --conference-sidebar-size: 0px;
   }
 
   .conference-shell[data-immersive='true'] {
@@ -569,6 +609,20 @@ if (
     min-height: 0;
   }
 
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--focus .conference-slot--focus {
+    position: absolute;
+    inset: 0;
+    display: block;
+    overflow: hidden;
+  }
+
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--focus .conference-slot--focus > .conference-tile {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
   .conference-stage[data-layout='teacher'] .conference-stage-panel--focus .conference-tile {
     grid-template-rows: 1fr;
     border: 0;
@@ -597,6 +651,20 @@ if (
     width: 100%;
     height: 100%;
     min-height: 0;
+  }
+
+  .conference-stage[data-layout='screenshare'] .conference-stage-panel--screen .conference-slot--screen {
+    position: absolute;
+    inset: 0;
+    display: block;
+    overflow: hidden;
+  }
+
+  .conference-stage[data-layout='screenshare'] .conference-stage-panel--screen .conference-slot--screen > .conference-tile--screen {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
   }
 
   .conference-stage[data-layout='screenshare'] .conference-stage-panel--screen .conference-tile--screen {
@@ -644,6 +712,37 @@ if (
     letter-spacing: 0.16em;
     text-transform: uppercase;
     border-bottom: 1px solid var(--conference-line);
+  }
+
+  .conference-sidebar-heading--chat {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .conference-hand-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.6rem;
+    height: 1.6rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: rgba(245, 247, 251, 0.36);
+    cursor: pointer;
+    transition: color 140ms ease, opacity 140ms ease;
+  }
+
+  .conference-hand-button:hover,
+  .conference-hand-button:focus-visible {
+    color: rgba(245, 247, 251, 0.62);
+    outline: none;
+  }
+
+  .conference-hand-button[data-active='true'] {
+    color: rgba(245, 247, 251, 0.78);
   }
 
   .conference-slot,
@@ -727,6 +826,47 @@ if (
 
   .conference-sidebar {
     border-left: 1px solid var(--conference-line);
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .conference-shell[data-sidebar-collapsed='true'] .conference-sidebar {
+    border-left-color: transparent;
+  }
+
+  .conference-sidebar-toggle {
+    position: absolute;
+    top: 50%;
+    right: calc(var(--conference-sidebar-size) - 11px);
+    transform: translateY(-50%);
+    z-index: 8;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 64px;
+    padding: 0;
+    border: 1px solid var(--conference-line);
+    border-right: 0;
+    background: rgba(0, 0, 0, 0.92);
+    color: var(--conference-muted);
+    cursor: pointer;
+    transition: right 160ms ease, color 140ms ease, border-color 140ms ease;
+  }
+
+  .conference-shell[data-sidebar-collapsed='true'] .conference-sidebar-toggle {
+    right: 0;
+  }
+
+  .conference-shell[data-sidebar-collapsed='true'] .conference-sidebar-toggle .conference-icon {
+    transform: rotate(180deg);
+  }
+
+  .conference-sidebar-toggle:hover,
+  .conference-sidebar-toggle:focus-visible {
+    color: var(--conference-fg);
+    border-color: rgba(255, 255, 255, 0.22);
+    outline: none;
   }
 
   .conference-sidebar-scroll {
@@ -836,8 +976,8 @@ if (
     height: 100% !important;
     max-width: none !important;
     max-height: none !important;
-    object-fit: cover !important;
-    object-position: 50% 42% !important;
+    object-fit: contain !important;
+    object-position: 50% 62% !important;
     transform: none !important;
   }
 
@@ -869,18 +1009,17 @@ if (
   .conference-chat-empty {
     padding: 0.38rem 0;
     border-bottom: 1px solid var(--conference-line-soft);
-    color: rgba(245, 247, 251, 0.6);
   }
 
+  .conference-chat-meta,
   .conference-chat-signature {
     display: flex;
     align-items: baseline;
-    gap: 0.45rem;
-    margin-bottom: 0.18rem;
-    color: var(--conference-fg);
-    font-size: 0.72rem;
-    font-style: italic;
-    line-height: 1.3;
+    gap: 0.38rem;
+    margin-bottom: 0.16rem;
+    color: rgba(245, 247, 251, 0.6);
+    font-size: 0.64rem;
+    line-height: 1.2;
     opacity: 0.6;
   }
 
@@ -889,18 +1028,26 @@ if (
     color: inherit;
     font-size: inherit;
     font-weight: 700;
+    font-style: normal;
   }
 
   .conference-chat-time {
     display: inline;
     color: inherit;
     font-size: inherit;
+    font-style: italic;
+    font-weight: 400;
   }
 
   .conference-chat-body {
-    color: rgba(245, 247, 251, 0.6);
-    font-size: 0.77rem;
+    color: rgba(245, 247, 251, 0.74);
+    font-size: 0.79rem;
     line-height: 1.42;
+  }
+
+  .conference-chat-empty {
+    color: rgba(245, 247, 251, 0.5);
+    font-size: 0.72rem;
   }
 
   .conference-chat-compose {
@@ -1005,7 +1152,7 @@ if (
     max-width: none !important;
     max-height: none !important;
     object-fit: cover !important;
-    object-position: 50% 42% !important;
+    object-position: 50% 62% !important;
     transform: none !important;
   }
 
@@ -1059,7 +1206,7 @@ if (
     max-width: none !important;
     max-height: none !important;
     object-fit: contain !important;
-    object-position: center center !important;
+    object-position: 50% 62% !important;
     background: #000;
     transform: none !important;
   }
@@ -1086,6 +1233,27 @@ if (
     border-top: 0;
     background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.76) 100%);
     pointer-events: none;
+  }
+
+  .conference-tile-hand {
+    position: absolute;
+    top: 0.45rem;
+    right: 0.5rem;
+    z-index: 3;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.55rem;
+    min-height: 1.55rem;
+    font-size: 1rem;
+    line-height: 1;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+    pointer-events: none;
+  }
+
+  .conference-tile-hand[hidden] {
+    display: none !important;
   }
 
   .conference-tile-meta strong {
@@ -1450,19 +1618,43 @@ if (
   @media (max-width: 1080px) {
     .conference-shell {
       grid-template-columns: 1fr;
-      grid-template-rows: minmax(0, 1fr) minmax(240px, 36vh);
+      --conference-sidebar-size: min(36vh, 320px);
+      grid-template-rows: minmax(0, 1fr) var(--conference-sidebar-size);
     }
 
     .conference-stage-frame {
-      height: calc(100vh - min(36vh, 320px) - var(--conference-bar-height));
-      height: calc(100dvh - min(36dvh, 320px) - var(--conference-bar-height));
+      height: calc(100vh - var(--conference-sidebar-size) - var(--conference-bar-height));
+      height: calc(100dvh - var(--conference-sidebar-size) - var(--conference-bar-height));
     }
 
     .conference-sidebar {
-      height: min(36vh, 320px);
-      height: min(36dvh, 320px);
+      height: var(--conference-sidebar-size);
       border-left: 0;
       border-top: 1px solid var(--conference-line);
+    }
+
+    .conference-sidebar-toggle {
+      top: auto;
+      bottom: calc(var(--conference-sidebar-size) + var(--conference-bar-height) - 11px);
+      right: 0.75rem;
+      width: 40px;
+      height: 22px;
+      border-right: 1px solid var(--conference-line);
+      border-bottom: 0;
+      transform: none;
+    }
+
+    .conference-shell[data-sidebar-collapsed='true'] .conference-sidebar-toggle {
+      right: 0.75rem;
+      bottom: calc(var(--conference-bar-height) + 0.35rem);
+    }
+
+    .conference-sidebar-toggle .conference-icon {
+      transform: rotate(-90deg);
+    }
+
+    .conference-shell[data-sidebar-collapsed='true'] .conference-sidebar-toggle .conference-icon {
+      transform: rotate(90deg);
     }
 
     .conference-meta-shell {
@@ -1472,7 +1664,8 @@ if (
 
   @media (max-width: 900px) and (orientation: landscape) {
     .conference-shell {
-      grid-template-columns: minmax(0, 1fr) minmax(232px, 34vw);
+      --conference-sidebar-size: min(34vw, 320px);
+      grid-template-columns: minmax(0, 1fr) var(--conference-sidebar-size);
       grid-template-rows: minmax(0, 1fr);
     }
 
@@ -1530,6 +1723,10 @@ if (
       display: none;
     }
 
+    .conference-sidebar-toggle {
+      display: none;
+    }
+
     .conference-bottombar {
       position: static;
       grid-template-columns: 1fr;
@@ -1560,18 +1757,19 @@ if (
   @media (max-width: 500px) {
     .conference-shell {
       --conference-bar-height: 44px;
+      --conference-sidebar-size: clamp(180px, 34dvh, 260px);
       grid-template-columns: 1fr;
-      grid-template-rows: minmax(0, 1fr) minmax(180px, 34dvh);
+      grid-template-rows: minmax(0, 1fr) var(--conference-sidebar-size);
       padding-bottom: var(--conference-bar-height);
     }
 
     .conference-stage-frame {
-      height: calc(100dvh - clamp(180px, 34dvh, 260px) - var(--conference-bar-height));
+      height: calc(100dvh - var(--conference-sidebar-size) - var(--conference-bar-height));
     }
 
     .conference-sidebar {
       display: block;
-      height: clamp(180px, 34dvh, 260px);
+      height: var(--conference-sidebar-size);
       border-left: 0;
       border-top: 1px solid var(--conference-line);
     }

@@ -6,7 +6,6 @@ import BaseHead from '../../components/BaseHead.astro';
 import Header from '../../components/Header.astro';
 import Footer from '../../components/Footer.astro';
 import { createClient } from '@supabase/supabase-js';
-import { parseEvalBlock } from '../../lib/eval/parse-eval-block.mjs';
 import { canonicalizeCourseId } from '../../lib/course-alias';
 import { createSupabaseServerClient } from '../../lib/forum-server';
 import {
@@ -233,34 +232,6 @@ if (hasSessionUser && (canonicalCourseId || courseSlug)) {
     console.error('Server forum subnav preload error:', error);
   }
 }
-
-const classtimeEvalIds = (() => {
-  const markdown = typeof (currentEntry as any)?.body === 'string' ? String((currentEntry as any).body) : '';
-  if (!markdown || !markdown.includes('```eval')) return [];
-
-  const evalBlocks = Array.from(markdown.matchAll(/```eval(?:\s+[^\n]*)?\s*\n?([\s\S]*?)```/g));
-  if (evalBlocks.length === 0) return [];
-
-  const ids = [];
-  for (const [index, match] of evalBlocks.entries()) {
-    const blockBody = String(match?.[1] || '').trim();
-    if (!blockBody) continue;
-    try {
-      const parsed = parseEvalBlock(blockBody, {
-        fallbackId: `${currentEntry.id}-classtime-${index + 1}`,
-        sourcePath: currentEntry.id,
-      });
-      if (parsed?.mode !== 'classtime') continue;
-      const evalId = String(parsed.id || '').trim();
-      if (!evalId || ids.includes(evalId)) continue;
-      ids.push(evalId);
-    } catch {
-      // Ignore malformed eval blocks for header beacon metadata.
-    }
-  }
-  return ids;
-})();
-const hasClasstimeEval = classtimeEvalIds.length > 0;
 ---
 
 <!doctype html>
@@ -1605,11 +1576,8 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
       courseId={canonicalCourseId || courseSlug}
       activeCourseId={canonicalCourseId || courseSlug}
       activeCourseCode={activeCourseCode}
-      livePageSlug={livePageSlug}
       presentationHref={presentationHref}
       performativeRoomHref={performativeRoomHref}
-      hasClasstimeEval={hasClasstimeEval}
-      classtimeEvalIds={classtimeEvalIds}
     />
     <main
       class="course-container"

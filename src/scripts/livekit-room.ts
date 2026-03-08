@@ -3,6 +3,7 @@ import {
   DataPacket_Kind,
   Room,
   RoomEvent,
+  RemoteTrackPublication,
   Track,
   type LocalParticipant,
   type RemoteParticipant,
@@ -57,6 +58,7 @@ type LiveSnapshot = {
 
 type ParticipantCardRefs = {
   card: HTMLElement;
+  hand: HTMLElement;
   media: HTMLElement;
   name: HTMLElement;
   placeholder: HTMLElement;
@@ -109,6 +111,15 @@ const textDecoder = new TextDecoder();
 const normalizeText = (value: unknown) => String(value ?? '').trim();
 const formatRoleLabel = (role: ParticipantRole) => (role === 'teacher' ? 'Teacher' : 'Student');
 
+const readParticipantMetadata = (participant: Participant) => {
+  try {
+    const parsed = JSON.parse(participant.metadata || '{}');
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+};
+
 const isTeacherRole = (value: unknown): value is ParticipantRole =>
   normalizeText(value).toLowerCase() === 'teacher';
 
@@ -124,16 +135,20 @@ const readParticipantRole = (
     return localRole;
   }
 
-  try {
-    const parsed = JSON.parse(participant.metadata || '{}');
-    return normalizeRole(parsed?.role);
-  } catch {
-    return participant.identity.toLowerCase().startsWith('teacher') ? 'teacher' : 'student';
-  }
+  const parsed = readParticipantMetadata(participant);
+  const role = normalizeText(parsed?.role);
+  return role
+    ? normalizeRole(role)
+    : participant.identity.toLowerCase().startsWith('teacher')
+      ? 'teacher'
+      : 'student';
 };
 
 const readParticipantName = (participant: Participant) =>
   normalizeText(participant.name) || normalizeText(participant.identity) || 'Participant';
+
+const readParticipantHandRaisedFromMetadata = (participant: Participant) =>
+  Boolean(readParticipantMetadata(participant).handRaised);
 
 const connectionStateLabel = (state: ConnectionState) => {
   switch (state) {
@@ -550,10 +565,12 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   const sessionTimer = root.querySelector('[data-session-timer]');
   const recordButton = root.querySelector('[data-action="record"]');
   const fullscreenButton = root.querySelector('[data-action="fullscreen"]');
+  const sidebarToggleButton = root.querySelector('[data-action="sidebar-toggle"]');
   const chatList = root.querySelector('[data-chat-list]');
   const chatInput = root.querySelector('[data-chat-input]');
   const chatSendButton = root.querySelector('[data-action="chat-send"]');
   const chatDownloadButton = root.querySelector('[data-action="chat-download"]');
+  const raiseHandButton = root.querySelector('[data-action="raise-hand"]');
 
   if (
     !(roomInput instanceof HTMLInputElement) ||
@@ -634,7 +651,9 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   root.dataset.mounted = 'true';
 
   const room = new Room({
-    adaptiveStream: true,
+    adaptiveStream: {
+      pixelDensity: 'screen',
+    },
     dynacast: true,
   });
 
@@ -672,6 +691,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   let activeLiveSnapshot: LiveSnapshot | null = null;
   let liveActivityTickId = 0;
   let immersiveFullscreenActive = false;
+  let sidebarCollapsed = root.dataset.sidebarCollapsed === 'true';
   let connectedAtMs = 0;
   let recordingAnimationId = 0;
   let recordingAudioContext: AudioContext | null = null;
@@ -694,6 +714,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   let micMeterSource: MediaStreamAudioSourceNode | null = null;
   let micMeterTrackId = '';
   let micMeterGeneration = 0;
+  let localHandRaised = false;
 
   const getCurrentLayout = () => setLayout(stage, layoutInput.value);
 
@@ -770,11 +791,88 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     statusNode.textContent = message;
   };
 
+  const applySidebarCollapsedState = () => {
+    root.dataset.sidebarCollapsed = sidebarCollapsed ? 'true' : 'false';
+    if (sidebarToggleButton instanceof HTMLButtonElement) {
+      sidebarToggleButton.dataset.collapsed = sidebarCollapsed ? 'true' : 'false';
+      sidebarToggleButton.title = sidebarCollapsed
+        ? 'Abrir sidebar (Cmd/Ctrl + Shift + /)'
+        : 'Plegar sidebar (Cmd/Ctrl + Shift + /)';
+      sidebarToggleButton.setAttribute(
+        'aria-label',
+        sidebarCollapsed ? 'Abrir sidebar' : 'Plegar sidebar',
+      );
+      sidebarToggleButton.setAttribute('aria-pressed', sidebarCollapsed ? 'true' : 'false');
+    }
+  };
+
   const syncRoleUi = () => {
     roleInput.value = localRole;
     if (roleLabel instanceof HTMLElement) {
       roleLabel.textContent = formatRoleLabel(localRole);
     }
+  };
+
+  const readParticipantHandRaised = (participant: Participant) =>
+    isLocalParticipant(room, participant)
+      ? localHandRaised
+      : readParticipantHandRaisedFromMetadata(participant);
+
+  const syncRaiseHandUi = () => {
+    if (!(raiseHandButton instanceof HTMLButtonElement)) return;
+    raiseHandButton.dataset.active = localHandRaised ? 'true' : 'false';
+    raiseHandButton.setAttribute('aria-pressed', localHandRaised ? 'true' : 'false');
+    raiseHandButton.title = localHandRaised ? 'Bajar la mano (M)' : 'Levantar la mano (M)';
+    raiseHandButton.setAttribute(
+      'aria-label',
+      localHandRaised ? 'Bajar la mano' : 'Levantar la mano',
+    );
+  };
+
+  const updateLocalParticipantMetadata = async (metadata: string) => {
+    const participant = room.localParticipant as LocalParticipant & {
+      setMetadata?: (value: string) => Promise<void> | void;
+    };
+    if (typeof participant.setMetadata !== 'function') return;
+    await participant.setMetadata(metadata);
+  };
+
+  const syncLocalParticipantMetadata = async () => {
+    if (room.state !== ConnectionState.Connected) return;
+    await updateLocalParticipantMetadata(
+      JSON.stringify({
+        role: localRole,
+        handRaised: localHandRaised,
+      }),
+    );
+  };
+
+  const toggleRaisedHand = async () => {
+    localHandRaised = !localHandRaised;
+    syncRaiseHandUi();
+    syncAllParticipants();
+
+    if (room.state !== ConnectionState.Connected) return;
+
+    try {
+      await syncLocalParticipantMetadata();
+    } catch (error) {
+      localHandRaised = !localHandRaised;
+      syncRaiseHandUi();
+      syncAllParticipants();
+      setStatus(safeErrorMessage(error));
+    }
+  };
+
+  const toggleSidebarCollapsed = () => {
+    sidebarCollapsed = !sidebarCollapsed;
+    applySidebarCollapsedState();
+    queuePreferredRemoteVideoDimensionsSync();
+  };
+
+  const shouldIgnoreRoomShortcut = (target: EventTarget | null) => {
+    if (!(target instanceof HTMLElement)) return false;
+    return Boolean(target.closest('input, textarea, select, button, [contenteditable="true"]'));
   };
 
   const setDevicePanelVisibility = (panel: HTMLElement | null, visible: boolean) => {
@@ -804,6 +902,48 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       button.disabled = layoutLocked;
       button.dataset.active = isActive ? 'true' : 'false';
       button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
+  };
+
+  const requestRemotePublicationDimensions = (
+    publication: TrackPublication | undefined,
+    target: HTMLElement,
+    minimumWidth: number,
+    minimumHeight: number,
+  ) => {
+    if (!(publication instanceof RemoteTrackPublication)) return;
+
+    const rect = target.getBoundingClientRect();
+    const pixelDensity = Math.max(1, window.devicePixelRatio || 1);
+    const width = Math.max(minimumWidth, Math.round(rect.width * pixelDensity));
+    const height = Math.max(minimumHeight, Math.round(rect.height * pixelDensity));
+
+    publication.setVideoDimensions({ width, height });
+    if (typeof publication.setVideoFPS === 'function') {
+      publication.setVideoFPS(30);
+    }
+  };
+
+  const syncPreferredRemoteVideoDimensions = () => {
+    const currentLayout = getCurrentLayout();
+
+    allParticipants().forEach((participant) => {
+      participant.videoTrackPublications.forEach((publication) => {
+        if (publication.source === Track.Source.ScreenShare) {
+          requestRemotePublicationDimensions(publication, screenSlot, 1920, 1080);
+          return;
+        }
+
+        if (currentLayout === 'teacher' && participant.identity === focusedParticipantIdentity) {
+          requestRemotePublicationDimensions(publication, teacherSlot, 1280, 720);
+        }
+      });
+    });
+  };
+
+  const queuePreferredRemoteVideoDimensionsSync = () => {
+    window.requestAnimationFrame(() => {
+      syncPreferredRemoteVideoDimensions();
     });
   };
 
@@ -2227,7 +2367,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       item.className = 'conference-chat-item';
 
       const signature = document.createElement('div');
-      signature.className = 'conference-chat-signature';
+      signature.className = 'conference-chat-meta';
 
       const sender = document.createElement('strong');
       sender.className = 'conference-chat-name';
@@ -2352,6 +2492,9 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     chatInput.disabled = !connected;
     chatSendButton.disabled = !connected;
     chatDownloadButton.disabled = chatMessages.length === 0;
+    if (raiseHandButton instanceof HTMLButtonElement) {
+      raiseHandButton.disabled = !connected;
+    }
     roomInput.disabled = connected || connecting;
     identityInput.disabled = connected || connecting;
     nameInput.disabled = connected || connecting;
@@ -2396,6 +2539,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     renderSessionTimer();
     setRecordState(Boolean(mediaRecorder && mediaRecorder.state !== 'inactive'));
     syncMicMeter();
+    syncRaiseHandUi();
     syncFullscreenButton();
   };
 
@@ -2410,17 +2554,20 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       const media = node.querySelector('[data-card-media]');
       const name = node.querySelector('[data-card-name]');
       const placeholder = node.querySelector('[data-card-placeholder]');
+      const hand = node.querySelector('[data-card-hand]');
 
       if (
         !(media instanceof HTMLElement) ||
         !(name instanceof HTMLElement) ||
-        !(placeholder instanceof HTMLElement)
+        !(placeholder instanceof HTMLElement) ||
+        !(hand instanceof HTMLElement)
       ) {
         throw new Error('Participant card template is invalid.');
       }
 
       card = {
         card: node,
+        hand,
         media,
         name,
         placeholder,
@@ -2434,6 +2581,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
     card.card.dataset.role = role;
     card.name.textContent = readParticipantName(participant);
+    card.hand.hidden = !readParticipantHandRaised(participant);
+    card.card.dataset.handRaised = readParticipantHandRaised(participant) ? 'true' : 'false';
 
     return card;
   };
@@ -2520,12 +2669,15 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     allParticipants().forEach(syncParticipant);
     syncIdentityPreview();
     renderParticipantList();
+    queuePreferredRemoteVideoDimensionsSync();
     setControlState();
   };
 
   const disconnectRoom = () => {
     stopRecording();
     closeDevicePanels();
+    localHandRaised = false;
+    syncRaiseHandUi();
     room.disconnect();
     participantCards.forEach((_, identity) => removeParticipant(identity));
     removeMount(localPreviewMount ?? undefined);
@@ -2656,6 +2808,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       if (!connectedAtMs) {
         connectedAtMs = Date.now();
       }
+      void syncLocalParticipantMetadata().catch(() => undefined);
       syncAllParticipants();
       setStatus(`Conectado a ${roomInput.value.trim()}.`);
       void refreshDeviceOptions(true);
@@ -2665,6 +2818,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     .on(RoomEvent.Disconnected, () => {
       if (destroyed) return;
       connectedAtMs = 0;
+      localHandRaised = false;
+      syncRaiseHandUi();
       stopRecording();
       participantCards.forEach((_, identity) => removeParticipant(identity));
       renderParticipantList();
@@ -2919,6 +3074,12 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     });
   }
 
+  if (sidebarToggleButton instanceof HTMLButtonElement) {
+    sidebarToggleButton.addEventListener('click', () => {
+      toggleSidebarCollapsed();
+    });
+  }
+
   if (audioInputSelect instanceof HTMLSelectElement) {
     audioInputSelect.addEventListener('change', async () => {
       const nextDeviceId = normalizeText(audioInputSelect.value);
@@ -3039,6 +3200,12 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     });
   }
 
+  if (raiseHandButton instanceof HTMLButtonElement) {
+    raiseHandButton.addEventListener('click', () => {
+      void toggleRaisedHand();
+    });
+  }
+
   const sendChatMessage = async () => {
     if (room.state !== ConnectionState.Connected) return;
 
@@ -3079,6 +3246,31 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     void sendChatMessage();
   });
 
+  const handleRoomShortcutKeydown = (event: KeyboardEvent) => {
+    if (event.defaultPrevented || event.repeat) return;
+    const isSidebarShortcut =
+      (event.metaKey || event.ctrlKey) &&
+      event.shiftKey &&
+      !event.altKey &&
+      (event.key === '?' || event.key === '/');
+
+    if (isSidebarShortcut) {
+      event.preventDefault();
+      toggleSidebarCollapsed();
+      return;
+    }
+
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    if (shouldIgnoreRoomShortcut(event.target)) return;
+
+    if (event.key.toLowerCase() === 'm') {
+      event.preventDefault();
+      void toggleRaisedHand();
+    }
+  };
+
+  document.addEventListener('keydown', handleRoomShortcutKeydown);
+
   [roomInput, identityInput, nameInput].forEach((input) => {
     input.addEventListener('change', writeQueryState);
   });
@@ -3101,6 +3293,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   document.addEventListener('webkitfullscreenchange', syncFullscreenButton as EventListener);
 
   syncRoleUi();
+  applySidebarCollapsedState();
   setLayout(stage, layoutInput.value);
   renderParticipantList();
   renderChat();
@@ -3132,8 +3325,13 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     renderSessionTimer();
   };
 
+  const handleViewportResize = () => {
+    queuePreferredRemoteVideoDimensionsSync();
+  };
+
   navigator.mediaDevices?.addEventListener?.('devicechange', handleDeviceChange);
   liveActivityTickId = window.setInterval(handleLiveActivityTick, 1000);
+  window.addEventListener('resize', handleViewportResize);
 
   const teardown = () => {
     if (destroyed) return;
@@ -3143,8 +3341,10 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       pendingPresentationTask = 0;
     }
     navigator.mediaDevices?.removeEventListener?.('devicechange', handleDeviceChange);
+    window.removeEventListener('resize', handleViewportResize);
     presentationFrame.removeEventListener('load', handlePresentationLoad);
     window.removeEventListener('message', handlePresentationMessage);
+    document.removeEventListener('keydown', handleRoomShortcutKeydown);
     document.removeEventListener('fullscreenchange', syncFullscreenButton);
     document.removeEventListener('webkitfullscreenchange', syncFullscreenButton as EventListener);
     unsubscribeLiveActivity?.();
