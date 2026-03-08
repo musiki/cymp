@@ -2433,6 +2433,64 @@ const {
           ].filter(Boolean),
         });
 
+        const emitDeckState = (reason = 'change') => {
+          if (window.parent === window) return;
+          const indices = deck.getIndices?.();
+          if (!indices) return;
+          window.parent.postMessage(
+            {
+              type: reason === 'ready' ? 'musiki:reveal-ready' : 'musiki:reveal-slide-state',
+              state: {
+                indexh: Number(indices.h || 0),
+                indexv: Number(indices.v || 0),
+                indexf: Number(indices.f || 0),
+              },
+            },
+            window.location.origin,
+          );
+        };
+
+        const handleRevealRoomMessage = (event) => {
+          if (event.origin !== window.location.origin) return;
+          const payload = event.data;
+          if (!payload || typeof payload !== 'object') return;
+
+          const type = String(payload.type || '').trim();
+          if (type === 'musiki:live-snapshot') {
+            const snapshot = payload.snapshot && typeof payload.snapshot === 'object'
+              ? payload.snapshot
+              : { active: false };
+            applyLivePayloadToSlidePolls(snapshot, snapshot?.active ? 'live.updated' : 'live.snapshot');
+            return;
+          }
+
+          if (type === 'musiki:reveal-request-state') {
+            emitDeckState('change');
+            return;
+          }
+
+          if (type !== 'musiki:reveal-goto') return;
+          const state = payload.state && typeof payload.state === 'object' ? payload.state : null;
+          if (!state) return;
+
+          const nextH = Number(state.indexh);
+          const nextV = Number(state.indexv);
+          const nextF = Number(state.indexf);
+          if (!Number.isFinite(nextH) || !Number.isFinite(nextV) || !Number.isFinite(nextF)) return;
+
+          const current = deck.getIndices?.();
+          if (
+            current &&
+            Number(current.h || 0) === Math.round(nextH) &&
+            Number(current.v || 0) === Math.round(nextV) &&
+            Number(current.f || 0) === Math.round(nextF)
+          ) {
+            return;
+          }
+
+          deck.slide(Math.max(0, Math.round(nextH)), Math.max(0, Math.round(nextV)), Math.max(0, Math.round(nextF)));
+        };
+
         let speakerOpenPending = false;
         const openSpeakerView = () => {
           const notesPlugin = deck.getPlugin?.('notes');
@@ -2513,6 +2571,7 @@ const {
             });
           }
           refreshScrollableState();
+          emitDeckState('change');
         });
 
         deck.initialize()
@@ -2527,10 +2586,13 @@ const {
             if (speakerOpenPending) {
               openSpeakerView();
             }
+            emitDeckState('ready');
           })
           .catch((error) => {
             showFallback(error?.message || 'Reveal initialize failed');
           });
+
+        window.addEventListener('message', handleRevealRoomMessage);
 
         window.addEventListener('beforeunload', () => {
           unsubscribeLivePolls?.();
@@ -2538,6 +2600,7 @@ const {
             window.clearInterval(livePollTickId);
             livePollTickId = null;
           }
+          window.removeEventListener('message', handleRevealRoomMessage);
         });
 
         window.addEventListener('resize', () => {

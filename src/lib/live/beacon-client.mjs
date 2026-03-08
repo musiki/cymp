@@ -206,7 +206,7 @@ export const mountLiveInteractionBeacon = (root) => {
       hasLiveIdentity &&
       !timerExpired;
     const isClosing = state.status === LIVE_STATES.CLOSING;
-    const shouldShowIdle = hasLocalClasstime;
+    const shouldShowIdle = false;
 
     if (!isLiveVisible && !shouldShowIdle) {
       root.hidden = true;

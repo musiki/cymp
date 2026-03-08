@@ -1,6 +1,7 @@
 import type { Session } from '@auth/core/types';
 import { getCollection } from 'astro:content';
 import { createClient } from '@supabase/supabase-js';
+import { buildCourseLessonPathIndex, buildCourseSlideLessonHref } from '../course-routing';
 
 export type RoomPresentationOption = {
   courseId: string;
@@ -11,12 +12,6 @@ export type RoomPresentationOption = {
 };
 
 const normalizeText = (value: unknown) => String(value ?? '').trim();
-
-const encodeCoursePath = (value: string) =>
-  value
-    .split('/')
-    .map((segment) => encodeURIComponent(segment))
-    .join('/');
 
 export const listRoomPresentationOptions = async ({
   activeCourseId = '',
@@ -31,6 +26,7 @@ export const listRoomPresentationOptions = async ({
 }): Promise<RoomPresentationOption[]> => {
   const entries = await getCollection('cursos');
   const courseMetaById = new Map<string, { public: boolean; title: string }>();
+  const courseDataById = new Map<string, Record<string, unknown>>();
 
   for (const entry of entries) {
     if (!entry.id.endsWith('/_index') && !entry.id.endsWith('_index')) continue;
@@ -42,6 +38,7 @@ export const listRoomPresentationOptions = async ({
       public: Boolean(entry.data.public),
       title: String(entry.data.title || courseId),
     });
+    courseDataById.set(courseId, (entry.data || {}) as Record<string, unknown>);
   }
 
   const accessibleCourseIds = new Set<string>();
@@ -80,6 +77,18 @@ export const listRoomPresentationOptions = async ({
   }
 
   const normalizedActiveCourseId = normalizeText(activeCourseId);
+  const lessonPathIndexByCourseId = new Map<string, ReturnType<typeof buildCourseLessonPathIndex>>();
+
+  courseDataById.forEach((courseData, courseId) => {
+    const lessons = entries
+      .filter((entry) => entry.id.startsWith(`${courseId}/`) && !entry.id.endsWith('/_index') && !entry.id.endsWith('_index'))
+      .sort((a, b) => (Number(a.data?.order || 0) - Number(b.data?.order || 0)));
+
+    lessonPathIndexByCourseId.set(
+      courseId,
+      buildCourseLessonPathIndex(courseId, courseData, lessons),
+    );
+  });
 
   return entries
     .filter((entry) => !entry.id.endsWith('/_index') && !entry.id.endsWith('_index'))
@@ -107,7 +116,12 @@ export const listRoomPresentationOptions = async ({
         label: `${courseTitle} / ${entry.data.title} (${theme})`,
         lessonId: entry.id,
         theme,
-        value: `/cursos/slides/${encodeCoursePath(entry.id)}`,
+        value: buildCourseSlideLessonHref(
+          courseId,
+          courseDataById.get(courseId) || {},
+          entry,
+          lessonPathIndexByCourseId.get(courseId),
+        ),
       } satisfies RoomPresentationOption;
     })
     .sort((left, right) => {

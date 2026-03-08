@@ -4,6 +4,7 @@ export const prerender = false;
 import { getCollection, render } from 'astro:content';
 import WikiLayout from '../layouts/WikiLayout.astro';
 import RevealSlidesLayout from '../layouts/RevealSlidesLayout.astro';
+import { buildCourseLessonHref } from '../lib/course-routing';
 
 const { slug } = Astro.params;
 const isSlidesView = Astro.url.searchParams.get('view') === 'slides';
@@ -16,13 +17,6 @@ const toCleanSlug = (value: unknown) =>
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
-
-const encodePathSegments = (value: string) =>
-  value
-    .split('/')
-    .filter(Boolean)
-    .map((segment) => encodeURIComponent(segment))
-    .join('/');
 
 // Get all content entries
 const allContent = await getCollection('content');
@@ -65,7 +59,11 @@ if (!entry) {
   }
 
   if (redirectLesson) {
-    return Astro.redirect(`/cursos/${encodePathSegments(redirectLesson.id)}`);
+    const courseId = redirectLesson.id.split('/')[0] || '';
+    const courseIndexEntry = allCourseContent.find((item) => item.id === `${courseId}/_index`);
+    return Astro.redirect(
+      buildCourseLessonHref(courseId, (courseIndexEntry?.data || {}) as Record<string, unknown>, redirectLesson),
+    );
   }
 
   return Astro.redirect('/404');

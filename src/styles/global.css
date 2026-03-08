@@ -801,35 +801,35 @@ ol ol ol ol > li::marker {
 /* Forum dynamic DOM (created client-side in cursos/[...slug].astro)
    Astro component-scoped styles do not always hit these nodes, so keep
    critical presentation rules global and explicit. */
-#lesson-forum .forum-post-list {
+:is(#lesson-forum, #forum-reader-root) .forum-post-list {
   overflow-x: hidden !important;
   gap: 0.36rem !important;
 }
 
-#lesson-forum .forum-grid {
+:is(#lesson-forum, #forum-reader-root) .forum-grid {
   grid-template-columns: 1fr !important;
   gap: 0.9rem !important;
 }
 
-#lesson-forum .forum-panel {
+:is(#lesson-forum, #forum-reader-root) .forum-panel {
   border: none !important;
   border-radius: 20px !important;
   background: color-mix(in srgb, var(--forum-bg-subtle, #eef2f5) 10%, transparent) !important;
   box-shadow: none !important;
 }
 
-#lesson-forum .forum-thread-stage {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-stage {
   display: none !important;
 }
 
-#lesson-forum .forum-thread-column {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-column {
   display: grid !important;
   gap: 0.72rem !important;
   width: 100% !important;
   min-width: 0 !important;
 }
 
-#lesson-forum .forum-thread-list {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-list {
   display: grid !important;
   gap: 0.72rem !important;
   max-height: none !important;
@@ -838,8 +838,8 @@ ol ol ol ol > li::marker {
   min-width: 0 !important;
 }
 
-#lesson-forum .forum-new-thread,
-#lesson-forum .forum-thread-item {
+:is(#lesson-forum, #forum-reader-root) .forum-new-thread,
+:is(#lesson-forum, #forum-reader-root) .forum-thread-item {
   border: none !important;
   border-radius: 20px !important;
   background: color-mix(in srgb, var(--forum-bg-subtle, #eef2f5) 78%, var(--forum-bg-panel, #ffffff) 22%) !important;
@@ -852,34 +852,34 @@ ol ol ol ol > li::marker {
   justify-self: stretch !important;
 }
 
-#lesson-forum .forum-thread-item:nth-child(odd) {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-item:nth-child(odd) {
   background: color-mix(in srgb, var(--forum-bg-subtle, #eef2f5) 74%, var(--forum-bg-panel, #ffffff) 26%) !important;
 }
 
-#lesson-forum .forum-thread-item:nth-child(even) {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-item:nth-child(even) {
   background: color-mix(in srgb, var(--forum-bg-subtle, #eef2f5) 84%, var(--forum-bg-panel, #ffffff) 16%) !important;
 }
 
-#lesson-forum .forum-thread-item.active {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-item.active {
   background: color-mix(in srgb, var(--forum-accent, #2f5d8c) 11%, var(--forum-bg-subtle, #eef2f5) 89%) !important;
 }
 
-#lesson-forum .forum-new-thread .forum-panel-title {
+:is(#lesson-forum, #forum-reader-root) .forum-new-thread .forum-panel-title {
   margin: 0 0 0.55rem 0 !important;
 }
 
-#lesson-forum .forum-editor-shell {
+:is(#lesson-forum, #forum-reader-root) .forum-editor-shell {
   width: 100% !important;
 }
 
-#lesson-forum .forum-editor-input {
+:is(#lesson-forum, #forum-reader-root) .forum-editor-input {
   color: var(--forum-text-primary, #1c1f23) !important;
   caret-color: var(--forum-text-primary, #1c1f23) !important;
   font-family: var(--font-family-mono, "Dank Mono", monospace) !important;
   line-height: 1.6 !important;
 }
 
-#lesson-forum .forum-thread-toggle {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-toggle {
   width: 100% !important;
   border: none !important;
   background: transparent !important;
@@ -891,14 +891,14 @@ ol ol ol ol > li::marker {
   gap: 0.35rem !important;
 }
 
-#lesson-forum .forum-thread-top {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-top {
   display: grid !important;
   grid-template-columns: minmax(0, 1fr) auto !important;
   align-items: center !important;
   gap: 0.45rem !important;
 }
 
-#lesson-forum .forum-thread-title {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-title {
   font-weight: 700 !important;
   white-space: nowrap !important;
   overflow: hidden !important;
@@ -906,20 +906,20 @@ ol ol ol ol > li::marker {
   line-height: 1.2 !important;
 }
 
-#lesson-forum .forum-thread-toggle:focus-visible {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-toggle:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--forum-accent, #2f5d8c) 42%, transparent) !important;
   outline-offset: 2px !important;
   border-radius: 10px !important;
 }
 
-#lesson-forum .forum-thread-caret {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-caret {
   justify-self: end !important;
   color: var(--forum-text-secondary, #6b7480) !important;
   font-size: 0.74rem !important;
   line-height: 1 !important;
 }
 
-#lesson-forum .forum-thread-trailing {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-trailing {
   display: inline-flex !important;
   align-items: center !important;
   gap: 0.38rem !important;
@@ -927,7 +927,7 @@ ol ol ol ol > li::marker {
   margin-right: 5px !important;
 }
 
-#lesson-forum .forum-thread-counts {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-counts {
   display: inline-flex !important;
   align-items: center !important;
   gap: 0.35rem !important;
@@ -936,21 +936,21 @@ ol ol ol ol > li::marker {
   line-height: 1 !important;
 }
 
-#lesson-forum .forum-thread-count {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-count {
   font-weight: 700 !important;
   position: relative;
   cursor: help;
 }
 
-#lesson-forum .forum-thread-count-messages {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-count-messages {
   color: #2563eb !important;
 }
 
-#lesson-forum .forum-thread-count-replies {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-count-replies {
   color: #16a34a !important;
 }
 
-#lesson-forum .forum-thread-count::after {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-count::after {
   content: attr(data-tooltip);
   position: absolute;
   left: 50%;
@@ -969,19 +969,19 @@ ol ol ol ol > li::marker {
   z-index: 12;
 }
 
-#lesson-forum .forum-thread-count:hover::after,
-#lesson-forum .forum-thread-count:focus-visible::after {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-count:hover::after,
+:is(#lesson-forum, #forum-reader-root) .forum-thread-count:focus-visible::after {
   opacity: 1;
   transform: translate(-50%, 0);
 }
 
-#lesson-forum .forum-thread-divider {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-divider {
   border: 0 !important;
   border-top: 1px solid color-mix(in srgb, var(--forum-border-soft, #e2e8ee) 86%, transparent) !important;
   margin: 0.34rem 0 0.3rem 0 !important;
 }
 
-#lesson-forum .forum-thread-meta {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-meta {
   display: flex !important;
   align-items: center !important;
   justify-content: space-between !important;
@@ -990,19 +990,19 @@ ol ol ol ol > li::marker {
   line-height: 1.15 !important;
 }
 
-#lesson-forum .forum-thread-author {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-author {
   min-width: 0 !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
 }
 
-#lesson-forum .forum-thread-date {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-date {
   white-space: nowrap !important;
   color: var(--forum-text-secondary, #6b7480) !important;
 }
 
-#lesson-forum .forum-thread-inline-panel {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-inline-panel {
   margin-top: 0.62rem !important;
   padding-top: 0.62rem !important;
   border-top: 1px solid color-mix(in srgb, var(--forum-border-soft, #e2e8ee) 78%, transparent) !important;
@@ -1010,18 +1010,18 @@ ol ol ol ol > li::marker {
   gap: 0.62rem !important;
 }
 
-#lesson-forum .forum-thread-inline-panel[hidden] {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-inline-panel[hidden] {
   display: none !important;
 }
 
-#lesson-forum .forum-thread-inline-panel .forum-post-list {
+:is(#lesson-forum, #forum-reader-root) .forum-thread-inline-panel .forum-post-list {
   max-height: none !important;
   overflow: visible !important;
 }
 
-#lesson-forum .forum-panel .forum-field,
-#lesson-forum .forum-panel .forum-textarea,
-#lesson-forum .forum-panel .forum-select {
+:is(#lesson-forum, #forum-reader-root) .forum-panel .forum-field,
+:is(#lesson-forum, #forum-reader-root) .forum-panel .forum-textarea,
+:is(#lesson-forum, #forum-reader-root) .forum-panel .forum-select {
   width: 90% !important;
   max-width: 90% !important;
   display: block !important;
@@ -1029,7 +1029,7 @@ ol ol ol ol > li::marker {
   box-sizing: border-box !important;
 }
 
-#lesson-forum .forum-post {
+:is(#lesson-forum, #forum-reader-root) .forum-post {
   display: grid !important;
   grid-template-columns: 1fr !important;
   gap: 0.44rem !important;
@@ -1037,7 +1037,7 @@ ol ol ol ol > li::marker {
   box-sizing: border-box;
 }
 
-#lesson-forum .forum-post-identity {
+:is(#lesson-forum, #forum-reader-root) .forum-post-identity {
   display: grid !important;
   grid-template-columns: 24px minmax(0, 1fr) !important;
   column-gap: 0.55rem !important;
@@ -1045,24 +1045,24 @@ ol ol ol ol > li::marker {
   justify-items: start !important;
 }
 
-#lesson-forum .forum-post.forum-post-role-instructor {
+:is(#lesson-forum, #forum-reader-root) .forum-post.forum-post-role-instructor {
   background: color-mix(in srgb, var(--forum-role-instructor, #2f5d8c) 5%, var(--forum-bg-panel, #ffffff) 70%) !important;
   border-color: color-mix(in srgb, var(--forum-role-instructor, #2f5d8c) 5%, var(--forum-border-soft, #e2e8ee) 62%) !important;
 }
 
-#lesson-forum .forum-post.forum-post-role-student {
+:is(#lesson-forum, #forum-reader-root) .forum-post.forum-post-role-student {
   background: color-mix(in srgb, var(--forum-text-secondary, #6b7480) 5%, var(--forum-bg-panel, #ffffff) 70%) !important;
   border-color: color-mix(in srgb, var(--forum-text-secondary, #6b7480) 5%, var(--forum-border-soft, #e2e8ee) 65%) !important;
 }
 
-#lesson-forum .forum-post-main {
+:is(#lesson-forum, #forum-reader-root) .forum-post-main {
   min-width: 0 !important;
   max-width: 100% !important;
   overflow: visible !important;
   padding: 0.08rem 0.12rem 0.08rem 0 !important;
 }
 
-#lesson-forum .forum-post-avatar {
+:is(#lesson-forum, #forum-reader-root) .forum-post-avatar {
   width: 24px !important;
   height: 24px !important;
   min-width: 24px !important;
@@ -1075,11 +1075,11 @@ ol ol ol ol > li::marker {
   object-position: center !important;
 }
 
-#lesson-forum img.forum-post-avatar {
+:is(#lesson-forum, #forum-reader-root) img.forum-post-avatar {
   display: block !important;
 }
 
-#lesson-forum span.forum-post-avatar {
+:is(#lesson-forum, #forum-reader-root) span.forum-post-avatar {
   display: inline-flex !important;
   align-items: center;
   justify-content: center;
@@ -1087,18 +1087,18 @@ ol ol ol ol > li::marker {
   line-height: 1 !important;
 }
 
-#lesson-forum .forum-post-name,
-#lesson-forum .forum-post-date {
+:is(#lesson-forum, #forum-reader-root) .forum-post-name,
+:is(#lesson-forum, #forum-reader-root) .forum-post-date {
   font-size: 0.62rem !important;
   line-height: 1.2 !important;
 }
 
-#lesson-forum .forum-post-badges,
-#lesson-forum .forum-role-badge {
+:is(#lesson-forum, #forum-reader-root) .forum-post-badges,
+:is(#lesson-forum, #forum-reader-root) .forum-role-badge {
   display: none !important;
 }
 
-#lesson-forum .forum-post-body {
+:is(#lesson-forum, #forum-reader-root) .forum-post-body {
   font-size: 0.95rem !important;
   line-height: 1.62 !important;
   min-width: 0 !important;
@@ -1107,29 +1107,29 @@ ol ol ol ol > li::marker {
   word-break: break-word !important;
 }
 
-#lesson-forum .forum-post-body :is(p, ul, ol, pre, blockquote, table, .mermaid, .katex-display, .lily-score, .callout) {
+:is(#lesson-forum, #forum-reader-root) .forum-post-body :is(p, ul, ol, pre, blockquote, table, .mermaid, .katex-display, .lily-score, .callout) {
   max-width: 100% !important;
   margin: 0 0 0.32rem 0 !important;
 }
 
-#lesson-forum .forum-post-body pre,
-#lesson-forum .forum-post-body table,
-#lesson-forum .forum-post-body .mermaid,
-#lesson-forum .forum-post-body .lily-score,
-#lesson-forum .forum-post-body .katex-display {
+:is(#lesson-forum, #forum-reader-root) .forum-post-body pre,
+:is(#lesson-forum, #forum-reader-root) .forum-post-body table,
+:is(#lesson-forum, #forum-reader-root) .forum-post-body .mermaid,
+:is(#lesson-forum, #forum-reader-root) .forum-post-body .lily-score,
+:is(#lesson-forum, #forum-reader-root) .forum-post-body .katex-display {
   display: block !important;
   overflow-x: auto !important;
 }
 
-#lesson-forum .forum-post-body > :last-child {
+:is(#lesson-forum, #forum-reader-root) .forum-post-body > :last-child {
   margin-bottom: 0 !important;
 }
 
-#lesson-forum .forum-edit-textarea {
+:is(#lesson-forum, #forum-reader-root) .forum-edit-textarea {
   min-height: 11.6rem !important;
 }
 
-#lesson-forum .forum-form-actions {
+:is(#lesson-forum, #forum-reader-root) .forum-form-actions {
   width: 90% !important;
   margin: 0 auto !important;
   display: flex !important;
@@ -1138,7 +1138,7 @@ ol ol ol ol > li::marker {
   gap: 0.3rem !important;
 }
 
-#lesson-forum .forum-post-actions {
+:is(#lesson-forum, #forum-reader-root) .forum-post-actions {
   width: 100% !important;
   margin-left: 0 !important;
   margin-top: 0.25rem !important;
@@ -1148,20 +1148,20 @@ ol ol ol ol > li::marker {
   gap: 0.3rem !important;
 }
 
-#lesson-forum .forum-post-reactions {
+:is(#lesson-forum, #forum-reader-root) .forum-post-reactions {
   display: inline-flex !important;
   align-items: center !important;
   gap: 0.38rem !important;
   margin-right: auto !important;
 }
 
-#lesson-forum .forum-post-reaction-item {
+:is(#lesson-forum, #forum-reader-root) .forum-post-reaction-item {
   display: inline-flex !important;
   align-items: center !important;
   gap: 0.16rem !important;
 }
 
-#lesson-forum .forum-post-reaction-count {
+:is(#lesson-forum, #forum-reader-root) .forum-post-reaction-count {
   min-width: 1.2ch;
   text-align: right;
   font-size: 0.6rem !important;
@@ -1171,7 +1171,7 @@ ol ol ol ol > li::marker {
   opacity: 0.58;
 }
 
-#lesson-forum .forum-action-btn {
+:is(#lesson-forum, #forum-reader-root) .forum-action-btn {
   width: 1.42rem !important;
   height: 1.42rem !important;
   min-width: 1.42rem !important;
@@ -1196,23 +1196,23 @@ ol ol ol ol > li::marker {
   transition: transform 0.14s ease, filter 0.14s ease, box-shadow 0.14s ease;
 }
 
-#lesson-forum .forum-action-btn:hover {
+:is(#lesson-forum, #forum-reader-root) .forum-action-btn:hover {
   transform: translateY(-1px);
   filter: saturate(1.08);
   opacity: 0.9 !important;
 }
 
-#lesson-forum .forum-action-btn:active {
+:is(#lesson-forum, #forum-reader-root) .forum-action-btn:active {
   transform: translateY(0);
   opacity: 0.9 !important;
 }
 
-#lesson-forum .forum-action-btn:focus-visible {
+:is(#lesson-forum, #forum-reader-root) .forum-action-btn:focus-visible {
   outline: 2px solid rgba(255, 255, 255, 0.85);
   outline-offset: 2px;
 }
 
-#lesson-forum .forum-action-btn::after {
+:is(#lesson-forum, #forum-reader-root) .forum-action-btn::after {
   content: attr(data-tooltip);
   position: absolute;
   left: 50%;
@@ -1231,21 +1231,21 @@ ol ol ol ol > li::marker {
   z-index: 15;
 }
 
-#lesson-forum .forum-action-btn:hover::after,
-#lesson-forum .forum-action-btn:focus-visible::after {
+:is(#lesson-forum, #forum-reader-root) .forum-action-btn:hover::after,
+:is(#lesson-forum, #forum-reader-root) .forum-action-btn:focus-visible::after {
   opacity: 1;
   transform: translate(-50%, 0);
 }
 
-#lesson-forum .forum-action-r { background: #2563eb !important; } /* Responder */
-#lesson-forum .forum-action-e { background: #7c3aed !important; } /* Editar */
-#lesson-forum .forum-action-b { background: #b91c1c !important; } /* Borrar */
-#lesson-forum .forum-action-p { background: #16a34a !important; } /* Publicar respuesta */
-#lesson-forum .forum-action-c { background: #dc2626 !important; } /* Cancelar */
-#lesson-forum .forum-action-h { background: #ea580c !important; } /* Publicar hilo */
-#lesson-forum .forum-action-f { background: #0d9488 !important; } /* Crear foro */
+:is(#lesson-forum, #forum-reader-root) .forum-action-r { background: #2563eb !important; } /* Responder */
+:is(#lesson-forum, #forum-reader-root) .forum-action-e { background: #7c3aed !important; } /* Editar */
+:is(#lesson-forum, #forum-reader-root) .forum-action-b { background: #b91c1c !important; } /* Borrar */
+:is(#lesson-forum, #forum-reader-root) .forum-action-p { background: #16a34a !important; } /* Publicar respuesta */
+:is(#lesson-forum, #forum-reader-root) .forum-action-c { background: #dc2626 !important; } /* Cancelar */
+:is(#lesson-forum, #forum-reader-root) .forum-action-h { background: #ea580c !important; } /* Publicar hilo */
+:is(#lesson-forum, #forum-reader-root) .forum-action-f { background: #0d9488 !important; } /* Crear foro */
 
-#lesson-forum .forum-post-reaction-btn {
+:is(#lesson-forum, #forum-reader-root) .forum-post-reaction-btn {
   border: 1px solid color-mix(in srgb, var(--forum-border-soft, #d8dee6) 86%, transparent) !important;
   background: color-mix(in srgb, var(--forum-bg-panel, #ffffff) 80%, var(--forum-bg-subtle, #eef2f5) 20%) !important;
   color: var(--forum-text-secondary, #64748b) !important;
@@ -1253,32 +1253,32 @@ ol ol ol ol > li::marker {
   opacity: 0.44 !important;
 }
 
-#lesson-forum .forum-post-reaction-btn:hover,
-#lesson-forum .forum-post-reaction-btn:focus-visible {
+:is(#lesson-forum, #forum-reader-root) .forum-post-reaction-btn:hover,
+:is(#lesson-forum, #forum-reader-root) .forum-post-reaction-btn:focus-visible {
   opacity: 0.62 !important;
 }
 
-#lesson-forum .forum-post-reaction-btn.is-active {
+:is(#lesson-forum, #forum-reader-root) .forum-post-reaction-btn.is-active {
   color: #ffffff !important;
   border-color: transparent !important;
   opacity: 0.92 !important;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.82), 0 0 0 3px rgba(15, 23, 42, 0.14);
 }
 
-#lesson-forum .forum-post-reaction-useful.is-active {
+:is(#lesson-forum, #forum-reader-root) .forum-post-reaction-useful.is-active {
   background: #15803d !important;
 }
 
-#lesson-forum .forum-post-reaction-clarifies.is-active {
+:is(#lesson-forum, #forum-reader-root) .forum-post-reaction-clarifies.is-active {
   background: #ca8a04 !important;
 }
 
-#lesson-forum .forum-post-reaction-reference.is-active {
+:is(#lesson-forum, #forum-reader-root) .forum-post-reaction-reference.is-active {
   background: #2563eb !important;
 }
 
 /* Keep non-action secondary buttons (e.g. edit form save/cancel) usable. */
-#lesson-forum .forum-secondary-btn:not(.forum-action-btn) {
+:is(#lesson-forum, #forum-reader-root) .forum-secondary-btn:not(.forum-action-btn) {
   border-radius: 8px !important;
   border: 1px solid rgba(148, 163, 184, 0.5) !important;
   background: rgba(255, 255, 255, 0.92) !important;
@@ -1288,17 +1288,17 @@ ol ol ol ol > li::marker {
 }
 
 @media (max-width: 968px) {
-  #lesson-forum .forum-post {
+  :is(#lesson-forum, #forum-reader-root) .forum-post {
     grid-template-columns: 1fr !important;
   }
-  #lesson-forum .forum-post-reply {
+  :is(#lesson-forum, #forum-reader-root) .forum-post-reply {
     margin-left: 0.35rem !important;
   }
-  #lesson-forum .forum-form-actions,
-  #lesson-forum .forum-post-actions {
+  :is(#lesson-forum, #forum-reader-root) .forum-form-actions,
+  :is(#lesson-forum, #forum-reader-root) .forum-post-actions {
     justify-content: flex-end !important;
   }
-  #lesson-forum .forum-action-btn {
+  :is(#lesson-forum, #forum-reader-root) .forum-action-btn {
     width: 1.6rem !important;
     height: 1.6rem !important;
     min-width: 1.6rem !important;

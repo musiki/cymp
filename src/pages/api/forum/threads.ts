@@ -8,6 +8,7 @@ import {
   getForumCourseAccess,
   json,
 } from '../../../lib/forum-server';
+import { canonicalizeCourseId } from '../../../lib/course-alias';
 
 const THREAD_TITLE_MAX = 140;
 const THREAD_BODY_MAX = 4000;
@@ -119,7 +120,7 @@ export const GET: APIRoute = async ({ request, locals }) => {
   }
 
   const url = new URL(request.url);
-  const courseId = cleanString(url.searchParams.get('courseId'), 120);
+  const courseId = await canonicalizeCourseId(cleanString(url.searchParams.get('courseId'), 120));
   const lessonSlug = cleanString(url.searchParams.get('lessonSlug'), 240);
   const boardSlug = cleanString(url.searchParams.get('boardSlug'), 120);
 
@@ -258,7 +259,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return json({ error: 'Invalid JSON payload' }, 400);
   }
 
-  const courseId = cleanString(body?.courseId, 120);
+  const courseId = await canonicalizeCourseId(cleanString(body?.courseId, 120));
   const lessonSlug = cleanString(body?.lessonSlug, 240);
   const boardSlug = cleanString(body?.boardSlug, 120);
   const title = cleanString(body?.title, THREAD_TITLE_MAX);

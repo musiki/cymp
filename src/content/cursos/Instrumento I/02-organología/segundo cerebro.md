@@ -4,6 +4,7 @@ chapter: "Organología I"
 order: 1
 assignment: false
 summary: como primer instrumento estudiaremos nuestro cerebro. Toda producción creativa se basa en la reconfiguración y recombinación de elementos previos. En lugar de depender únicamente de la memoria, el uso de un **segundo cerebro** permite capturar y reutilizar ideas en nuevas combinaciones.
+theme: zztt
 ---
 
 ## creatividad prestada
@@ -190,10 +191,10 @@ modelemos niveles de complejidad de la abstracción:
 
 las representaciones de la abstracción pueden ser símbolos, patrones, funciones en diversiones niveles:
 
-	1.	Nivel físico (hardware, cuerpo)
-	2.	Nivel simbólico (lenguajes, reglas, estructuras)
-	3.	Nivel intencional o funcional (deseos, metas, inferencias)
-	4.	Nivel fenomenológico o consciente (en algunos modelos extendidos)
+1.	Nivel físico (hardware, cuerpo)
+2.	Nivel simbólico (lenguajes, reglas, estructuras)
+3.	Nivel intencional o funcional (deseos, metas, inferencias)
+4.	Nivel fenomenológico o consciente (en algunos modelos extendidos)
 
 
 ---

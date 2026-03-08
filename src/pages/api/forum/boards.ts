@@ -7,6 +7,7 @@ import {
   getForumCourseAccess,
   json,
 } from '../../../lib/forum-server';
+import { canonicalizeCourseId } from '../../../lib/course-alias';
 
 const BOARD_TITLE_MAX = 90;
 const BOARD_DESCRIPTION_MAX = 260;
@@ -110,7 +111,7 @@ export const GET: APIRoute = async ({ request, locals }) => {
   }
 
   const url = new URL(request.url);
-  const courseId = cleanString(url.searchParams.get('courseId'), 120);
+  const courseId = await canonicalizeCourseId(cleanString(url.searchParams.get('courseId'), 120));
   if (!courseId) return json({ error: 'courseId is required' }, 400);
 
   const supabase = createSupabaseServerClient({ requireServiceRole: true });
@@ -153,7 +154,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return json({ error: 'Invalid JSON payload' }, 400);
   }
 
-  const courseId = cleanString(body?.courseId, 120);
+  const courseId = await canonicalizeCourseId(cleanString(body?.courseId, 120));
   const title = cleanString(body?.title, BOARD_TITLE_MAX);
   const description = cleanBody(body?.description, BOARD_DESCRIPTION_MAX);
   const providedSlug = cleanString(body?.slug, BOARD_SLUG_MAX);

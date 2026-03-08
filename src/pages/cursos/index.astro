@@ -4,6 +4,7 @@ import BaseHead from '../../components/BaseHead.astro';
 import Header from '../../components/Header.astro';
 import Footer from '../../components/Footer.astro';
 import { createClient } from '@supabase/supabase-js';
+import { buildCourseHref } from '../../lib/course-routing';
 
 // Get all courses (files named _index.md in cursos collection)
 const allCourseFiles = await getCollection('cursos');
@@ -45,7 +46,7 @@ const courses = allCourseFiles
   .filter(entry => entry.id.endsWith('_index'))
   .map(entry => ({
     id: entry.id.replace('/_index', ''),
-    slug: entry.id.replace('/_index', '').replace(/\//g, '/'),
+    href: buildCourseHref(entry.id.replace('/_index', ''), (entry.data || {}) as Record<string, unknown>),
     ...entry.data,
     instructors: asStringArray((entry.data as any).instructors ?? (entry.data as any).instructor),
     year: normalizeCourseYear((entry.data as any).year, (entry.data as any).level),
@@ -279,7 +280,7 @@ if (currentUser?.email) {
 										Inicia sesión para inscribirte
 									</a>
 								) : userEnrollments.includes(course.id) ? (
-									<a href={`/cursos/${course.slug}`} class="button">
+									<a href={course.href} class="button">
 										Ver curso
 									</a>
 								) : (
@@ -292,7 +293,7 @@ if (currentUser?.email) {
 											Inscribirse
 										</button>
 										{course.public && (
-											<a href={`/cursos/${course.slug}`} class="button secondary">
+											<a href={course.href} class="button secondary">
 												Vista previa
 											</a>
 										)}

@@ -1,6 +1,7 @@
 import type { Session } from '@auth/core/types';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { getEntry } from 'astro:content';
+import { canonicalizeCourseId } from './course-alias';
 
 export type ForumDbUser = {
   id: string;
@@ -162,10 +163,11 @@ export async function ensureDbUserFromSession(
 }
 
 async function isPublicCourse(courseId: string): Promise<boolean> {
-  if (!courseId) return false;
+  const normalizedCourseId = await canonicalizeCourseId(courseId);
+  if (!normalizedCourseId) return false;
 
   try {
-    const courseEntry = await getEntry('cursos', `${courseId}/_index`);
+    const courseEntry = await getEntry('cursos', `${normalizedCourseId}/_index`);
     return Boolean(courseEntry?.data?.public);
   } catch {
     return false;
@@ -177,14 +179,15 @@ export async function getForumCourseAccess(
   user: ForumDbUser,
   courseId: string,
 ): Promise<ForumCourseAccess> {
+  const normalizedCourseId = await canonicalizeCourseId(courseId);
   const normalizedGlobalRole = String(user.role || '').trim().toLowerCase();
-  const isPublic = await isPublicCourse(courseId);
+  const isPublic = await isPublicCourse(normalizedCourseId);
 
   const { data: enrollment, error: enrollmentError } = await supabase
     .from('Enrollment')
     .select('id, roleInCourse')
     .eq('userId', user.id)
-    .eq('courseId', courseId)
+    .eq('courseId', normalizedCourseId)
     .maybeSingle();
 
   if (enrollmentError) throw enrollmentError;

@@ -1,6 +1,7 @@
 const STORE_KEY = '__musiki_live_store__';
 const MAX_UNTIMED_INTERACTION_MS = 3 * 60 * 60 * 1000;
 const MAX_RECENT_SNAPSHOT_MS = 12 * 60 * 60 * 1000;
+const ROOM_PRESENCE_TTL_MS = 25_000;
 
 const nowIso = () => new Date().toISOString();
 
@@ -32,15 +33,18 @@ const asPositiveInteger = (value, fallback = 0) => {
 
 const ensureStore = () => {
   if (!globalThis[STORE_KEY]) {
-    globalThis[STORE_KEY] = {
-      interactions: new Map(),
-      listeners: new Map(),
-      timeouts: new Map(),
-      recentSnapshots: new Map(),
-    };
+    globalThis[STORE_KEY] = {};
   }
 
-  return globalThis[STORE_KEY];
+  const store = globalThis[STORE_KEY];
+  if (!(store.interactions instanceof Map)) store.interactions = new Map();
+  if (!(store.listeners instanceof Map)) store.listeners = new Map();
+  if (!(store.roomPresences instanceof Map)) store.roomPresences = new Map();
+  if (!(store.roomTimeouts instanceof Map)) store.roomTimeouts = new Map();
+  if (!(store.timeouts instanceof Map)) store.timeouts = new Map();
+  if (!(store.recentSnapshots instanceof Map)) store.recentSnapshots = new Map();
+
+  return store;
 };
 
 const clearInteractionTimeout = (sessionId) => {
@@ -49,6 +53,14 @@ const clearInteractionTimeout = (sessionId) => {
   if (!timerId) return;
   clearTimeout(timerId);
   store.timeouts.delete(sessionId);
+};
+
+const clearRoomPresenceTimeout = (presenceId) => {
+  const store = ensureStore();
+  const timerId = store.roomTimeouts.get(presenceId);
+  if (!timerId) return;
+  clearTimeout(timerId);
+  store.roomTimeouts.delete(presenceId);
 };
 
 const pruneRecentSnapshots = () => {
@@ -291,6 +303,69 @@ const toSnapshot = (interaction) => {
   };
 };
 
+const getRoomPresenceTimestamp = (presence) =>
+  getTimestamp(presence?.updatedAt) ||
+  getTimestamp(presence?.startedAt) ||
+  0;
+
+const pruneRoomPresences = () => {
+  const store = ensureStore();
+  const now = Date.now();
+
+  for (const [presenceId, presence] of store.roomPresences.entries()) {
+    const expiresAtMs = getTimestamp(presence?.expiresAt);
+    if (expiresAtMs && expiresAtMs > now) continue;
+    clearRoomPresenceTimeout(presenceId);
+    store.roomPresences.delete(presenceId);
+  }
+};
+
+const getLatestRoomPresence = (courseId = '') => {
+  pruneRoomPresences();
+  const store = ensureStore();
+
+  const roomPresences = Array.from(store.roomPresences.values())
+    .filter((presence) => !courseId || presence.courseId === courseId)
+    .sort((left, right) => getRoomPresenceTimestamp(right) - getRoomPresenceTimestamp(left));
+
+  return roomPresences[0] || null;
+};
+
+const toRoomSnapshot = (presence) => {
+  if (!presence) {
+    return {
+      active: false,
+    };
+  }
+
+  return {
+    active: true,
+    courseId: presence.courseId,
+    pageSlug: presence.pageSlug || '',
+    room: presence.room,
+    href: presence.href || '',
+    presentationHref: presence.presentationHref || '',
+    startedAt: presence.startedAt,
+    updatedAt: presence.updatedAt,
+    identity: presence.identity || '',
+    name: presence.name || '',
+    presenceId: presence.presenceId,
+  };
+};
+
+const buildMergedSnapshot = (courseId = '') => {
+  const normalizedCourseId = asText(courseId);
+  const interaction = getLatestInteraction(normalizedCourseId);
+  const interactionSnapshot = toSnapshot(interaction);
+  const roomSnapshot = toRoomSnapshot(getLatestRoomPresence(normalizedCourseId));
+
+  return {
+    ...interactionSnapshot,
+    courseId: interactionSnapshot.courseId || roomSnapshot.courseId || normalizedCourseId,
+    roomLive: roomSnapshot,
+  };
+};
+
 const emit = (eventName, payload) => {
   const store = ensureStore();
   const listeners = Array.from(store.listeners.values());
@@ -323,6 +398,43 @@ const scheduleInteractionTimeout = (interaction, onTimeout) => {
   }, delayMs);
 
   store.timeouts.set(interaction.sessionId, timerId);
+};
+
+const emitMergedSnapshot = (courseId = '') => {
+  emit('live.snapshot', getLiveSnapshot(courseId));
+};
+
+const scheduleRoomPresenceTimeout = (presence) => {
+  const presenceId = asText(presence?.presenceId);
+  if (!presenceId) return;
+
+  clearRoomPresenceTimeout(presenceId);
+
+  const expiresAtMs = getTimestamp(presence?.expiresAt);
+  if (!expiresAtMs) return;
+
+  const store = ensureStore();
+  const delayMs = Math.max(0, expiresAtMs - Date.now());
+  const timerId = setTimeout(() => {
+    const current = store.roomPresences.get(presenceId);
+    if (!current) {
+      clearRoomPresenceTimeout(presenceId);
+      return;
+    }
+
+    const stillExpiresAtMs = getTimestamp(current.expiresAt);
+    if (stillExpiresAtMs && stillExpiresAtMs > Date.now()) {
+      scheduleRoomPresenceTimeout(current);
+      return;
+    }
+
+    const courseId = current.courseId;
+    clearRoomPresenceTimeout(presenceId);
+    store.roomPresences.delete(presenceId);
+    emitMergedSnapshot(courseId);
+  }, delayMs);
+
+  store.roomTimeouts.set(presenceId, timerId);
 };
 
 const endInteractionInternal = (sessionId, reason = 'ended') => {
@@ -363,6 +475,7 @@ export const cleanupExpiredInteractions = () => {
   const store = ensureStore();
   const now = Date.now();
   pruneRecentSnapshots();
+  pruneRoomPresences();
 
   for (const [sessionId, interaction] of store.interactions.entries()) {
     const endsAt = getTimestamp(interaction.endsAt);
@@ -393,8 +506,7 @@ const getLatestInteraction = (courseId = '') => {
 };
 
 export const getLiveSnapshot = (courseId = '') => {
-  const active = getLatestInteraction(asText(courseId));
-  return toSnapshot(active);
+  return buildMergedSnapshot(asText(courseId));
 };
 
 export const getLiveSnapshotBySession = (sessionId = '') => {
@@ -427,6 +539,90 @@ export const subscribeToLiveEvents = ({ courseId = '', callback }) => {
 
   return () => {
     store.listeners.delete(listenerId);
+  };
+};
+
+const buildRoomPresence = (input = {}) => {
+  const startedAt = asText(input.startedAt || nowIso(), nowIso());
+  const updatedAt = nowIso();
+  const ttlMs = asPositiveInteger(input.ttlMs, ROOM_PRESENCE_TTL_MS);
+
+  return {
+    presenceId: asText(input.presenceId, crypto.randomUUID()),
+    courseId: asText(input.courseId, 'global'),
+    pageSlug: asText(input.pageSlug || ''),
+    room: asText(input.room || ''),
+    href: asText(input.href || ''),
+    presentationHref: asText(input.presentationHref || ''),
+    identity: asText(input.identity || ''),
+    name: asText(input.name || ''),
+    startedAt,
+    updatedAt,
+    expiresAt: new Date(Date.now() + ttlMs).toISOString(),
+  };
+};
+
+export const upsertLiveRoomPresence = (input = {}) => {
+  const nextPresence = buildRoomPresence(input);
+  if (!nextPresence.room) {
+    return null;
+  }
+
+  const store = ensureStore();
+  const previous = store.roomPresences.get(nextPresence.presenceId);
+  if (previous?.startedAt) {
+    nextPresence.startedAt = previous.startedAt;
+  }
+
+  store.roomPresences.set(nextPresence.presenceId, nextPresence);
+  scheduleRoomPresenceTimeout(nextPresence);
+  emitMergedSnapshot(nextPresence.courseId);
+
+  return {
+    roomLive: toRoomSnapshot(nextPresence),
+    snapshot: getLiveSnapshot(nextPresence.courseId),
+  };
+};
+
+export const clearLiveRoomPresence = (input = {}) => {
+  const store = ensureStore();
+  const presenceId = asText(input.presenceId);
+  const courseId = asText(input.courseId);
+
+  let removedCourseId = courseId;
+
+  if (presenceId) {
+    const existing = store.roomPresences.get(presenceId);
+    if (!existing) {
+      return {
+        snapshot: getLiveSnapshot(courseId),
+      };
+    }
+
+    removedCourseId = existing.courseId || courseId;
+    clearRoomPresenceTimeout(presenceId);
+    store.roomPresences.delete(presenceId);
+    emitMergedSnapshot(removedCourseId);
+    return {
+      snapshot: getLiveSnapshot(removedCourseId),
+    };
+  }
+
+  if (!courseId) {
+    return {
+      snapshot: getLiveSnapshot(''),
+    };
+  }
+
+  for (const [key, presence] of store.roomPresences.entries()) {
+    if (presence.courseId !== courseId) continue;
+    clearRoomPresenceTimeout(key);
+    store.roomPresences.delete(key);
+  }
+
+  emitMergedSnapshot(courseId);
+  return {
+    snapshot: getLiveSnapshot(courseId),
   };
 };
 

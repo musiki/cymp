@@ -4,6 +4,14 @@ export const prerender = false;
 import { getCollection, getEntry, render } from 'astro:content';
 import { createClient } from '@supabase/supabase-js';
 import RevealSlidesLayout from '../../../layouts/RevealSlidesLayout.astro';
+import { canonicalizeCourseId } from '../../../lib/course-alias';
+import {
+  buildCourseHref,
+  buildCourseLessonPathIndex,
+  buildCourseSlideLessonHref,
+  findLessonByCoursePath,
+  getPreferredCoursePathSegment,
+} from '../../../lib/course-routing';
 
 const rawSlug = Astro.params.slug;
 if (!rawSlug) return Astro.redirect('/cursos');
@@ -20,11 +28,21 @@ const slug = rawSlug
   .join('/');
 
 const parts = slug.split('/');
-const courseSlug = parts[0];
+const requestedCoursePathSegment = parts[0];
 const isCourseForumPage = parts.length === 2 && parts[1] === 'foro';
+const canonicalCourseId = await canonicalizeCourseId(requestedCoursePathSegment);
 
-const courseIndex = await getEntry('cursos', `${courseSlug}/_index`);
+const courseIndex = canonicalCourseId
+  ? await getEntry('cursos', `${canonicalCourseId}/_index`)
+  : null;
 if (!courseIndex) return Astro.redirect('/cursos');
+const courseSlug = canonicalCourseId;
+const courseData = (courseIndex.data || {}) as Record<string, unknown>;
+const preferredCoursePathSegment = getPreferredCoursePathSegment(
+  canonicalCourseId,
+  courseData,
+);
+const courseHref = buildCourseHref(canonicalCourseId, courseData);
 
 const session = (Astro.locals as any).session;
 const hasAccess = courseIndex.data.public || session;
@@ -63,17 +81,23 @@ const canManageLiveInteractions = normalizeRole(sessionEnrollmentRole) === 'teac
 const hasCourseEnrollment = Boolean(sessionEnrollmentRole);
 
 const allLessons = (await getCollection('cursos'))
-  .filter((entry) => entry.id.startsWith(`${courseSlug}/`) && !entry.id.endsWith('_index'))
+  .filter((entry) => entry.id.startsWith(`${canonicalCourseId}/`) && !entry.id.endsWith('_index'))
   .sort((a, b) => (a.data.order || 0) - (b.data.order || 0));
+const lessonPathIndex = buildCourseLessonPathIndex(
+  canonicalCourseId,
+  courseData,
+  allLessons,
+);
 
 let currentEntry;
 if (parts.length === 1 || isCourseForumPage) {
   currentEntry = courseIndex;
 } else {
   const lessonPath = parts.slice(1).join('/');
-  currentEntry = allLessons.find((lesson) => lesson.id === `${courseSlug}/${lessonPath}`);
+  const lessonMatch = findLessonByCoursePath(lessonPath, lessonPathIndex);
+  currentEntry = lessonMatch?.entry;
   if (!currentEntry) {
-    return Astro.redirect(`/cursos/${encodeURIComponent(courseSlug)}`);
+    return Astro.redirect(courseHref);
   }
 
   const visibility = currentEntry.data.visibility;
@@ -83,9 +107,27 @@ if (parts.length === 1 || isCourseForumPage) {
     }
 
     if (!canManageLiveInteractions && !hasCourseEnrollment) {
-      return Astro.redirect(`/cursos/${encodeURIComponent(courseSlug)}`);
+      return Astro.redirect(courseHref);
     }
   }
+
+  if (
+    requestedCoursePathSegment !== preferredCoursePathSegment ||
+    lessonPath !== (lessonMatch?.shortPath || '')
+  ) {
+    return Astro.redirect(
+      `${buildCourseSlideLessonHref(
+        canonicalCourseId,
+        courseData,
+        currentEntry,
+        lessonPathIndex,
+      )}${Astro.url.search}`,
+    );
+  }
+}
+
+if ((parts.length === 1 || isCourseForumPage) && requestedCoursePathSegment !== preferredCoursePathSegment) {
+  return Astro.redirect(`/cursos/slides/${encodeURIComponent(preferredCoursePathSegment)}${Astro.url.search}`);
 }
 
 const { Content } = await render(currentEntry);

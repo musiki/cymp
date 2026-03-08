@@ -1,5 +1,6 @@
 import type { APIContext } from 'astro';
 import { AccessToken } from 'livekit-server-sdk';
+import { resolveLiveParticipantRole } from './access';
 
 export type LiveKitParticipantRole = 'teacher' | 'student';
 
@@ -43,7 +44,7 @@ export const createLiveKitTokenResponse = async ({ request, locals }: APIContext
     url.searchParams.get('user') ||
     url.searchParams.get('username');
   const requestedName = url.searchParams.get('name');
-  const requestedRole = url.searchParams.get('role');
+  const requestedCourse = normalizeText(url.searchParams.get('course'));
 
   const sessionName = normalizeText(session?.user?.name);
   const sessionEmail = normalizeText(session?.user?.email);
@@ -54,7 +55,7 @@ export const createLiveKitTokenResponse = async ({ request, locals }: APIContext
     sanitizeIdentity(sessionName) ||
     createGuestIdentity();
   const name = normalizeText(requestedName) || sessionName || identity;
-  const role = normalizeRole(requestedRole);
+  const role = await resolveLiveParticipantRole(session, requestedCourse);
 
   const apiKey = normalizeText(import.meta.env.LIVEKIT_API_KEY);
   const apiSecret = normalizeText(import.meta.env.LIVEKIT_API_SECRET);

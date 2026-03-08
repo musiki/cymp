@@ -3,6 +3,8 @@ import type { RoomPresentationOption } from '../lib/live/presentation-options';
 
 type Props = {
   livekitUrl?: string;
+  courseId?: string;
+  courseHomeHref?: string;
   defaultIdentity?: string;
   defaultLayout?: 'grid' | 'teacher' | 'presentation' | 'screenshare';
   defaultName?: string;
@@ -14,6 +16,8 @@ type Props = {
 
 const {
   livekitUrl = '',
+  courseId = '',
+  courseHomeHref = '/cursos',
   defaultIdentity = '',
   defaultLayout = 'presentation',
   defaultName = '',
@@ -41,189 +45,282 @@ if (
 }
 ---
 
-<section class="conference-shell" data-conference-root data-livekit-url={livekitUrl}>
-  <header class="conference-hero">
-    <div>
-      <p class="conference-eyebrow">Astro + LiveKit</p>
-      <h1>Sala performativa</h1>
-      <p class="conference-description" data-room-status>
-        Configura la sala y conecta. Astro renderiza la estructura; LiveKit la hidrata.
-      </p>
-    </div>
-    <div class="conference-state">
-      <span class="conference-chip" data-room-state>Desconectado</span>
-      <span class="conference-chip" data-participant-count>0 participantes</span>
-    </div>
-  </header>
+<section
+  class="conference-shell"
+  data-conference-root
+  data-livekit-url={livekitUrl}
+  data-course-id={courseId}
+>
+  <section class="conference-stage-frame">
+    <section class="conference-stage" data-stage data-layout={defaultLayout}>
+      <section class="conference-stage-panel conference-stage-panel--presentation" data-panel="presentation">
+        <div class="conference-stage-label">Presentation</div>
+        <div class="conference-presentation">
+          <iframe
+            title="Presentation stage"
+            data-presentation-frame
+            hidden
+            loading="lazy"
+            allowfullscreen
+          ></iframe>
+          <div class="conference-empty conference-empty--presentation" data-presentation-placeholder>
+            Select a lesson with theme to load Reveal.
+          </div>
+        </div>
+      </section>
 
-  <div class="conference-workbench">
-    <section class="conference-main">
-      <section class="conference-stage" data-stage data-layout={defaultLayout}>
-        <section class="conference-panel" data-panel="teacher">
-          <div class="conference-panel-head">
-            <h2>Teacher stage</h2>
-            <p>Presencia principal</p>
-          </div>
-          <div class="conference-slot" data-slot="teacher" data-empty-label="Waiting for teacher video"></div>
-        </section>
+      <section class="conference-stage-panel conference-stage-panel--focus" data-panel="teacher">
+        <div class="conference-stage-label">Speaker</div>
+        <div
+          class="conference-slot conference-slot--focus"
+          data-slot="teacher"
+          data-empty-label="Speaker camera"
+        ></div>
+      </section>
 
-        <section class="conference-panel" data-panel="presentation">
-          <div class="conference-panel-head">
-            <h2>Presentation</h2>
-            <p>Reveal deck embebido</p>
-          </div>
-          <div class="conference-presentation">
-            <iframe
-              title="Presentation stage"
-              data-presentation-frame
-              hidden
-              loading="lazy"
-              allowfullscreen
-            ></iframe>
-            <div class="conference-empty" data-presentation-placeholder>
-              Carga una ruta de slides y la escena queda integrada al layout sin React.
-            </div>
-          </div>
-        </section>
+      <section class="conference-stage-panel conference-stage-panel--screen" data-panel="screen">
+        <div class="conference-stage-label">Share Screen</div>
+        <div
+          class="conference-slot conference-slot--screen"
+          data-slot="screen"
+          data-empty-label="Screen share"
+        ></div>
+      </section>
 
-        <section class="conference-panel" data-panel="screen">
-          <div class="conference-panel-head">
-            <h2>Screen share</h2>
-            <p>Captura docente o participante</p>
-          </div>
-          <div class="conference-slot" data-slot="screen" data-empty-label="Shared screens appear here"></div>
-        </section>
+      <section class="conference-stage-panel conference-stage-panel--grid" data-panel="grid">
+        <div class="conference-stage-label">Grid</div>
+        <div
+          class="conference-slot conference-slot--grid"
+          data-slot="grid"
+          data-empty-label="Participants grid"
+        ></div>
       </section>
     </section>
+  </section>
 
-    <aside class="conference-sidebar">
-      <div class="conference-sidebar-stack">
-        <section class="conference-panel conference-panel--sidebar">
-          <div class="conference-panel-head">
-            <h2>Session controls</h2>
-            <p>La sala central sigue siendo /room</p>
-          </div>
+  <aside class="conference-sidebar">
+    <div class="conference-sidebar-scroll">
+      <section class="conference-sidebar-section conference-sidebar-section--meta">
+        <div class="conference-meta-shell">
+          <div class="conference-meta-fields">
+            <div class="conference-field">
+              <label for="conference-room-input">Sala</label>
+              <input id="conference-room-input" type="text" value={defaultRoom} data-room-input />
+            </div>
 
-          <div class="conference-controls conference-controls--sidebar">
-            <label>
-              <span>Sala</span>
-              <input type="text" value={defaultRoom} data-room-input />
-            </label>
-            <label>
-              <span>Identity</span>
-              <input type="text" value={defaultIdentity} data-identity-input />
-            </label>
-            <label>
-              <span>Display name</span>
-              <input type="text" value={defaultName} data-name-input />
-            </label>
-            <label>
-              <span>Rol</span>
-              <select data-role-input>
-                <option value="teacher" selected={defaultRole === 'teacher'}>Teacher</option>
-                <option value="student" selected={defaultRole !== 'teacher'}>Student</option>
-              </select>
-            </label>
-            <label>
-              <span>Layout</span>
-              <select data-layout-input>
-                <option value="grid" selected={defaultLayout === 'grid'}>Grid</option>
-                <option value="teacher" selected={defaultLayout === 'teacher'}>Teacher</option>
-                <option value="presentation" selected={defaultLayout === 'presentation'}>
-                  Presentation
-                </option>
-                <option value="screenshare" selected={defaultLayout === 'screenshare'}>
-                  Screen share
-                </option>
-              </select>
-            </label>
-            <label>
-              <span>Lesson with theme</span>
-              <div class="conference-inline-input conference-inline-input--stack">
-                <select data-presentation-select>
-                  <option value="">Sin presentacion cargada</option>
-                  {normalizedPresentationOptions.map((option) => (
-                    <option value={option.value} selected={option.value === defaultPresentation}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <button type="button" class="conference-secondary" data-action="presentation">
-                  Aplicar clase
-                </button>
+            <div class="conference-field">
+              <label for="conference-identity-input">Identity</label>
+              <input
+                id="conference-identity-input"
+                type="text"
+                value={defaultIdentity}
+                data-identity-input
+              />
+            </div>
+
+            <div class="conference-field">
+              <label for="conference-name-input">Nombre</label>
+              <div class="conference-name-row">
+                <input id="conference-name-input" type="text" value={defaultName} data-name-input />
+                <span class="conference-role-tag" data-role-label
+                  >{defaultRole === 'teacher' ? 'teacher' : 'student'}</span
+                >
               </div>
-            </label>
-          </div>
-
-          <div class="conference-actions conference-actions--sidebar">
-            <button type="button" data-action="connect">Conectar</button>
-            <button type="button" class="conference-secondary" data-action="disconnect" disabled>
-              Desconectar
-            </button>
-            <button type="button" class="conference-secondary" data-action="camera" disabled>
-              Encender camara
-            </button>
-            <button type="button" class="conference-secondary" data-action="microphone" disabled>
-              Activar microfono
-            </button>
-            <button type="button" class="conference-secondary" data-action="screen-share" disabled>
-              Compartir pantalla
-            </button>
-          </div>
-        </section>
-
-        <section class="conference-panel conference-panel--sidebar">
-          <div class="conference-panel-head">
-            <h2>Chat</h2>
-            <p>Canal comun de la sala</p>
-          </div>
-          <div class="conference-chat">
-            <ul class="conference-chat-list" data-chat-list>
-              <li class="conference-chat-empty">Conecta la sala para habilitar el chat.</li>
-            </ul>
-            <div class="conference-chat-compose">
-              <textarea
-                rows="3"
-                placeholder="Escribe un mensaje al grupo"
-                data-chat-input
-              ></textarea>
-              <button type="button" class="conference-secondary" data-action="chat-send" disabled>
-                Enviar
-              </button>
+              <input type="hidden" value={defaultRole} data-role-input />
             </div>
           </div>
-        </section>
 
-        <section class="conference-panel conference-panel--sidebar">
-          <div class="conference-panel-head">
-            <h2>Student visuals</h2>
-            <p>Grid lateral de participantes</p>
+          <div class="conference-self-preview-shell">
+            <div
+              class="conference-self-preview"
+              data-slot="identity-preview"
+              data-empty-label="Camera preview"
+            ></div>
           </div>
-          <div class="conference-slot conference-slot--sidebar" data-slot="students" data-empty-label="Students appear here"></div>
-        </section>
+        </div>
 
-        <section class="conference-panel conference-panel--sidebar">
-          <div class="conference-panel-head">
-            <h2>Roster</h2>
-            <p>Ordenado por rol</p>
+        <p class="conference-statusline" data-room-status>
+          Configura la sala y conecta.
+        </p>
+        <span class="conference-sr-only" data-room-state>Desconectado</span>
+      </section>
+
+      <section class="conference-sidebar-section">
+        <div class="conference-sidebar-heading">CHAT</div>
+        <div class="conference-chat">
+          <ul class="conference-chat-list" data-chat-list>
+            <li class="conference-chat-empty">Conecta la sala para habilitar el chat.</li>
+          </ul>
+          <div class="conference-chat-compose">
+            <textarea rows="3" placeholder="Escribe un mensaje" data-chat-input></textarea>
+            <button type="button" class="conference-chat-send" data-action="chat-send" disabled>
+              Send
+            </button>
           </div>
+        </div>
+      </section>
+
+      <section class="conference-sidebar-section">
+        <div class="conference-sidebar-heading">Students grid visual</div>
+        <div
+          class="conference-slot conference-slot--sidebar"
+          data-slot="students"
+          data-empty-label="Students"
+        ></div>
+      </section>
+    </div>
+  </aside>
+
+  <footer class="conference-bottombar">
+    <div class="conference-bar-group conference-bar-group--session">
+      <button
+        type="button"
+        class="conference-connect-button"
+        data-action="connect-toggle"
+        aria-label="Conectar a la sala"
+        title="Conectar"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="conference-connect-arrow conference-connect-arrow--in">
+          <path d="M4 12h12.2l-3.6-3.6 1.4-1.4L20 13l-6 6-1.4-1.4 3.6-3.6H4z" fill="currentColor"></path>
+        </svg>
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="conference-connect-arrow conference-connect-arrow--out">
+          <path d="M20 12H7.8l3.6 3.6-1.4 1.4L4 11l6-6 1.4 1.4L7.8 10H20z" fill="currentColor"></path>
+        </svg>
+        <span class="conference-sr-only">Connect</span>
+      </button>
+
+      <div class="conference-count-shell">
+        <button type="button" class="conference-count-button" aria-label="Participantes conectados">
+          <span class="conference-count" data-participant-count data-compact="true">0</span>
+        </button>
+        <div class="conference-roster-popup">
           <ul class="conference-roster" data-participant-list>
             <li class="conference-roster-empty">Todavia no hay participantes en la sala.</li>
           </ul>
-        </section>
+        </div>
       </div>
-    </aside>
-  </div>
+
+      <button
+        type="button"
+        class="conference-live-activity"
+        data-live-activity-button
+        aria-label="Abrir interacción en vivo"
+        title="Abrir interacción en vivo"
+        hidden
+      >
+        <span class="conference-live-led" aria-hidden="true"></span>
+        <span class="conference-live-timer" data-live-activity-timer>--:--</span>
+      </button>
+    </div>
+
+    <div class="conference-bar-group conference-bar-group--layout">
+      <button type="button" class="conference-layout-button" data-layout-choice="teacher">F</button>
+      <button type="button" class="conference-layout-button" data-layout-choice="screenshare">S</button>
+      <button type="button" class="conference-layout-button" data-layout-choice="presentation">P</button>
+      <button type="button" class="conference-layout-button" data-layout-choice="grid">G</button>
+      <select class="conference-sr-only" data-layout-input aria-hidden="true" tabindex="-1">
+        <option value="teacher" selected={defaultLayout === 'teacher'}>Focus</option>
+        <option value="screenshare" selected={defaultLayout === 'screenshare'}>Share</option>
+        <option value="presentation" selected={defaultLayout === 'presentation'}>Presentation</option>
+        <option value="grid" selected={defaultLayout === 'grid'}>Grid</option>
+      </select>
+    </div>
+
+    <div class="conference-bar-group conference-bar-group--controls">
+      <div class="conference-device-stack">
+        <button
+          type="button"
+          class="conference-icon-button"
+          data-action="microphone"
+          aria-label="Activar o silenciar microfono"
+          title="Microphone. Shift + click para elegir dispositivo."
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" class="conference-icon">
+            <path
+              d="M12 15.5a3.5 3.5 0 0 0 3.5-3.5V7A3.5 3.5 0 1 0 8.5 7v5a3.5 3.5 0 0 0 3.5 3.5Zm-6-3a1 1 0 1 1 2 0 4 4 0 1 0 8 0 1 1 0 1 1 2 0 6 6 0 0 1-5 5.91V21h2a1 1 0 1 1 0 2H9a1 1 0 1 1 0-2h2v-2.59A6 6 0 0 1 6 12.5Z"
+              fill="currentColor"
+            />
+          </svg>
+          <span class="conference-mic-meter" data-mic-meter hidden></span>
+          <span class="conference-sr-only">Microphone</span>
+        </button>
+        <div class="conference-device-panel" data-audio-input-panel hidden>
+          <label for="conference-audio-input-select">Microphone</label>
+          <select id="conference-audio-input-select" data-audio-input-select>
+            <option value="">Selecciona un microfono</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="conference-device-stack">
+        <button
+          type="button"
+          class="conference-icon-button"
+          data-action="camera"
+          aria-label="Activar o apagar camara"
+          title="Camera. Shift + click para elegir dispositivo."
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" class="conference-icon">
+            <path
+              d="M4 7.5A2.5 2.5 0 0 1 6.5 5h7A2.5 2.5 0 0 1 16 7.5v1.13l2.76-1.85A1.5 1.5 0 0 1 21 8.03v7.94a1.5 1.5 0 0 1-2.24 1.25L16 15.37v1.13A2.5 2.5 0 0 1 13.5 19h-7A2.5 2.5 0 0 1 4 16.5v-9Z"
+              fill="currentColor"
+            />
+          </svg>
+          <span class="conference-sr-only">Camera</span>
+        </button>
+        <div class="conference-device-panel" data-video-input-panel hidden>
+          <label for="conference-video-input-select">Camera</label>
+          <select id="conference-video-input-select" data-video-input-select>
+            <option value="">Selecciona una camara</option>
+          </select>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        class="conference-share-button"
+        data-action="screen-share"
+        title="Compartir pantalla"
+      >
+        SHARE
+      </button>
+    </div>
+
+    <div class="conference-bar-group conference-bar-group--presentation">
+      <label class="conference-sr-only" for="conference-presentation-select">Presentacion</label>
+      <select id="conference-presentation-select" data-presentation-select>
+        <option value="">none</option>
+        {normalizedPresentationOptions.map((option) => (
+          <option value={option.value} selected={option.value === defaultPresentation}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </div>
+
+    <div class="conference-bar-group conference-bar-group--exit">
+      <span class="conference-session-timer" data-session-timer>00:00:00</span>
+      <button
+        type="button"
+        class="conference-record-button"
+        data-action="record"
+        aria-label="Grabar transmision"
+        title="Grabar transmision"
+      >
+        <span class="conference-record-dot" aria-hidden="true"></span>
+      </button>
+      <a href={courseHomeHref} class="conference-exit-button" aria-label="Volver" title="Volver">
+        X
+      </a>
+    </div>
+  </footer>
 
   <template data-template="participant-card">
     <article class="conference-tile conference-tile--participant">
       <div class="conference-tile-media" data-card-media></div>
-      <div class="conference-empty conference-empty--tile" data-card-placeholder>
-        Camera inactive
-      </div>
-      <footer class="conference-tile-footer">
+      <div class="conference-empty conference-empty--tile" data-card-placeholder></div>
+      <footer class="conference-tile-meta">
         <strong data-card-name>Participant</strong>
-        <span data-card-role>Student</span>
       </footer>
     </article>
   </template>
@@ -231,7 +328,7 @@ if (
   <template data-template="screen-card">
     <article class="conference-tile conference-tile--screen">
       <div class="conference-tile-media" data-screen-media></div>
-      <footer class="conference-tile-footer">
+      <footer class="conference-tile-meta">
         <strong data-screen-name>Screen share</strong>
         <span>Shared display</span>
       </footer>
@@ -253,7 +350,16 @@ if (
       teardown = null;
     }
 
-    teardown = mountLiveKitRoom(root);
+    try {
+      teardown = mountLiveKitRoom(root);
+    } catch (error) {
+      console.error('Conference room mount failed:', error);
+      root.dataset.mounted = 'false';
+      const status = root.querySelector('[data-room-status]');
+      if (status instanceof HTMLElement) {
+        status.textContent = error instanceof Error ? error.message : 'No fue posible iniciar la sala.';
+      }
+    }
   };
 
   if (document.readyState === 'loading') {
@@ -270,404 +376,482 @@ if (
 </script>
 
 <style>
-  .conference-shell {
-    max-width: 1400px;
-    margin: 0 auto;
-    padding: clamp(1rem, 2.5vw, 2rem);
-    display: grid;
-    gap: 1rem;
-  }
-
-  .conference-hero {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 1rem;
-    padding: 1rem 1.1rem;
-    border: 1px solid var(--c-border);
-    border-radius: 18px;
-    background:
-      radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 18%, transparent), transparent 40%),
-      linear-gradient(135deg, color-mix(in srgb, var(--c-bg) 92%, #08121f 8%), var(--c-bg));
-  }
-
-  .conference-eyebrow {
-    margin: 0 0 0.35rem;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    font-size: 0.72rem;
-    color: color-mix(in srgb, var(--accent) 65%, var(--c-fg));
-  }
-
-  .conference-hero h1 {
+  :global(body.room-page) {
     margin: 0;
-    font-size: clamp(1.7rem, 4vw, 3rem);
-    line-height: 0.95;
+    background: #000;
+    color: #f5f7fb;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow: hidden;
+    overscroll-behavior: none;
   }
 
-  .conference-description {
-    margin: 0.45rem 0 0;
-    max-width: 60ch;
-    color: var(--c-fg-dim);
+  :global(body.room-page > main) {
+    width: 100%;
+    height: 100%;
+    height: 100dvh;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
   }
 
-  .conference-state {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.6rem;
-    justify-content: flex-end;
-  }
-
-  .conference-chip {
-    display: inline-flex;
-    align-items: center;
-    min-height: 2.3rem;
-    padding: 0.45rem 0.8rem;
-    border-radius: 999px;
-    border: 1px solid var(--c-border);
-    background: color-mix(in srgb, var(--c-bg) 88%, var(--accent) 12%);
-    font-size: 0.85rem;
-    white-space: nowrap;
-  }
-
-  .conference-workbench {
+  .conference-shell {
+    --conference-bar-height: 42px;
+    --conference-line: rgba(255, 255, 255, 0.12);
+    --conference-line-soft: rgba(255, 255, 255, 0.06);
+    --conference-fg: #f5f7fb;
+    --conference-muted: rgba(245, 247, 251, 0.58);
+    --conference-dim: rgba(245, 247, 251, 0.32);
+    --conference-accent: #2a87ff;
+    --conference-green: #25cf6b;
+    --conference-red: #ff4d4d;
+    position: relative;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 100vh;
+    min-height: 100dvh;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 300px;
-    gap: 1rem;
-    align-items: start;
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 22vw);
+    background: #000;
+    color: var(--conference-fg);
+    overflow: hidden;
+    padding-bottom: var(--conference-bar-height);
   }
 
-  .conference-main {
+  .conference-stage-frame,
+  .conference-sidebar {
     min-width: 0;
-  }
-
-  .conference-controls {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 0.8rem;
-  }
-
-  .conference-controls label {
-    display: grid;
-    gap: 0.38rem;
-    font-size: 0.82rem;
-    color: var(--c-fg-dim);
-  }
-
-  .conference-controls span {
-    font-weight: 600;
-    color: var(--c-fg);
-  }
-
-  .conference-controls input,
-  .conference-controls select,
-  .conference-actions button,
-  .conference-inline-input button {
-    border: 1px solid var(--c-border);
-    border-radius: 10px;
-    background: var(--c-bg);
-    color: var(--c-fg);
-    font: inherit;
-  }
-
-  .conference-controls input,
-  .conference-controls select {
-    min-height: 2.7rem;
-    padding: 0.55rem 0.7rem;
-  }
-
-  .conference-inline-input {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 0.5rem;
-  }
-
-  .conference-inline-input--stack {
-    grid-template-columns: 1fr;
-  }
-
-  .conference-actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.65rem;
-  }
-
-  .conference-actions button,
-  .conference-inline-input button {
-    min-height: 2.7rem;
-    padding: 0.55rem 0.9rem;
-    cursor: pointer;
-  }
-
-  .conference-actions button {
-    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 88%, #001e46 12%), var(--accent));
-    color: #fff;
-    border-color: color-mix(in srgb, var(--accent) 70%, #000 30%);
-  }
-
-  .conference-actions button.conference-secondary,
-  .conference-inline-input button.conference-secondary {
-    background: var(--c-bg);
-    color: var(--c-fg);
-  }
-
-  .conference-actions button[disabled],
-  .conference-inline-input button[disabled] {
-    opacity: 0.55;
-    cursor: not-allowed;
+    min-height: 0;
+    height: calc(100vh - var(--conference-bar-height));
+    height: calc(100dvh - var(--conference-bar-height));
   }
 
   .conference-stage {
-    display: grid;
-    gap: 1rem;
-  }
-
-  .conference-stage[data-layout='presentation'] {
-    grid-template-columns: minmax(0, 1.45fr) minmax(260px, 0.85fr);
-    grid-template-areas:
-      'presentation teacher'
-      'presentation screen';
-  }
-
-  .conference-stage[data-layout='grid'] {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-areas:
-      'teacher presentation'
-      'screen presentation';
-  }
-
-  .conference-stage[data-layout='teacher'] {
-    grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.8fr);
-    grid-template-areas:
-      'teacher presentation'
-      'teacher screen';
-  }
-
-  .conference-stage[data-layout='screenshare'] {
-    grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.75fr);
-    grid-template-areas:
-      'screen presentation'
-      'screen teacher';
-  }
-
-  .conference-panel {
-    border: 1px solid var(--c-border);
-    border-radius: 18px;
-    padding: 0.95rem;
-    background:
-      linear-gradient(180deg, color-mix(in srgb, var(--c-bg) 96%, transparent), color-mix(in srgb, var(--c-bg) 90%, var(--accent) 10%));
-    min-height: 14rem;
-  }
-
-  .conference-panel--sidebar {
-    min-height: auto;
-    position: sticky;
-    top: 1rem;
-  }
-
-  .conference-panel[data-panel='teacher'] {
-    grid-area: teacher;
-  }
-
-  .conference-panel[data-panel='presentation'] {
-    grid-area: presentation;
-    min-height: 28rem;
-  }
-
-  .conference-panel[data-panel='screen'] {
-    grid-area: screen;
-    min-height: 18rem;
-  }
-
-  .conference-panel-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 0.75rem;
-    margin-bottom: 0.85rem;
-  }
-
-  .conference-panel-head h2 {
-    margin: 0;
-    font-size: 1rem;
-  }
-
-  .conference-panel-head p {
-    margin: 0;
-    color: var(--c-fg-dim);
-    font-size: 0.8rem;
-  }
-
-  .conference-slot {
-    display: grid;
-    gap: 0.75rem;
-    align-content: start;
-    min-height: calc(100% - 2.2rem);
-  }
-
-  .conference-slot[data-slot='teacher'] {
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  }
-
-  .conference-slot[data-slot='students'] {
-    grid-template-columns: 1fr;
-  }
-
-  .conference-slot[data-slot='screen'] {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .conference-slot:empty::before {
-    content: attr(data-empty-label);
-    min-height: 10rem;
-    display: grid;
-    place-items: center;
-    border-radius: 14px;
-    border: 1px dashed color-mix(in srgb, var(--c-border) 80%, transparent);
-    color: var(--c-fg-dim);
-    background: color-mix(in srgb, var(--c-bg) 92%, transparent);
-  }
-
-  .conference-presentation {
-    min-height: 22rem;
-    border-radius: 16px;
+    position: relative;
+    width: 100%;
+    height: 100%;
+    background: #000;
     overflow: hidden;
-    border: 1px solid color-mix(in srgb, var(--c-border) 84%, transparent);
-    background: #090909;
+  }
+
+  .conference-stage-panel {
+    position: absolute;
+    inset: 0;
+    min-height: 0;
+    min-width: 0;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    background: transparent;
+    border-right: 1px solid var(--conference-line);
+    border-bottom: 1px solid var(--conference-line);
+  }
+
+  .conference-stage-panel--presentation,
+  .conference-stage-panel--focus,
+  .conference-stage-panel--screen,
+  .conference-stage-panel--grid {
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--presentation,
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus,
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--focus,
+  .conference-stage[data-layout='screenshare'] .conference-stage-panel--screen,
+  .conference-stage[data-layout='grid'] .conference-stage-panel--grid {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--presentation,
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--focus,
+  .conference-stage[data-layout='screenshare'] .conference-stage-panel--screen,
+  .conference-stage[data-layout='grid'] .conference-stage-panel--grid {
+    inset: 0;
+  }
+
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--presentation {
+    grid-template-rows: 1fr;
+  }
+
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--presentation .conference-stage-label {
+    display: none;
+  }
+
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus {
+    inset: auto 1rem 1rem auto;
+    width: clamp(140px, 18vw, 220px);
+    aspect-ratio: 1;
+    display: block;
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    border-right: 1px solid rgba(255, 255, 255, 0.24);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.24);
+    border-radius: 999px;
+    overflow: hidden;
+    z-index: 4;
+    background: rgba(0, 0, 0, 0.92);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+  }
+
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-stage-label,
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--screen {
+    display: none;
+  }
+
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--focus {
+    grid-template-rows: 1fr;
+  }
+
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--focus .conference-stage-label,
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--focus .conference-slot--focus::before {
+    display: none;
+  }
+
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--focus .conference-slot--focus,
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--focus .conference-tile,
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--focus .conference-tile-media,
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--focus .conference-media-frame {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--focus .conference-tile {
+    grid-template-rows: 1fr;
+    border: 0;
+    background: #000;
+  }
+
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--focus .conference-tile-meta {
+    position: absolute;
+    inset: auto 0 0 0;
+    border-top: 0;
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.8) 100%);
+  }
+
+  .conference-stage[data-layout='screenshare'] .conference-stage-panel--screen {
+    grid-template-rows: 1fr;
+  }
+
+  .conference-stage[data-layout='screenshare'] .conference-stage-panel--screen .conference-stage-label {
+    display: none;
+  }
+
+  .conference-stage[data-layout='screenshare'] .conference-stage-panel--screen .conference-slot--screen,
+  .conference-stage[data-layout='screenshare'] .conference-stage-panel--screen .conference-tile--screen,
+  .conference-stage[data-layout='screenshare'] .conference-stage-panel--screen .conference-tile-media,
+  .conference-stage[data-layout='screenshare'] .conference-stage-panel--screen .conference-media-frame {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .conference-stage[data-layout='screenshare'] .conference-stage-panel--screen .conference-tile--screen {
+    grid-template-rows: 1fr;
+    border: 0;
+    background: #000;
+  }
+
+  .conference-stage[data-layout='screenshare'] .conference-stage-panel--screen .conference-tile-meta {
+    display: none;
+  }
+
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-slot--focus {
+    position: absolute;
+    inset: 0;
+    min-height: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 999px;
+    overflow: hidden;
+  }
+
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-slot--focus::before {
+    display: none;
+  }
+
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--presentation,
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--screen,
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--grid,
+  .conference-stage[data-layout='screenshare'] .conference-stage-panel--presentation,
+  .conference-stage[data-layout='screenshare'] .conference-stage-panel--focus,
+  .conference-stage[data-layout='screenshare'] .conference-stage-panel--grid,
+  .conference-stage[data-layout='grid'] .conference-stage-panel--presentation,
+  .conference-stage[data-layout='grid'] .conference-stage-panel--focus,
+  .conference-stage[data-layout='grid'] .conference-stage-panel--screen {
+    display: none;
+  }
+
+  .conference-stage-label,
+  .conference-sidebar-heading {
+    padding: 0.45rem 0.75rem;
+    color: var(--conference-muted);
+    font-size: 0.66rem;
+    line-height: 1;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--conference-line);
+  }
+
+  .conference-slot,
+  .conference-presentation,
+  .conference-self-preview {
+    min-height: 0;
+    position: relative;
+    display: grid;
+    place-items: stretch;
+    overflow: hidden;
+    background: #000;
+  }
+
+  .conference-slot::before,
+  .conference-self-preview::before {
+    content: attr(data-empty-label);
+    position: absolute;
+    left: 0.8rem;
+    bottom: 0.7rem;
+    color: var(--conference-dim);
+    font-size: 0.72rem;
+    letter-spacing: 0.02em;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .conference-slot:has(.conference-tile)::before,
+  .conference-slot:has(.conference-media-frame)::before,
+  .conference-self-preview:has(.conference-media-frame)::before {
+    content: '';
+  }
+
+  .conference-slot--grid {
+    padding: 0.8rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    grid-auto-rows: minmax(187px, 1fr);
+    gap: 0.8rem;
+    align-content: start;
+    overflow: auto;
+  }
+
+  .conference-slot--sidebar {
+    min-height: 15rem;
+    max-height: 30vh;
+    padding: 0.2rem 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    gap: 0.55rem;
+    align-content: start;
+    overflow: auto;
   }
 
   .conference-presentation iframe {
     width: 100%;
     height: 100%;
-    min-height: 22rem;
-    border: none;
+    border: 0;
     background: #000;
   }
 
   .conference-empty {
-    min-height: 100%;
     display: grid;
     place-items: center;
     padding: 1rem;
+    color: var(--conference-dim);
     text-align: center;
-    color: var(--c-fg-dim);
-    background:
-      radial-gradient(circle at top, rgba(255, 255, 255, 0.06), transparent 45%),
-      linear-gradient(135deg, rgba(255, 255, 255, 0.02), transparent);
+    line-height: 1.45;
   }
 
   .conference-empty--tile {
-    min-height: 10rem;
-    border-radius: 14px;
-    border: 1px dashed color-mix(in srgb, var(--c-border) 76%, transparent);
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
   }
 
-  .conference-tile {
-    display: grid;
-    gap: 0.7rem;
-    padding: 0.7rem;
-    border-radius: 16px;
-    border: 1px solid color-mix(in srgb, var(--c-border) 88%, transparent);
-    background: color-mix(in srgb, var(--c-bg) 92%, transparent);
-  }
-
-  .conference-tile[data-role='teacher'] {
-    border-color: color-mix(in srgb, var(--accent) 60%, var(--c-border));
-  }
-
-  .conference-tile-media {
-    min-height: 10rem;
-    position: relative;
-    overflow: hidden;
-    border-radius: 14px;
-    background: #06080b;
-  }
-
-  .conference-media-frame,
-  .conference-media-frame--screen {
-    width: 100%;
-    height: 100%;
-  }
-
-  .conference-media-frame video,
-  .conference-media-frame--screen video {
-    width: 100%;
-    height: 100%;
-    display: block;
-    object-fit: cover;
-    background: #000;
-  }
-
-  .conference-media-frame--screen video {
-    min-height: 18rem;
-    object-fit: contain;
-  }
-
-  .conference-tile-footer {
-    display: flex;
-    justify-content: space-between;
-    gap: 0.75rem;
-    align-items: baseline;
-    font-size: 0.85rem;
-  }
-
-  .conference-tile-footer strong {
-    font-size: 0.95rem;
-  }
-
-  .conference-tile-footer span {
-    color: var(--c-fg-dim);
+  .conference-empty[hidden],
+  .conference-presentation > iframe[hidden],
+  .conference-presentation > .conference-empty--presentation[hidden] {
+    display: none !important;
   }
 
   .conference-sidebar {
+    border-left: 1px solid var(--conference-line);
+  }
+
+  .conference-sidebar-scroll {
+    height: 100%;
+    overflow-y: auto;
+    background: transparent;
+    overscroll-behavior: contain;
+  }
+
+  .conference-sidebar-section {
+    display: grid;
+    gap: 0.75rem;
+    padding: 0.75rem 0.9rem 0.9rem;
+    border-bottom: 1px solid var(--conference-line);
+  }
+
+  .conference-meta-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 112px;
+    gap: 0.8rem;
+    align-items: start;
+  }
+
+  .conference-meta-fields {
+    display: grid;
+    gap: 0.6rem;
+  }
+
+  .conference-field {
+    display: grid;
+    gap: 0.28rem;
+  }
+
+  .conference-field label {
+    color: var(--conference-muted);
+    font-size: 0.66rem;
+    line-height: 1;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .conference-field input,
+  .conference-chat-compose textarea,
+  .conference-chat-compose button,
+  .conference-bottombar select,
+  .conference-device-panel select {
+    font: inherit;
+  }
+
+  .conference-field input,
+  .conference-chat-compose textarea,
+  .conference-bottombar select,
+  .conference-device-panel select {
+    width: 100%;
+    border: 0;
+    border-bottom: 1px solid var(--conference-line);
+    background: transparent;
+    color: var(--conference-fg);
+    padding: 0.28rem 0 0.32rem;
+    outline: none;
+    box-shadow: none;
+  }
+
+  .conference-field input:focus,
+  .conference-chat-compose textarea:focus,
+  .conference-bottombar select:focus,
+  .conference-device-panel select:focus {
+    border-bottom-color: var(--conference-accent);
+  }
+
+  .conference-name-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.55rem;
+    align-items: end;
+  }
+
+  .conference-role-tag {
+    color: var(--conference-muted);
+    font-size: 0.78rem;
+    white-space: nowrap;
+    text-transform: lowercase;
+  }
+
+  .conference-self-preview-shell {
     min-width: 0;
   }
 
-  .conference-sidebar-stack {
-    display: grid;
-    gap: 1rem;
-    position: sticky;
-    top: 1rem;
+  .conference-self-preview {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    border: 1px solid var(--conference-line-soft);
   }
 
-  .conference-slot--sidebar .conference-tile-media {
-    min-height: 8.5rem;
+  .conference-self-preview,
+  .conference-self-preview .conference-media-frame,
+  .conference-self-preview .conference-media-frame > video {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .conference-self-preview .conference-media-frame > video {
+    position: absolute;
+    inset: 0;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    object-fit: cover !important;
+    object-position: 50% 42% !important;
+    transform: none !important;
+  }
+
+  .conference-statusline {
+    margin: 0;
+    color: var(--conference-muted);
+    font-size: 0.76rem;
+    line-height: 1.4;
   }
 
   .conference-chat {
+    min-height: 0;
     display: grid;
-    gap: 0.75rem;
+    gap: 0.7rem;
   }
 
   .conference-chat-list {
-    list-style: none;
     margin: 0;
     padding: 0;
-    display: grid;
-    gap: 0.55rem;
-    max-height: 15rem;
+    list-style: none;
+    min-height: 12rem;
+    max-height: 34vh;
     overflow-y: auto;
+    display: grid;
+    gap: 0.45rem;
   }
 
   .conference-chat-item,
   .conference-chat-empty {
-    padding: 0.7rem 0.8rem;
-    border-radius: 12px;
-    border: 1px solid color-mix(in srgb, var(--c-border) 88%, transparent);
-    background: color-mix(in srgb, var(--c-bg) 92%, transparent);
+    padding: 0.38rem 0;
+    border-bottom: 1px solid var(--conference-line-soft);
+    color: rgba(245, 247, 251, 0.6);
+    font-size: 0.85rem;
+  }
+
+  .conference-chat-meta {
+    display: flex;
+    align-items: baseline;
+    gap: 0.45rem;
+    margin-bottom: 0.18rem;
+    font-style: italic;
   }
 
   .conference-chat-item strong {
-    display: block;
-    margin-bottom: 0.18rem;
-    font-size: 0.82rem;
+    display: inline;
+    color: rgba(245, 247, 251, 0.6);
+    font-size: inherit;
+    font-weight: 500;
+    font-style: italic;
   }
 
   .conference-chat-item time {
-    display: block;
-    margin-top: 0.35rem;
-    font-size: 0.72rem;
-    color: var(--c-fg-dim);
+    display: inline;
+    color: rgba(245, 247, 251, 0.6);
+    font-size: inherit;
+    font-style: italic;
+  }
+
+  .conference-chat-body {
+    color: rgba(245, 247, 251, 0.6);
+    font-size: inherit;
+    line-height: 1.42;
   }
 
   .conference-chat-compose {
@@ -676,91 +860,754 @@ if (
   }
 
   .conference-chat-compose textarea {
-    width: 100%;
-    min-height: 5.5rem;
+    min-height: 3.8rem;
     resize: vertical;
-    border: 1px solid var(--c-border);
-    border-radius: 12px;
-    background: var(--c-bg);
-    color: var(--c-fg);
-    font: inherit;
-    padding: 0.7rem 0.8rem;
+  }
+
+  .conference-chat-send {
+    justify-self: start;
+    border: 0;
+    background: transparent;
+    color: var(--conference-muted);
+    padding: 0;
+    cursor: pointer;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-size: 0.72rem;
+  }
+
+  .conference-chat-send:hover:not(:disabled) {
+    color: var(--conference-fg);
+  }
+
+  .conference-chat-send:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .conference-tile {
+    min-height: 0;
+    position: relative;
+    display: grid;
+    grid-template-rows: 1fr auto;
+    background: #020202;
+    border: 1px solid var(--conference-line-soft);
+    overflow: hidden;
+  }
+
+  .conference-slot--grid .conference-tile,
+  .conference-slot--sidebar .conference-tile {
+    aspect-ratio: 4 / 3;
+  }
+
+  .conference-tile--participant {
+    grid-template-rows: 1fr;
+  }
+
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-tile,
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-media-frame,
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-tile-media,
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-empty--tile {
+    width: 100%;
+    height: 100%;
+    border-radius: 999px;
+    border: 0;
+  }
+
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-tile {
+    grid-template-rows: 1fr;
+    background: transparent;
+  }
+
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-media-frame video {
+    position: absolute;
+    inset: 0;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    object-fit: cover !important;
+    object-position: 50% 42% !important;
+    transform: none !important;
+  }
+
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-media-frame,
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-media-frame > video,
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-tile-media {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .conference-tile-media,
+  .conference-media-frame {
+    min-height: 0;
+    position: relative;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+  }
+
+  .conference-media-frame > video,
+  .conference-media-frame > audio,
+  .conference-media-frame > img,
+  .conference-media-frame > canvas,
+  .conference-tile-media > video,
+  .conference-tile-media > img,
+  .conference-tile-media > canvas {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    object-fit: cover;
+    object-position: center;
+    background: #000;
+  }
+
+  .conference-media-frame--screen video {
+    object-fit: contain;
+  }
+
+  .conference-self-preview .conference-media-frame--local-preview > video,
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-media-frame--local-camera > video,
+  .conference-media-frame--local-preview > video,
+  .conference-media-frame--local-camera > video {
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    object-fit: contain !important;
+    object-position: center center !important;
+    background: #000;
+    transform: none !important;
+  }
+
+  .conference-tile-meta {
+    display: grid;
+    gap: 0.08rem;
+    padding: 0.4rem 0.45rem;
+    border-top: 1px solid var(--conference-line-soft);
+    background: rgba(0, 0, 0, 0.88);
+  }
+
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-tile-meta {
+    display: none;
+  }
+
+  .conference-tile--participant .conference-tile-meta {
+    position: absolute;
+    inset: auto 0 0 0;
+    display: flex;
+    align-items: flex-end;
+    min-height: 2rem;
+    padding: 0.5rem 0.6rem 0.45rem;
+    border-top: 0;
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.76) 100%);
+    pointer-events: none;
+  }
+
+  .conference-tile-meta strong {
+    color: var(--conference-fg);
+    font-size: 0.76rem;
+    font-weight: 600;
+  }
+
+  .conference-bottombar {
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: 80;
+    min-height: var(--conference-bar-height);
+    display: grid;
+    grid-template-columns: auto auto auto minmax(180px, 1fr) auto;
+    align-items: stretch;
+    border-top: 1px solid var(--conference-line);
+    background: rgba(0, 0, 0, 0.98);
+  }
+
+  .conference-bar-group {
+    min-width: 0;
+    display: flex;
+    align-items: stretch;
+    border-right: 1px solid var(--conference-line);
+  }
+
+  .conference-bar-group--presentation {
+    padding: 0 0.65rem;
+  }
+
+  .conference-bar-group--presentation select {
+    min-width: min(100%, 24rem);
+    border-bottom: 0;
+    align-self: stretch;
+    color: var(--conference-muted);
+  }
+
+  .conference-bar-group--exit {
+    border-right: 0;
+    justify-content: flex-end;
+  }
+
+  .conference-connect-button,
+  .conference-icon-button,
+  .conference-layout-button,
+  .conference-share-button,
+  .conference-exit-button,
+  .conference-record-button,
+  .conference-count-button,
+  .conference-live-activity {
+    border: 0;
+    background: transparent;
+    color: var(--conference-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    cursor: pointer;
+    text-decoration: none;
+  }
+
+  .conference-connect-button {
+    min-width: 58px;
+    padding: 0 0.9rem;
+    color: var(--conference-green);
+  }
+
+  .conference-connect-button[data-connected='true'] {
+    color: var(--conference-red);
+  }
+
+  .conference-connect-arrow {
+    width: 18px;
+    height: 18px;
+    display: block;
+  }
+
+  .conference-connect-arrow--out {
+    display: none;
+  }
+
+  .conference-connect-button[data-connected='true'] .conference-connect-arrow--in {
+    display: none;
+  }
+
+  .conference-connect-button[data-connected='true'] .conference-connect-arrow--out {
+    display: block;
+  }
+
+  .conference-connect-button:hover:not(:disabled),
+  .conference-icon-button:hover:not(:disabled),
+  .conference-layout-button:hover:not(:disabled),
+  .conference-share-button:hover:not(:disabled),
+  .conference-record-button:hover:not(:disabled),
+  .conference-exit-button:hover,
+  .conference-count-button:hover,
+  .conference-live-activity:hover {
+    color: var(--conference-fg);
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .conference-connect-button:disabled,
+  .conference-icon-button:disabled,
+  .conference-layout-button:disabled,
+  .conference-share-button:disabled,
+  .conference-record-button:disabled,
+  .conference-live-activity:disabled {
+    opacity: 0.36;
+    cursor: not-allowed;
+  }
+
+  .conference-icon-button,
+  .conference-layout-button,
+  .conference-share-button,
+  .conference-record-button,
+  .conference-exit-button {
+    position: relative;
+    min-width: 40px;
+    padding: 0 0.72rem;
+  }
+
+  .conference-layout-button,
+  .conference-share-button,
+  .conference-exit-button,
+  .conference-live-timer {
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .conference-icon {
+    width: 15px;
+    height: 15px;
+    display: block;
+  }
+
+  .conference-mic-meter {
+    --conference-mic-level: 0;
+    position: absolute;
+    left: 0.44rem;
+    right: 0.44rem;
+    bottom: 0.34rem;
+    height: 2px;
+    border-radius: 999px;
+    background: rgba(37, 207, 107, 0.14);
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .conference-mic-meter::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--conference-green);
+    transform: scaleX(var(--conference-mic-level));
+    transform-origin: left center;
+    opacity: 0.96;
+  }
+
+  .conference-count-shell {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+  }
+
+  .conference-count-button {
+    min-width: 36px;
+    padding: 0 0.55rem;
+  }
+
+  .conference-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--conference-fg);
+    font-size: 0.76rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .conference-roster-popup {
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 1px);
+    min-width: 240px;
+    max-width: 320px;
+    max-height: 40vh;
+    overflow-y: auto;
+    padding: 0.65rem 0.8rem;
+    border: 1px solid var(--conference-line);
+    background: rgba(0, 0, 0, 0.98);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 140ms ease;
+  }
+
+  .conference-count-shell:hover .conference-roster-popup,
+  .conference-count-shell:focus-within .conference-roster-popup {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
   }
 
   .conference-roster {
-    list-style: none;
     margin: 0;
     padding: 0;
+    list-style: none;
     display: grid;
-    gap: 0.45rem;
+    gap: 0.4rem;
   }
 
   .conference-roster-item,
   .conference-roster-empty {
     display: grid;
-    gap: 0.08rem;
-    padding: 0.65rem 0.75rem;
-    border-radius: 12px;
-    border: 1px solid color-mix(in srgb, var(--c-border) 88%, transparent);
-    background: color-mix(in srgb, var(--c-bg) 92%, transparent);
-    font-size: 0.9rem;
+    gap: 0.1rem;
+    padding: 0.28rem 0;
+    border-bottom: 1px solid var(--conference-line-soft);
   }
 
-  .conference-roster-item span:last-child,
-  .conference-roster-empty {
-    color: var(--c-fg-dim);
-    font-size: 0.78rem;
+  .conference-roster-item span:first-child {
+    color: var(--conference-fg);
   }
 
-  @media (max-width: 1100px) {
-    .conference-workbench {
+  .conference-roster-item span:last-child {
+    color: var(--conference-muted);
+    font-size: 0.72rem;
+  }
+
+  .conference-live-activity {
+    padding: 0 0.6rem;
+    color: var(--conference-red);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .conference-session-timer {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 5.9rem;
+    padding: 0 0.7rem;
+    color: var(--conference-muted);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .conference-record-button {
+    color: var(--conference-muted);
+  }
+
+  .conference-record-button[data-recording='true'] {
+    color: var(--conference-red);
+    background: rgba(255, 77, 77, 0.08);
+  }
+
+  .conference-record-dot {
+    width: 0.72rem;
+    height: 0.72rem;
+    border-radius: 999px;
+    background: currentColor;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+  }
+
+  .conference-record-button[data-recording='true'] .conference-record-dot {
+    animation: conference-record-pulse 1.15s ease-in-out infinite;
+    box-shadow:
+      0 0 0 0 rgba(255, 77, 77, 0.38),
+      0 0 10px rgba(255, 77, 77, 0.45);
+  }
+
+  @keyframes conference-record-pulse {
+    0% {
+      transform: scale(1);
+      box-shadow:
+        0 0 0 0 rgba(255, 77, 77, 0.38),
+        0 0 10px rgba(255, 77, 77, 0.45);
+    }
+    60% {
+      transform: scale(1.08);
+      box-shadow:
+        0 0 0 6px rgba(255, 77, 77, 0),
+        0 0 14px rgba(255, 77, 77, 0.62);
+    }
+    100% {
+      transform: scale(1);
+      box-shadow:
+        0 0 0 0 rgba(255, 77, 77, 0),
+        0 0 10px rgba(255, 77, 77, 0.45);
+    }
+  }
+
+  .conference-live-led {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: currentColor;
+    box-shadow: 0 0 0 2px rgba(255, 77, 77, 0.24);
+  }
+
+  .conference-layout-button[data-active='true'],
+  .conference-share-button[data-enabled='true'],
+  .conference-icon-button[data-enabled='true'] {
+    color: var(--conference-accent);
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .conference-icon-button[data-open='true'] {
+    color: var(--conference-fg);
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .conference-device-stack {
+    position: relative;
+    display: flex;
+  }
+
+  .conference-device-panel {
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 1px);
+    min-width: 15rem;
+    display: grid;
+    gap: 0.45rem;
+    padding: 0.65rem 0.8rem 0.8rem;
+    background: #000;
+    border: 1px solid var(--conference-line);
+    z-index: 90;
+  }
+
+  .conference-device-panel[hidden],
+  .conference-live-activity[hidden] {
+    display: none !important;
+  }
+
+  .conference-device-panel label {
+    color: var(--conference-muted);
+    font-size: 0.66rem;
+    line-height: 1;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .conference-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  @media (max-width: 1080px) {
+    .conference-shell {
       grid-template-columns: 1fr;
+      grid-template-rows: minmax(0, 1fr) minmax(240px, 36vh);
     }
 
-    .conference-panel--sidebar {
+    .conference-stage-frame {
+      height: calc(100vh - min(36vh, 320px) - var(--conference-bar-height));
+      height: calc(100dvh - min(36dvh, 320px) - var(--conference-bar-height));
+    }
+
+    .conference-sidebar {
+      height: min(36vh, 320px);
+      height: min(36dvh, 320px);
+      border-left: 0;
+      border-top: 1px solid var(--conference-line);
+    }
+
+    .conference-meta-shell {
+      grid-template-columns: minmax(0, 1fr) 96px;
+    }
+  }
+
+  @media (max-width: 900px) and (orientation: landscape) {
+    .conference-shell {
+      grid-template-columns: minmax(0, 1fr) minmax(232px, 34vw);
+      grid-template-rows: minmax(0, 1fr);
+    }
+
+    .conference-stage-frame,
+    .conference-sidebar {
+      height: calc(100vh - var(--conference-bar-height));
+      height: calc(100dvh - var(--conference-bar-height));
+    }
+
+    .conference-sidebar {
+      border-top: 0;
+      border-left: 1px solid var(--conference-line);
+    }
+
+    .conference-meta-shell {
+      grid-template-columns: minmax(0, 1fr) 88px;
+      gap: 0.6rem;
+    }
+
+    .conference-sidebar-section {
+      padding: 0.6rem 0.72rem 0.72rem;
+    }
+
+    .conference-slot--sidebar {
+      min-height: 10rem;
+      grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
+    }
+
+    .conference-stage[data-layout='presentation'] .conference-stage-panel--focus {
+      width: clamp(96px, 15vw, 132px);
+      inset: auto 0.8rem 0.8rem auto;
+    }
+
+    .conference-bar-group--presentation select {
+      min-width: min(100%, 15rem);
+    }
+
+    .conference-device-panel {
+      min-width: min(14rem, calc(100vw - 2rem));
+    }
+  }
+
+  @media (max-width: 760px) {
+    .conference-shell {
+      grid-template-rows: minmax(0, 1fr);
+      padding-bottom: 0;
+    }
+
+    .conference-stage-frame,
+    .conference-sidebar {
+      height: auto;
+    }
+
+    .conference-sidebar {
+      display: none;
+    }
+
+    .conference-bottombar {
       position: static;
+      grid-template-columns: 1fr;
     }
 
-    .conference-sidebar-stack {
-      position: static;
+    .conference-bar-group {
+      border-right: 0;
+      border-top: 1px solid var(--conference-line);
+      flex-wrap: wrap;
+    }
+
+    .conference-bar-group--presentation {
+      padding: 0.2rem 0.65rem;
+    }
+
+    .conference-bar-group--presentation select {
+      min-width: 0;
+      width: 100%;
+    }
+
+    .conference-device-panel {
+      right: 0;
+      left: auto;
+      min-width: min(18rem, calc(100vw - 2rem));
     }
   }
 
-  @media (max-width: 820px) {
-    .conference-hero {
-      flex-direction: column;
-    }
-
-    .conference-state {
-      justify-content: flex-start;
-    }
-
-    .conference-controls {
+  @media (max-width: 500px) {
+    .conference-shell {
+      --conference-bar-height: 44px;
       grid-template-columns: 1fr;
+      grid-template-rows: minmax(0, 1fr) minmax(180px, 34dvh);
+      padding-bottom: var(--conference-bar-height);
     }
 
-    .conference-inline-input {
-      grid-template-columns: 1fr;
+    .conference-stage-frame {
+      height: calc(100dvh - clamp(180px, 34dvh, 260px) - var(--conference-bar-height));
     }
 
-    .conference-stage,
-    .conference-stage[data-layout='presentation'],
-    .conference-stage[data-layout='grid'],
-    .conference-stage[data-layout='teacher'],
-    .conference-stage[data-layout='screenshare'] {
-      grid-template-columns: 1fr;
-      grid-template-areas:
-        'teacher'
-        'presentation'
-        'screen';
+    .conference-sidebar {
+      display: block;
+      height: clamp(180px, 34dvh, 260px);
+      border-left: 0;
+      border-top: 1px solid var(--conference-line);
     }
 
-    .conference-panel[data-panel='presentation'] {
-      min-height: 22rem;
+    .conference-sidebar-section {
+      gap: 0.55rem;
+      padding: 0.55rem 0.68rem 0.68rem;
     }
 
-    .conference-actions {
-      grid-template-columns: 1fr;
+    .conference-meta-shell {
+      grid-template-columns: minmax(0, 1fr) 82px;
+      gap: 0.5rem;
+    }
+
+    .conference-self-preview {
+      aspect-ratio: 1;
+    }
+
+    .conference-statusline {
+      font-size: 0.7rem;
+    }
+
+    .conference-chat-list {
+      min-height: 0;
+      max-height: 16dvh;
+    }
+
+    .conference-slot--sidebar {
+      min-height: 8rem;
+      max-height: none;
+      grid-template-columns: repeat(auto-fit, minmax(94px, 1fr));
+      gap: 0.45rem;
+    }
+
+    .conference-slot--grid {
+      padding: 0.45rem;
+      grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+      grid-auto-rows: minmax(112px, 1fr);
+      gap: 0.45rem;
+    }
+
+    .conference-stage[data-layout='presentation'] .conference-stage-panel--focus {
+      width: clamp(88px, 25vw, 112px);
+      inset: auto 0.72rem 0.72rem auto;
+    }
+
+    .conference-bottombar {
+      display: flex;
+      align-items: stretch;
+      overflow-x: auto;
+      overflow-y: hidden;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+
+    .conference-bottombar::-webkit-scrollbar {
+      display: none;
+    }
+
+    .conference-bar-group {
+      flex: 0 0 auto;
+      border-right: 1px solid var(--conference-line);
+      border-top: 0;
+    }
+
+    .conference-bar-group--presentation {
+      padding: 0 0.45rem;
+      min-width: 9.5rem;
+    }
+
+    .conference-bar-group--presentation select {
+      min-width: 8.5rem;
+      width: 100%;
+    }
+
+    .conference-connect-button {
+      min-width: 50px;
+      padding: 0 0.7rem;
+    }
+
+    .conference-icon-button,
+    .conference-layout-button,
+    .conference-share-button,
+    .conference-record-button,
+    .conference-exit-button {
+      min-width: 34px;
+      padding: 0 0.48rem;
+    }
+
+    .conference-count-button {
+      min-width: 32px;
+      padding: 0 0.4rem;
+    }
+
+    .conference-layout-button,
+    .conference-share-button,
+    .conference-exit-button,
+    .conference-live-timer,
+    .conference-session-timer {
+      font-size: 0.66rem;
+      letter-spacing: 0.1em;
+    }
+
+    .conference-session-timer {
+      min-width: 4.9rem;
+      padding: 0 0.45rem;
+    }
+
+    .conference-roster-popup {
+      left: auto;
+      right: 0;
+      min-width: min(220px, calc(100vw - 1rem));
+      max-width: calc(100vw - 1rem);
+    }
+
+    .conference-device-panel {
+      left: auto;
+      right: 0;
+      min-width: min(15rem, calc(100vw - 1rem));
     }
   }
 </style>

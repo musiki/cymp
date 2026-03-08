@@ -10,6 +10,28 @@ export type LiveManageAccess = {
   enrollmentRole: string;
 };
 
+export async function resolveLiveParticipantRole(
+  session: Session | null | undefined,
+  courseId = '',
+): Promise<'teacher' | 'student'> {
+  const normalizedCourseId = await canonicalizeCourseId(courseId);
+
+  if (normalizedCourseId) {
+    const access = await resolveLiveManageAccess(session, normalizedCourseId);
+    return access.userRole === 'teacher' || access.enrollmentRole === 'teacher'
+      ? 'teacher'
+      : 'student';
+  }
+
+  if (!session?.user?.email) {
+    return 'student';
+  }
+
+  const supabase = createSupabaseServerClient();
+  const dbUser = await ensureDbUserFromSession(supabase, session);
+  return normalizeRole(dbUser?.role) === 'teacher' ? 'teacher' : 'student';
+}
+
 export async function resolveLiveManageAccess(
   session: Session | null | undefined,
   courseId: string,

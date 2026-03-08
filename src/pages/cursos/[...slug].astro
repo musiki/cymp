@@ -7,6 +7,15 @@ import Header from '../../components/Header.astro';
 import Footer from '../../components/Footer.astro';
 import { createClient } from '@supabase/supabase-js';
 import { parseEvalBlock } from '../../lib/eval/parse-eval-block.mjs';
+import { canonicalizeCourseId } from '../../lib/course-alias';
+import { createSupabaseServerClient } from '../../lib/forum-server';
+import {
+  buildCourseHref,
+  buildCourseLessonHref,
+  buildCourseLessonPathIndex,
+  findLessonByCoursePath,
+  getPreferredCoursePathSegment,
+} from '../../lib/course-routing';
 
 const rawSlug = Astro.params.slug;
 if (!rawSlug) return Astro.redirect('/cursos');
@@ -24,12 +33,22 @@ const slug = rawSlug
 
 // Parse the slug to get course and optional path
 const parts = slug.split('/');
-const courseSlug = parts[0];
+const requestedCoursePathSegment = parts[0];
 const isCourseForumPage = parts.length === 2 && parts[1] === 'foro';
+const canonicalCourseId = await canonicalizeCourseId(requestedCoursePathSegment);
 
 // Get the course index
-const courseIndex = await getEntry('cursos', `${courseSlug}/_index`);
+const courseIndex = canonicalCourseId
+  ? await getEntry('cursos', `${canonicalCourseId}/_index`)
+  : null;
 if (!courseIndex) return Astro.redirect('/cursos');
+const courseSlug = canonicalCourseId;
+const courseData = (courseIndex.data || {}) as Record<string, unknown>;
+const preferredCoursePathSegment = getPreferredCoursePathSegment(
+  canonicalCourseId,
+  courseData,
+);
+const courseHref = buildCourseHref(canonicalCourseId, courseData);
 
 // Check if user has base access to course.
 const session = (Astro.locals as any).session;
@@ -38,6 +57,7 @@ if (!session && !isPublicCourse) return Astro.redirect(`/login?redirect=/cursos/
 
 const supabase = createClient(import.meta.env.SUPABASE_URL, import.meta.env.SUPABASE_KEY);
 const normalizeRole = (value: unknown) => String(value || '').trim().toLowerCase();
+const normalizeForumBoardSlug = (value: unknown) => String(value || '').trim().toLowerCase() || 'general';
 
 let sessionDbUser: any = null;
 let sessionEnrollmentRole = '';
@@ -56,7 +76,7 @@ if (session?.user?.email) {
       .from('Enrollment')
       .select('roleInCourse')
       .eq('userId', resolvedUser.id)
-      .eq('courseId', courseSlug)
+      .eq('courseId', canonicalCourseId)
       .maybeSingle();
 
     if (enrollmentError) {
@@ -76,8 +96,13 @@ if (session && !hasCourseEnrollment) {
 
 // Get all lessons in this course
 const allLessons = (await getCollection('cursos'))
-  .filter(entry => entry.id.startsWith(`${courseSlug}/`) && !entry.id.endsWith('_index'))
+  .filter(entry => entry.id.startsWith(`${canonicalCourseId}/`) && !entry.id.endsWith('_index'))
   .sort((a, b) => (a.data.order || 0) - (b.data.order || 0));
+const lessonPathIndex = buildCourseLessonPathIndex(
+  canonicalCourseId,
+  courseData,
+  allLessons,
+);
 
 // Group lessons by chapter
 const chapters = allLessons.reduce((acc, lesson) => {
@@ -89,6 +114,7 @@ const chapters = allLessons.reduce((acc, lesson) => {
 
 // Determine what to show
 let currentEntry;
+let resolvedLessonRoutePath = '';
 if (parts.length === 1) {
   // Show course overview
   currentEntry = courseIndex;
@@ -98,8 +124,10 @@ if (parts.length === 1) {
 } else {
   // Show specific lesson
   const lessonPath = parts.slice(1).join('/');
-  currentEntry = allLessons.find(l => l.id === `${courseSlug}/${lessonPath}`);
-  if (!currentEntry) return Astro.redirect(`/cursos/${courseSlug}`);
+  const lessonMatch = findLessonByCoursePath(lessonPath, lessonPathIndex);
+  currentEntry = lessonMatch?.entry;
+  resolvedLessonRoutePath = lessonMatch?.shortPath || '';
+  if (!currentEntry) return Astro.redirect(courseHref);
   
   // Check visibility at lesson level
   const visibility = currentEntry.data.visibility;
@@ -110,39 +138,101 @@ if (parts.length === 1) {
 
     // Teacher can access without explicit enrollment.
     if (!canManageLiveInteractions && !hasCourseEnrollment) {
-      return Astro.redirect(`/cursos/${courseSlug}`);
+      return Astro.redirect(courseHref);
     }
   }
+
+  const requestedLessonPath = parts.slice(1).join('/');
+  if (requestedCoursePathSegment !== preferredCoursePathSegment || requestedLessonPath !== resolvedLessonRoutePath) {
+    return Astro.redirect(`${courseHref}/${encodeURIComponent(resolvedLessonRoutePath)}${Astro.url.search}`);
+  }
+}
+
+if ((parts.length === 1 || isCourseForumPage) && requestedCoursePathSegment !== preferredCoursePathSegment) {
+  const forumSuffix = isCourseForumPage ? '/foro' : '';
+  return Astro.redirect(`${courseHref}${forumSuffix}${Astro.url.search}`);
 }
 
 const { Content } = await render(currentEntry);
 const isAssignment = currentEntry.data.type === 'assignment';
 const isLessonPage = parts.length > 1 && !isCourseForumPage;
-const lessonSlug = isLessonPage ? parts.slice(1).join('/') : '';
+const lessonSlug = isLessonPage ? currentEntry.id.replace(`${canonicalCourseId}/`, '') : '';
 const rawPresentationTheme = (currentEntry.data as Record<string, unknown>).theme;
 const hasPresentationTheme = typeof rawPresentationTheme === 'string' && rawPresentationTheme.trim().length > 0;
 const presentationHref =
-  hasPresentationTheme && Astro.url.pathname.startsWith('/cursos/')
+  isLessonPage && hasPresentationTheme && Astro.url.pathname.startsWith('/cursos/')
     ? Astro.url.pathname.replace('/cursos/', '/cursos/slides/')
     : '';
 const performativeRoomHref = presentationHref
-  ? `/room?room=${encodeURIComponent(`${courseSlug}-stage`)}&course=${encodeURIComponent(courseSlug)}&slides=${encodeURIComponent(presentationHref)}&role=${encodeURIComponent(canManageLiveInteractions ? 'teacher' : 'student')}`
+  ? `/room?room=${encodeURIComponent(`${canonicalCourseId || courseSlug}-stage`)}&course=${encodeURIComponent(canonicalCourseId || courseSlug)}&slides=${encodeURIComponent(presentationHref)}`
   : '';
 const hasSessionUser = Boolean(session?.user?.email);
 const activeCourseCode = String(
-  (courseIndex.data as Record<string, unknown>)?.id ||
-  (courseIndex.data as Record<string, unknown>)?.code ||
+  courseData?.id ||
+  courseData?.code ||
   '',
 ).trim().toUpperCase();
-const encodedCourseSlug = encodeURIComponent(courseSlug);
-const courseForumHref = `/cursos/${encodedCourseSlug}/foro`;
+const courseForumHref = `${courseHref}/foro`;
 const courseForumAnchorHref = `${courseForumHref}#lesson-forum`;
 const initialSidebarBoardSlug = (
   String(Astro.url.searchParams.get('board') || 'general')
     .trim()
     .toLowerCase() || 'general'
 );
-const livePageSlug = isLessonPage ? `${courseSlug}/${lessonSlug}` : '';
+const livePageSlug = isLessonPage ? `${canonicalCourseId || courseSlug}/${lessonSlug}` : '';
+let initialCourseForumBoards: Array<{ slug: string; title: string; description: string }> = [
+  {
+    slug: 'general',
+    title: 'General',
+    description: 'Foro general del curso',
+  },
+];
+
+if (hasSessionUser && (canonicalCourseId || courseSlug)) {
+  try {
+    const forumSupabase = createSupabaseServerClient({ requireServiceRole: true });
+    const forumCourseId = canonicalCourseId || courseSlug;
+    const { data: rawBoards, error: rawBoardsError } = await forumSupabase
+      .from('ForumBoard')
+      .select('slug, title, description, isDefault, isArchived')
+      .eq('courseId', forumCourseId)
+      .eq('isArchived', false)
+      .order('isDefault', { ascending: false })
+      .order('title', { ascending: true });
+
+    if (rawBoardsError) throw rawBoardsError;
+
+    const boardMap = new Map<string, { slug: string; title: string; description: string; isDefault: boolean }>();
+    for (const board of Array.isArray(rawBoards) ? rawBoards : []) {
+      const slug = normalizeForumBoardSlug(board?.slug);
+      if (!slug) continue;
+      boardMap.set(slug, {
+        slug,
+        title: String(board?.title || slug),
+        description: String(board?.description || board?.title || slug),
+        isDefault: Boolean(board?.isDefault),
+      });
+    }
+
+    if (!boardMap.has('general')) {
+      boardMap.set('general', {
+        slug: 'general',
+        title: 'General',
+        description: 'Foro general del curso',
+        isDefault: true,
+      });
+    }
+
+    initialCourseForumBoards = Array.from(boardMap.values())
+      .sort((a, b) => {
+        if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
+        return a.title.localeCompare(b.title, 'es');
+      })
+      .map(({ slug, title, description }) => ({ slug, title, description }));
+  } catch (error) {
+    console.error('Server forum subnav preload error:', error);
+  }
+}
 
 const classtimeEvalIds = (() => {
   const markdown = typeof (currentEntry as any)?.body === 'string' ? String((currentEntry as any).body) : '';
@@ -182,28 +272,198 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
     />
     <style>
       .course-container {
+        --left-sidebar-width: clamp(248px, 19vw, 312px);
+        --right-sidebar-width: clamp(248px, 19vw, 312px);
         display: grid;
-        grid-template-columns: 280px 1fr;
-        gap: 2.25rem;
-        max-width: 1400px;
-        margin: 0 auto;
-        padding: clamp(1rem, 1.8vw, 2rem);
-        height: calc(100dvh - 7rem);
-        align-items: stretch;
-        min-height: 0;
+        grid-template-columns:
+          minmax(0, var(--left-sidebar-width))
+          minmax(0, 1fr)
+          minmax(0, var(--right-sidebar-width));
+        gap: clamp(0.9rem, 1.35vw, 1.3rem);
+        width: 100%;
+        max-width: none;
+        margin: 0;
+        padding: clamp(0.7rem, 1vw, 1rem) clamp(0.7rem, 1.5vw, 1.4rem) 1.35rem;
+        min-height: calc(100dvh - 6.75rem);
+        align-items: start;
+        position: relative;
+      }
+
+      .course-container[data-left-open='false'] {
+        grid-template-columns:
+          0
+          minmax(0, 1fr)
+          minmax(0, var(--right-sidebar-width));
+      }
+
+      .course-container[data-right-open='false'] {
+        grid-template-columns:
+          minmax(0, var(--left-sidebar-width))
+          minmax(0, 1fr)
+          0;
+      }
+
+      .course-container[data-left-open='false'][data-right-open='false'] {
+        grid-template-columns: 0 minmax(0, 1fr) 0;
+      }
+
+      .course-sidebar-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(8, 13, 19, 0.32);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 180ms ease;
+        z-index: 38;
+      }
+
+      .course-container.is-overlay-active .course-sidebar-overlay {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .course-sidebar-handle {
+        position: fixed;
+        top: clamp(5.3rem, 8vh, 6.7rem);
+        z-index: 46;
+        width: 2.3rem;
+        height: 2.3rem;
+        border: 1px solid var(--c-border);
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--c-bg) 92%, var(--c-bg-mute) 8%);
+        color: var(--c-fg);
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: opacity 180ms ease, transform 180ms ease;
+      }
+
+      .course-sidebar-handle--left {
+        left: 0.55rem;
+      }
+
+      .course-sidebar-handle--right {
+        right: 0.55rem;
+      }
+
+      .course-container[data-left-open='true'] .course-sidebar-handle--left {
+        opacity: 0;
+        pointer-events: none;
+        transform: translateX(-0.4rem);
+      }
+
+      .course-container[data-right-open='true'] .course-sidebar-handle--right {
+        opacity: 0;
+        pointer-events: none;
+        transform: translateX(0.4rem);
+      }
+
+      .course-container[data-has-right-sidebar='false'] .course-sidebar-handle--right {
+        display: none;
       }
       
       .sidebar {
-        position: relative;
-        height: 100%;
+        position: sticky;
+        top: 0.7rem;
+        height: calc(100dvh - 7.4rem);
         min-height: 0;
+        min-width: 0;
+        width: 100%;
         overflow-y: auto;
         overscroll-behavior: contain;
         scrollbar-gutter: stable;
         border: 1px solid var(--c-border);
-        border-radius: 8px;
-        padding: 1.5rem;
+        border-radius: 12px;
+        padding: 1.1rem 1rem 1.2rem;
         background: var(--c-bg);
+        transition:
+          transform 180ms ease,
+          opacity 180ms ease,
+          padding 180ms ease,
+          border-color 180ms ease;
+      }
+
+      .sidebar--left {
+        justify-self: stretch;
+      }
+
+      .sidebar--right {
+        justify-self: stretch;
+      }
+
+      .course-container[data-left-open='false'] .sidebar--left {
+        opacity: 0;
+        pointer-events: none;
+        transform: translateX(-0.8rem);
+        overflow: hidden;
+        padding-left: 0;
+        padding-right: 0;
+        border-color: transparent;
+      }
+
+      .course-container[data-right-open='false'] .sidebar--right {
+        opacity: 0;
+        pointer-events: none;
+        transform: translateX(0.8rem);
+        overflow: hidden;
+        padding-left: 0;
+        padding-right: 0;
+        border-color: transparent;
+      }
+
+      .sidebar-panel-heading {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+        padding-bottom: 0.9rem;
+        border-bottom: 1px solid var(--c-border);
+      }
+
+      .sidebar-panel-kicker {
+        margin: 0 0 0.16rem 0;
+        font-size: 0.72rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--c-fg-dim);
+      }
+
+      .sidebar-panel-title {
+        margin: 0;
+        font-size: 1rem;
+        line-height: 1.2;
+      }
+
+      .sidebar-toggle-btn {
+        flex: 0 0 auto;
+        width: 2rem;
+        height: 2rem;
+        border: 1px solid var(--c-border);
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--c-bg) 90%, var(--c-bg-mute) 10%);
+        color: var(--c-fg);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+      }
+
+      .sidebar-toggle-btn:hover {
+        background: var(--c-bg-mute);
+      }
+
+      .course-sidebar-state-note {
+        margin: 0;
+        font-size: 0.84rem;
+        line-height: 1.45;
+        color: var(--c-fg-dim);
+        border: 1px dashed color-mix(in srgb, var(--c-border) 84%, transparent);
+        border-radius: 10px;
+        padding: 0.8rem 0.85rem;
+        background: color-mix(in srgb, var(--c-bg-mute) 60%, var(--c-bg) 40%);
       }
       
       .course-title {
@@ -216,9 +476,16 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
 
       .course-title-row {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: space-between;
         gap: 0.55rem;
+      }
+
+      .course-title-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        flex: 0 0 auto;
       }
 
       .performative-room-link {
@@ -468,8 +735,8 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
       .class-toc-summary {
         list-style: none;
         display: flex;
-        align-items: center;
-        gap: 0.3rem;
+        align-items: flex-start;
+        gap: 0.12rem;
       }
 
       .class-toc-summary::-webkit-details-marker {
@@ -480,7 +747,10 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
         content: '▸';
         color: var(--c-fg-dim);
         font-size: 0.68rem;
-        transform: translateY(-1px);
+        line-height: 1;
+        margin-top: 0.42rem;
+        margin-right: 0.12rem;
+        flex: 0 0 auto;
       }
 
       .class-toc-branch[open] > .class-toc-summary::before {
@@ -617,10 +887,10 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
       
       .content-area {
         border: 1px solid var(--c-border);
-        border-radius: 8px;
+        border-radius: 12px;
         padding: clamp(1.15rem, 2.2vw, 2.5rem);
         background: var(--c-bg);
-        height: 100%;
+        height: calc(100dvh - 7.4rem);
         min-height: 0;
         overflow-y: auto;
         overscroll-behavior: contain;
@@ -695,13 +965,13 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
       }
 
       .lesson-forum {
-        --forum-bg-main: color-mix(in srgb, var(--c-bg-mute) 84%, #f2f5f7 16%);
+        --forum-bg-main: color-mix(in srgb, var(--c-bg-mute, #eef2f5) 84%, #f2f5f7 16%);
         --forum-bg-panel: rgba(128, 128, 128, 0.109);
-        --forum-bg-subtle: color-mix(in srgb, var(--c-bg-mute) 70%, var(--c-bg) 30%);
-        --forum-text-primary: var(--c-fg);
-        --forum-text-secondary: var(--c-fg-dim);
-        --forum-border-soft: color-mix(in srgb, var(--c-border) 84%, transparent);
-        --forum-border-strong: color-mix(in srgb, var(--c-border) 92%, var(--c-fg-dim) 8%);
+        --forum-bg-subtle: color-mix(in srgb, var(--c-bg-mute, #eef2f5) 70%, var(--c-bg, #ffffff) 30%);
+        --forum-text-primary: var(--c-fg, #1c1f23);
+        --forum-text-secondary: var(--c-fg-dim, #6b7480);
+        --forum-border-soft: color-mix(in srgb, var(--c-border, #d9e0e7) 84%, transparent);
+        --forum-border-strong: color-mix(in srgb, var(--c-border, #d9e0e7) 92%, var(--c-fg-dim, #6b7480) 8%);
         --forum-accent: var(--accent);
         --forum-role-instructor: color-mix(in srgb, var(--accent) 78%, #2f5d8c 22%);
         --forum-role-op: #2e8b57;
@@ -1001,8 +1271,10 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
       }
 
       .forum-post-body {
+        display: block;
         font-size: var(--forum-post-body-size);
         line-height: 1.62;
+        color: var(--forum-text-primary);
         max-width: 100%;
         min-width: 0;
         overflow-wrap: anywhere;
@@ -1138,37 +1410,105 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
         font-size: 0.92rem;
       }
       
-      @media (max-width: 968px) {
+      @media (max-width: 1024px) {
         .course-container {
-          grid-template-columns: 1fr;
-          height: auto;
+          grid-template-columns: minmax(0, 1fr);
+          min-height: auto;
+          padding: 0.65rem;
         }
+
+        .course-container[data-left-open='false'],
+        .course-container[data-right-open='false'],
+        .course-container[data-left-open='false'][data-right-open='false'] {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .course-sidebar-handle {
+          top: auto;
+          bottom: 0.8rem;
+        }
+
+        .course-sidebar-handle--left {
+          left: 0.8rem;
+        }
+
+        .course-sidebar-handle--right {
+          right: 0.8rem;
+        }
+
         .sidebar {
-          position: relative;
+          position: fixed;
+          top: 0;
+          bottom: 0;
+          z-index: 44;
+          width: min(84vw, 320px);
           height: auto;
           max-height: none;
-          overflow: visible;
+          border-radius: 0;
+          padding: 1rem 0.95rem 1.2rem;
+          overflow-y: auto;
           scrollbar-gutter: auto;
+          box-shadow: 0 18px 42px rgba(0, 0, 0, 0.18);
         }
+
+        .sidebar--left {
+          left: 0;
+          transform: translateX(-100%);
+        }
+
+        .sidebar--right {
+          right: 0;
+          transform: translateX(100%);
+        }
+
+        .course-container[data-left-open='false'] .sidebar--left {
+          transform: translateX(-100%);
+        }
+
+        .course-container[data-right-open='false'] .sidebar--right {
+          transform: translateX(100%);
+        }
+
+        .course-container[data-left-open='true'] .sidebar--left,
+        .course-container[data-right-open='true'] .sidebar--right {
+          opacity: 1;
+          pointer-events: auto;
+          border-color: var(--c-border);
+        }
+
+        .course-container[data-left-open='true'] .sidebar--left {
+          transform: translateX(0);
+        }
+
+        .course-container[data-right-open='true'] .sidebar--right {
+          transform: translateX(0);
+        }
+
         .content-area {
           height: auto;
+          min-height: calc(100dvh - 8.4rem);
           overflow: visible;
           scrollbar-gutter: auto;
         }
+
         .course-nav {
           flex-direction: column;
           gap: 0.75rem;
         }
+
         .nav-button {
           text-align: center;
         }
+
         .forum-grid {
           grid-template-columns: 1fr;
         }
+
         .forum-post {
           grid-template-columns: 1fr;
           gap: 0.7rem;
         }
+
         .forum-post-identity {
           grid-template-columns: auto 1fr;
           align-items: center;
@@ -1178,12 +1518,22 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
         .forum-post-avatar {
           grid-row: span 2;
         }
+
         .forum-post-badges {
           grid-column: 2;
         }
       }
 
       @media (max-width: 640px) {
+        .course-sidebar-handle {
+          width: 2.15rem;
+          height: 2.15rem;
+        }
+
+        .sidebar {
+          width: min(88vw, 308px);
+        }
+
         .forum-thread-top,
         .forum-thread-meta {
           flex-direction: column;
@@ -1200,60 +1550,107 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
           padding: 0.5rem;
           gap: 0.7rem;
         }
-        .sidebar,
+
+        .sidebar {
+          padding: 0.9rem 0.85rem 1rem;
+        }
+
         .content-area {
           width: 100%;
           min-width: 0;
           padding: 0.9rem;
         }
+
         .content-area > :not(.course-nav) {
           max-width: 100%;
         }
+
         .content-area :is(pre, table, .mermaid, .lily-score, .obsidian-media-embed, img, svg, iframe) {
           max-width: 100%;
         }
+
         .content-area :is(pre, table, .mermaid, .lily-score) {
           overflow-x: auto;
         }
+
         .course-nav {
           margin-top: 1.8rem;
           padding-top: 1.3rem;
           gap: 0.55rem;
         }
+
         .course-nav .nav-button {
           width: 100%;
           text-align: center;
         }
+
         .scroll-shortcuts {
           right: 0.45rem;
           bottom: 0.45rem;
         }
       }
+
+      :global(html.course-sidebars-open),
+      :global(body.course-sidebars-open) {
+        overflow: hidden;
+      }
     </style>
   </head>
   <body>
     <Header
-      courseId={courseSlug}
-      activeCourseId={courseSlug}
+      courseId={canonicalCourseId || courseSlug}
+      activeCourseId={canonicalCourseId || courseSlug}
       activeCourseCode={activeCourseCode}
       livePageSlug={livePageSlug}
       presentationHref={presentationHref}
+      performativeRoomHref={performativeRoomHref}
       hasClasstimeEval={hasClasstimeEval}
       classtimeEvalIds={classtimeEvalIds}
     />
-    <main class="course-container">
+    <main
+      class="course-container"
+      data-course-layout-root
+      data-left-open="true"
+      data-right-open={isLessonPage ? 'true' : 'false'}
+      data-has-right-sidebar={isLessonPage ? 'true' : 'false'}
+    >
+      <button
+        type="button"
+        class="course-sidebar-handle course-sidebar-handle--left"
+        data-sidebar-handle="left"
+        aria-label="Mostrar navegación del curso"
+        title="Mostrar navegación del curso (⌘/Ctrl + \\)"
+      >≡</button>
+      <button
+        type="button"
+        class="course-sidebar-handle course-sidebar-handle--right"
+        data-sidebar-handle="right"
+        aria-label="Mostrar contexto de clase"
+        title="Mostrar contexto de clase (⌘/Ctrl + Shift + \\)"
+      >⋮</button>
+      <div class="course-sidebar-overlay" data-course-sidebar-overlay></div>
+
       <!-- Sidebar Navigation -->
-      <aside class="sidebar">
+      <aside class="sidebar sidebar--left" data-course-sidebar="left">
         <div class="course-title">
           <div class="course-title-row">
-            <a href={`/cursos/${courseSlug}`} class="course-title-link">
+            <a href={courseHref} class="course-title-link">
               <span class="course-title-link-text">{courseIndex.data.title}</span>
             </a>
-            {performativeRoomHref && isLessonPage && (
-              <a href={performativeRoomHref} class="performative-room-link">
-                Sala performativa
-              </a>
-            )}
+            <div class="course-title-actions">
+              {performativeRoomHref && isLessonPage && (
+                <a href={performativeRoomHref} class="performative-room-link">
+                  Sala performativa
+                </a>
+              )}
+              <button
+                type="button"
+                class="sidebar-toggle-btn"
+                data-sidebar-toggle="left"
+                aria-label="Ocultar navegación del curso"
+                title="Ocultar navegación del curso (⌘/Ctrl + \\)"
+              >←</button>
+            </div>
           </div>
         </div>
 
@@ -1268,16 +1665,34 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
           <ul
             id="course-forum-subnav"
             class="lesson-list forum-subforum-list"
-            data-course-id={courseSlug}
+            data-course-id={canonicalCourseId || courseSlug}
             data-forum-base-href={courseForumHref}
             data-has-session={hasSessionUser ? 'true' : 'false'}
             data-is-course-forum-page={isCourseForumPage ? 'true' : 'false'}
             data-active-board-slug={initialSidebarBoardSlug}
           >
             {hasSessionUser ? (
-              <li class="lesson-item">
-                <span class="lesson-link forum-subforum-link is-loading">Cargando subforos...</span>
-              </li>
+              initialCourseForumBoards.map((board) => {
+                const boardSlug = normalizeForumBoardSlug(board.slug);
+                const isActiveBoard = isCourseForumPage && boardSlug === initialSidebarBoardSlug;
+                const boardHref = boardSlug === 'general'
+                  ? `${courseForumHref}#lesson-forum`
+                  : `${courseForumHref}?board=${encodeURIComponent(boardSlug)}#lesson-forum`;
+
+                return (
+                  <li class="lesson-item">
+                    <a
+                      href={boardHref}
+                      class:list={['lesson-link', 'forum-subforum-link', { active: isActiveBoard }]}
+                      data-board-slug={boardSlug}
+                      title={board.description || board.title}
+                      aria-current={isActiveBoard ? 'page' : undefined}
+                    >
+                      {board.title}
+                    </a>
+                  </li>
+                );
+              })
             ) : (
               <li class="lesson-item">
                 <span class="lesson-link forum-subforum-link is-disabled">Inicia sesión para ver subforos</span>
@@ -1291,15 +1706,21 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
             <div class="chapter-title">{chapterName.replace(/-/g, ' ')}</div>
             <ul class="lesson-list">
               {lessons.map((lesson) => {
-                const lessonSlug = lesson.id.replace(`${courseSlug}/`, '');
+                const lessonHref = buildCourseLessonHref(
+                  canonicalCourseId,
+                  courseData,
+                  lesson,
+                  lessonPathIndex,
+                );
+                const lessonPageSlug = lesson.id.replace(`${canonicalCourseId}/`, '');
                 const isActive = currentEntry.id === lesson.id;
                 return (
                   <li class="lesson-item">
                     <a 
-                      href={`/cursos/${courseSlug}/${lessonSlug}`}
+                      href={lessonHref}
                       class:list={['lesson-link', { active: isActive }]}
-                      data-course-id={courseSlug}
-                      data-lesson-page-slug={`${courseSlug}/${lessonSlug}`}
+                      data-course-id={canonicalCourseId || courseSlug}
+                      data-lesson-page-slug={`${canonicalCourseId}/${lessonPageSlug}`}
                     >
                       <span class="lesson-link-text">{lesson.data.title}</span>
                       <span class="lesson-link-trailing">
@@ -1319,26 +1740,6 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
           </div>
         ))}
 
-        <div class="chapter class-toc" id="class-toc" hidden>
-          <details id="class-toc-details">
-            <summary class="chapter-title">TOC de clase</summary>
-            <ul id="class-toc-list" class="lesson-list class-toc-list"></ul>
-          </details>
-        </div>
-
-        <div class="chapter page-progress" id="page-progress" hidden>
-          <div class="chapter-title">Progreso de esta página</div>
-          <div class="progress-meter" id="mcc-progress-meter" hidden>
-            <div class="progress-meter-header">
-              <span>Lectura (MCC)</span>
-              <strong id="mcc-progress-percent">0%</strong>
-            </div>
-            <div class="progress-track" aria-hidden="true">
-              <div class="progress-fill" id="mcc-progress-fill"></div>
-            </div>
-          </div>
-          <ul class="lesson-list progress-list" id="page-progress-list"></ul>
-        </div>
       </aside>
 
       <!-- Main Content -->
@@ -1361,7 +1762,7 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
           <section
             class="lesson-forum"
             id="lesson-forum"
-            data-course-id={courseSlug}
+            data-course-id={canonicalCourseId || courseSlug}
             data-lesson-slug={lessonSlug}
             data-forum-mode={isCourseForumPage ? 'board' : 'lesson'}
             data-initial-board-slug={isCourseForumPage ? 'general' : ''}
@@ -1453,7 +1854,7 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
             ) : (
               <div class="forum-login-cta">
                 Inicia sesión para ver y participar del foro de esta lección.
-                <a href={`/login?redirect=/cursos/${slug}`} class="nav-button" style="margin-left: 0.6rem;">Iniciar sesión</a>
+                <a href={`/login?redirect=${encodeURIComponent(`${courseHref}${isLessonPage ? `/${resolvedLessonRoutePath}` : isCourseForumPage ? '/foro' : ''}`)}`} class="nav-button" style="margin-left: 0.6rem;">Iniciar sesión</a>
               </div>
             )}
           </section>
@@ -1461,9 +1862,52 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
         
         <div class="course-nav">
           <a href="/cursos" class="nav-button">← Volver a cursos</a>
-          <a href={`/cursos/${courseSlug}`} class="nav-button">Inicio del curso</a>
+          <a href={courseHref} class="nav-button">Inicio del curso</a>
         </div>
       </article>
+
+      <aside class="sidebar sidebar--right" data-course-sidebar="right" aria-label="Contexto de clase">
+        <div class="sidebar-panel-heading">
+          <div>
+            <p class="sidebar-panel-kicker">Lección</p>
+            <h2 class="sidebar-panel-title">Contexto</h2>
+          </div>
+          <button
+            type="button"
+            class="sidebar-toggle-btn"
+            data-sidebar-toggle="right"
+            aria-label="Ocultar contexto de clase"
+            title="Ocultar contexto de clase (⌘/Ctrl + Shift + \\)"
+          >→</button>
+        </div>
+
+        {!isLessonPage && (
+          <p class="course-sidebar-state-note">
+            El índice de clase, el progreso de lectura y otros apoyos contextuales aparecen cuando entras a una lección.
+          </p>
+        )}
+
+        <div class="chapter class-toc" id="class-toc" hidden>
+          <details id="class-toc-details">
+            <summary class="chapter-title">TOC de clase</summary>
+            <ul id="class-toc-list" class="lesson-list class-toc-list"></ul>
+          </details>
+        </div>
+
+        <div class="chapter page-progress" id="page-progress" hidden>
+          <div class="chapter-title">Progreso de esta página</div>
+          <div class="progress-meter" id="mcc-progress-meter" hidden>
+            <div class="progress-meter-header">
+              <span>Lectura (MCC)</span>
+              <strong id="mcc-progress-percent">0%</strong>
+            </div>
+            <div class="progress-track" aria-hidden="true">
+              <div class="progress-fill" id="mcc-progress-fill"></div>
+            </div>
+          </div>
+          <ul class="lesson-list progress-list" id="page-progress-list"></ul>
+        </div>
+      </aside>
 
       <div class="scroll-shortcuts" aria-label="Navegación rápida">
         <button
@@ -1483,8 +1927,155 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
       </div>
     </main>
     <Footer />
-    
-    <script define:vars={{ canManageLiveInteractions }}>
+
+    <script>
+      declare global {
+        interface Window {
+          __musikiCourseLayoutKeyHandler?: (event: KeyboardEvent) => void;
+          __musikiCourseLayoutResizeHandler?: () => void;
+        }
+      }
+
+      const mountCourseLayout = () => {
+        const root = document.querySelector('[data-course-layout-root]');
+        if (!(root instanceof HTMLElement)) return;
+
+        const overlay = root.querySelector('[data-course-sidebar-overlay]');
+        const leftButtons = Array.from(root.querySelectorAll('[data-sidebar-toggle="left"], [data-sidebar-handle="left"]'));
+        const rightButtons = Array.from(root.querySelectorAll('[data-sidebar-toggle="right"], [data-sidebar-handle="right"]'));
+        const hasRightSidebar = root.dataset.hasRightSidebar === 'true';
+
+        const isMobileViewport = () => window.matchMedia('(max-width: 1024px)').matches;
+
+        const coerceBoolean = (value: string | null, fallback: boolean): boolean => {
+          if (value === 'true') return true;
+          if (value === 'false') return false;
+          return fallback;
+        };
+
+        let leftOpen = coerceBoolean(
+          window.localStorage.getItem('musiki:course:left-open'),
+          root.dataset.leftOpen !== 'false',
+        );
+        let rightOpen = hasRightSidebar && coerceBoolean(
+          window.localStorage.getItem('musiki:course:right-open'),
+          root.dataset.rightOpen !== 'false',
+        );
+
+        const syncLayoutState = () => {
+          if (!hasRightSidebar) {
+            rightOpen = false;
+          }
+
+          root.dataset.leftOpen = leftOpen ? 'true' : 'false';
+          root.dataset.rightOpen = rightOpen ? 'true' : 'false';
+
+          const overlayActive = isMobileViewport() && (leftOpen || rightOpen);
+          root.classList.toggle('is-overlay-active', overlayActive);
+          if (overlay instanceof HTMLElement) {
+            overlay.toggleAttribute('hidden', !overlayActive);
+          }
+
+          document.documentElement.classList.toggle('course-sidebars-open', overlayActive);
+          document.body.classList.toggle('course-sidebars-open', overlayActive);
+        };
+
+        const persistLayoutState = () => {
+          window.localStorage.setItem('musiki:course:left-open', leftOpen ? 'true' : 'false');
+          window.localStorage.setItem('musiki:course:right-open', rightOpen ? 'true' : 'false');
+        };
+
+        const toggleSidebar = (side: 'left' | 'right') => {
+          if (side === 'left') {
+            leftOpen = !leftOpen;
+          } else if (side === 'right' && hasRightSidebar) {
+            rightOpen = !rightOpen;
+          }
+
+          persistLayoutState();
+          syncLayoutState();
+        };
+
+        leftButtons.forEach((button) => {
+          if (!(button instanceof HTMLElement) || button.dataset.boundCourseSidebar === 'true') return;
+          button.dataset.boundCourseSidebar = 'true';
+          button.addEventListener('click', () => toggleSidebar('left'));
+        });
+
+        rightButtons.forEach((button) => {
+          if (!(button instanceof HTMLElement) || button.dataset.boundCourseSidebar === 'true') return;
+          button.dataset.boundCourseSidebar = 'true';
+          button.addEventListener('click', () => toggleSidebar('right'));
+        });
+
+        if (overlay instanceof HTMLElement && overlay.dataset.boundCourseSidebar !== 'true') {
+          overlay.dataset.boundCourseSidebar = 'true';
+          overlay.addEventListener('click', () => {
+            leftOpen = false;
+            rightOpen = false;
+            persistLayoutState();
+            syncLayoutState();
+          });
+        }
+
+        if (typeof window.__musikiCourseLayoutKeyHandler === 'function') {
+          document.removeEventListener('keydown', window.__musikiCourseLayoutKeyHandler);
+        }
+
+        const keyHandler = (event: KeyboardEvent) => {
+          if (event.defaultPrevented) return;
+          if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+          if (String(event.code || '').toLowerCase() !== 'backslash') return;
+
+          const target = event.target;
+          const isEditable =
+            target instanceof HTMLElement &&
+            (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+          if (isEditable) return;
+
+          event.preventDefault();
+          if (event.shiftKey) {
+            toggleSidebar('right');
+            return;
+          }
+
+          toggleSidebar('left');
+        };
+
+        document.addEventListener('keydown', keyHandler);
+        window.__musikiCourseLayoutKeyHandler = keyHandler;
+
+        if (typeof window.__musikiCourseLayoutResizeHandler === 'function') {
+          window.removeEventListener('resize', window.__musikiCourseLayoutResizeHandler);
+        }
+
+        const resizeHandler = () => {
+          syncLayoutState();
+        };
+
+        window.addEventListener('resize', resizeHandler);
+        window.__musikiCourseLayoutResizeHandler = resizeHandler;
+
+        syncLayoutState();
+      };
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', mountCourseLayout, { once: true });
+      } else {
+        mountCourseLayout();
+      }
+
+      document.addEventListener('astro:page-load', mountCourseLayout);
+    </script>
+
+    <script
+      type="module"
+      define:vars={{
+        canManageLiveInteractions,
+        canonicalLiveCourseId: canonicalCourseId || courseSlug,
+        canonicalLivePageSlug: livePageSlug,
+      }}
+    >
       import { subscribeToLive } from '../../lib/live/client.mjs';
       import { formatCountdown, getRemainingMs } from '../../lib/live/countdown.mjs';
 
@@ -1753,9 +2344,11 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
               return part;
             }
           });
+        const fallbackCourseId = String(canonicalLiveCourseId || '').trim();
+        const fallbackPageSlug = String(canonicalLivePageSlug || '').trim();
         return {
-          courseId: pathParts[1] || '',
-          pageSlug: pathParts.slice(1).join('/'),
+          courseId: fallbackCourseId || pathParts[1] || '',
+          pageSlug: fallbackPageSlug || pathParts.slice(1).join('/'),
         };
       }
 
@@ -2703,6 +3296,7 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   courseId: courseContext.courseId,
+                  pageSlug: courseContext.pageSlug,
                   interactionId: widget.data.id,
                   type: widget.data.type || 'poll',
                   prompt: widget.data.prompt,
@@ -3221,6 +3815,7 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   courseId: courseContext.courseId,
+                  pageSlug: courseContext.pageSlug,
                   interactionId: widget.data.id,
                   type: widget.data.type || 'wordcloud',
                   prompt: widget.data.prompt,
@@ -3887,6 +4482,31 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
           return `<p>${plain}</p>`;
         }
 
+        function setForumBodyContent(container, post) {
+          container.replaceChildren();
+
+          const nextHtml = getForumBodyHtml(post);
+          try {
+            const range = document.createRange();
+            range.selectNode(container);
+            const fragment = range.createContextualFragment(nextHtml);
+            if (fragment.childNodes.length > 0) {
+              container.appendChild(fragment);
+            }
+          } catch {
+            container.innerHTML = nextHtml;
+          }
+
+          if (!String(container.textContent || '').trim()) {
+            const plainFallback = String(post?.body || '').trim();
+            const paragraph = document.createElement('p');
+            paragraph.innerHTML = plainFallback
+              ? escapeHtml(plainFallback).replaceAll('\n', '<br />')
+              : 'Sin contenido.';
+            container.replaceChildren(paragraph);
+          }
+        }
+
         function replaceForumTextareaSelection(textarea, nextText, start, end, cursorStart, cursorEnd = cursorStart) {
           const value = textarea.value || '';
           textarea.value = `${value.slice(0, start)}${nextText}${value.slice(end)}`;
@@ -4321,7 +4941,7 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
 
               const body = document.createElement('div');
               body.className = 'forum-post-body';
-              body.innerHTML = getForumBodyHtml(post);
+              setForumBodyContent(body, post);
               main.appendChild(body);
 
               const canEditPost = Boolean(post.canEdit);
@@ -5019,38 +5639,79 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
         }
       }
 
+      function reportLessonForumBootError(error) {
+        console.error('Lesson forum boot error:', error);
+
+        const statusEl = document.getElementById('forum-status');
+        if (statusEl instanceof HTMLElement) {
+          statusEl.hidden = false;
+          statusEl.textContent = 'No se pudo iniciar el foro de esta página.';
+          statusEl.classList.add('error');
+        }
+
+        const threadListEl = document.getElementById('forum-thread-list');
+        if (threadListEl instanceof HTMLElement) {
+          threadListEl.innerHTML = '<p class="forum-empty">No se pudieron cargar los hilos.</p>';
+        }
+
+        const postListEl = document.getElementById('forum-post-list');
+        if (postListEl instanceof HTMLElement) {
+          postListEl.innerHTML = '<p class="forum-empty">No se pudieron cargar los mensajes.</p>';
+        }
+      }
+
       document.addEventListener('DOMContentLoaded', async () => {
-        await upgradeLegacyObsidianAudioLinks();
-        await loadUserSubmissions();
+        try {
+          await refreshCourseForumSubnav();
+          await initLessonForum();
+        } catch (error) {
+          reportLessonForumBootError(error);
+        }
+
+        try {
+          await upgradeLegacyObsidianAudioLinks();
+        } catch (error) {
+          console.error('Legacy audio bootstrap error:', error);
+        }
+
+        try {
+          await loadUserSubmissions();
+        } catch (error) {
+          console.error('User submission bootstrap error:', error);
+        }
 
         const evalWrappers = document.querySelectorAll('.eval-block-wrapper');
         hasEvalBlocks = evalWrappers.length > 0;
 
         evalWrappers.forEach((wrapper, index) => {
-          const evalData = parseEvalData(wrapper);
-          if (!evalData || !evalData.id || !evalData.type) return;
+          try {
+            const evalData = parseEvalData(wrapper);
+            if (!evalData || !evalData.id || !evalData.type) return;
 
-          if (evalData.type === 'mcq') {
-            renderMCQ(wrapper, evalData, index);
-            return;
+            if (evalData.type === 'mcq') {
+              renderMCQ(wrapper, evalData, index);
+              return;
+            }
+
+            if (evalData.type === 'mcc') {
+              renderMCC(wrapper, evalData, index);
+              return;
+            }
+
+            if (evalData.type === 'poll') {
+              renderPoll(wrapper, evalData, index);
+              return;
+            }
+
+            if (evalData.type === 'wordcloud') {
+              renderWordcloud(wrapper, evalData, index);
+              return;
+            }
+
+            renderUnsupported(wrapper, evalData, index);
+          } catch (error) {
+            console.error('Eval block bootstrap error:', error);
           }
-
-          if (evalData.type === 'mcc') {
-            renderMCC(wrapper, evalData, index);
-            return;
-          }
-
-          if (evalData.type === 'poll') {
-            renderPoll(wrapper, evalData, index);
-            return;
-          }
-
-          if (evalData.type === 'wordcloud') {
-            renderWordcloud(wrapper, evalData, index);
-            return;
-          }
-
-          renderUnsupported(wrapper, evalData, index);
         });
 
         buildClassToc();
@@ -5148,8 +5809,6 @@ const hasClasstimeEval = classtimeEvalIds.length > 0;
           addClearAnswersButton();
         }
 
-        await refreshCourseForumSubnav();
-        await initLessonForum();
         updateScrollShortcutVisibility();
       });
 

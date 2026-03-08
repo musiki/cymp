@@ -3,15 +3,17 @@ export const prerender = false;
 
 import BaseHead from '../components/BaseHead.astro';
 import ConferenceLayout from '../components/ConferenceLayout.astro';
-import Header from '../components/Header.astro';
-import Footer from '../components/Footer.astro';
+import { resolveLiveParticipantRole } from '../lib/live/access';
 import { listRoomPresentationOptions } from '../lib/live/presentation-options';
+import { canonicalizeCourseId } from '../lib/course-alias';
+import { buildCourseHref } from '../lib/course-routing';
 
 const session = (Astro.locals as App.Locals).session;
 
 const normalizeText = (value: unknown) => String(value ?? '').trim();
 
-const activeCourseId = normalizeText(Astro.url.searchParams.get('course'));
+const rawCourseId = normalizeText(Astro.url.searchParams.get('course'));
+const activeCourseId = await canonicalizeCourseId(rawCourseId);
 const defaultRoom =
   normalizeText(Astro.url.searchParams.get('room')) ||
   (activeCourseId ? `${activeCourseId}-stage` : 'musiki-stage');
@@ -22,13 +24,12 @@ const defaultIdentity =
   normalizeText(session?.user?.name);
 const defaultName =
   normalizeText(Astro.url.searchParams.get('name')) || normalizeText(session?.user?.name);
-const defaultRole = normalizeText(Astro.url.searchParams.get('role')).toLowerCase() === 'teacher'
-  ? 'teacher'
-  : 'student';
+const defaultRole = await resolveLiveParticipantRole(session, activeCourseId);
 const defaultPresentation =
   normalizeText(Astro.url.searchParams.get('slides')) ||
   normalizeText(Astro.url.searchParams.get('presentation'));
 const livekitUrl = normalizeText(import.meta.env.LIVEKIT_URL);
+const courseHomeHref = activeCourseId ? buildCourseHref(activeCourseId, {}) : '/cursos';
 const presentationOptions = await listRoomPresentationOptions({
   activeCourseId,
   session,
@@ -44,11 +45,12 @@ const presentationOptions = await listRoomPresentationOptions({
       description="LiveKit + Astro sin React para videoconferencia, layouts y escena de presentacion."
     />
   </head>
-  <body>
-    <Header />
+  <body class="room-page">
     <main>
       <ConferenceLayout
         livekitUrl={livekitUrl}
+        courseId={activeCourseId}
+        courseHomeHref={courseHomeHref}
         defaultRoom={defaultRoom}
         defaultIdentity={defaultIdentity}
         defaultName={defaultName}
@@ -57,6 +59,5 @@ const presentationOptions = await listRoomPresentationOptions({
         presentationOptions={presentationOptions}
       />
     </main>
-    <Footer />
   </body>
 </html>

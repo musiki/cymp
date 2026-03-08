@@ -16,6 +16,7 @@ const {
 	activeCourseCode = '',
 	livePageSlug = '',
 	presentationHref = '',
+	performativeRoomHref = '',
 	hasClasstimeEval = false,
 	classtimeEvalIds = [],
 } = Astro.props as {
@@ -25,11 +26,15 @@ const {
 	activeCourseCode?: string;
 	livePageSlug?: string;
 	presentationHref?: string;
+	performativeRoomHref?: string;
 	hasClasstimeEval?: boolean;
 	classtimeEvalIds?: string[];
 };
 const hasPresentationLink = typeof presentationHref === 'string' && presentationHref.trim().length > 0;
 const normalizedPresentationHref = hasPresentationLink ? presentationHref.trim() : '';
+const hasPerformativeRoomLink =
+	typeof performativeRoomHref === 'string' && performativeRoomHref.trim().length > 0;
+const normalizedPerformativeRoomHref = hasPerformativeRoomLink ? performativeRoomHref.trim() : '';
 const currentPathWithQuery = `${Astro.url.pathname}${Astro.url.search}`;
 const loginHref =
 	currentPathWithQuery.startsWith('/login')
@@ -56,6 +61,7 @@ type HeaderCourseOption = {
 	courseId: string;
 	title: string;
 	code: string;
+	pathSegment: string;
 };
 
 let enrolledCourses: HeaderCourseOption[] = [];
@@ -88,7 +94,7 @@ if (user?.email) {
 
 			if (enrolledCourseIds.length > 0) {
 				const courseEntries = await getCollection('cursos');
-				const courseMetaById = new Map<string, { title: string; code: string }>();
+				const courseMetaById = new Map<string, { title: string; code: string; pathSegment: string }>();
 				const canonicalByAlias = new Map<string, string>();
 
 				for (const entry of courseEntries) {
@@ -97,9 +103,11 @@ if (user?.email) {
 					if (!nextCourseId) continue;
 					const courseData = entry.data as Record<string, unknown>;
 					const code = normalizeCourseCode(courseData?.id || courseData?.code || '');
+					const pathSegment = toCourseAliasSlug(courseData?.id || courseData?.code || nextCourseId) || toCourseAliasSlug(nextCourseId) || nextCourseId;
 					courseMetaById.set(nextCourseId, {
 						title: String(entry.data?.title || nextCourseId),
 						code,
+						pathSegment,
 					});
 					canonicalByAlias.set(normalizeCourseIdKey(nextCourseId), nextCourseId);
 					const slugAlias = toCourseAliasSlug(nextCourseId);
@@ -126,6 +134,7 @@ if (user?.email) {
 							courseId: canonicalCourseId,
 							title: String(meta?.title || canonicalCourseId),
 							code: normalizeCourseCode(meta?.code || ''),
+							pathSegment: String(meta?.pathSegment || canonicalCourseId),
 						};
 					})
 					.sort((left, right) => left.title.localeCompare(right.title, 'es'));
@@ -202,7 +211,7 @@ const withActiveCourse = (href: string) => {
 						<div class="course-dropdown" id="course-dropdown" role="menu">
 							{enrolledCourses.map((course) => {
 								const isCurrent = normalizeCourseIdKey(course.courseId) === normalizeCourseIdKey(resolvedActiveCourseId);
-								const courseHref = `/cursos/${encodeCoursePath(course.courseId)}?course=${encodeURIComponent(course.courseId)}`;
+								const courseHref = `/cursos/${encodeCoursePath(course.pathSegment || course.courseId)}?course=${encodeURIComponent(course.courseId)}`;
 								return (
 									<a href={courseHref} role="menuitem" class:list={['course-dropdown-link', { active: isCurrent }]}>
 										<span class="course-dropdown-title">{course.title}</span>
@@ -257,6 +266,21 @@ const withActiveCourse = (href: string) => {
 							hasClasstimeEval={hasClasstimeEval}
 							classtimeEvalIds={classtimeEvalIds}
 						/>
+						{
+							hasPerformativeRoomLink && (
+								<button
+									id="performative-room-toggle"
+									type="button"
+									class="performative-room-led-btn"
+									title="Abrir sala performativa (Alt+Shift+L)"
+									aria-label="Abrir sala performativa"
+									data-href={normalizedPerformativeRoomHref}
+								>
+									<span class="performative-room-led-dot" aria-hidden="true"></span>
+									<span class="performative-room-led-label" aria-hidden="true">LIVE</span>
+								</button>
+							)
+						}
 					</div>
 					</>
 				) : null
@@ -323,6 +347,13 @@ const withActiveCourse = (href: string) => {
 </header>
 <GraphModal />
 <script>
+	declare global {
+		interface Window {
+			__musikiHeaderKeydownHandler?: (event: KeyboardEvent) => void;
+			__musikiHeaderDocClickHandler?: (event: MouseEvent) => void;
+		}
+	}
+
 	const setupHeaderControls = () => {
 		const handleThemeToggleClick = () => {
 			const element = document.documentElement;
@@ -362,17 +393,31 @@ const withActiveCourse = (href: string) => {
 			window.location.href = nextUrl.toString();
 		};
 
+		const openPerformativeRoom = () => {
+			const roomButton = document.getElementById('performative-room-toggle');
+			const href = roomButton?.getAttribute('data-href');
+			if (!href) return;
+			const nextUrl = new URL(href, window.location.origin);
+			window.location.href = nextUrl.toString();
+		};
+
 		const presentationButton = document.getElementById('presentation-toggle');
 		if (presentationButton && !presentationButton.dataset.bound) {
 			presentationButton.dataset.bound = 'true';
 			presentationButton.addEventListener('click', openPresentation);
 		}
 
+		const performativeRoomButton = document.getElementById('performative-room-toggle');
+		if (performativeRoomButton && !performativeRoomButton.dataset.bound) {
+			performativeRoomButton.dataset.bound = 'true';
+			performativeRoomButton.addEventListener('click', openPerformativeRoom);
+		}
+
 		if (typeof window.__musikiHeaderKeydownHandler === 'function') {
 			document.removeEventListener('keydown', window.__musikiHeaderKeydownHandler);
 		}
 
-		const keydownHandler = (event) => {
+		const keydownHandler = (event: KeyboardEvent) => {
 			if (event.defaultPrevented) return;
 
 			const target = event.target;
@@ -388,6 +433,15 @@ const withActiveCourse = (href: string) => {
 					event.preventDefault();
 					window.dispatchEvent(new CustomEvent('graph:toggle'));
 				}
+				return;
+			}
+
+			if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey) {
+				if (key !== 'l' || isEditable) return;
+				const href = document.getElementById('performative-room-toggle')?.getAttribute('data-href');
+				if (!href) return;
+				event.preventDefault();
+				openPerformativeRoom();
 				return;
 			}
 
@@ -437,7 +491,7 @@ const withActiveCourse = (href: string) => {
 			document.removeEventListener('click', window.__musikiHeaderDocClickHandler);
 		}
 
-		const docClickHandler = () => {
+		const docClickHandler = (_event: MouseEvent) => {
 			const dropdown = document.getElementById('user-dropdown');
 			dropdown?.classList.remove('show');
 			const nextCourseDropdown = document.getElementById('course-dropdown');
@@ -598,8 +652,75 @@ const withActiveCourse = (href: string) => {
 	.live-beacon-slot {
 		display: inline-flex;
 		align-items: center;
+		gap: 0.3rem;
 		margin-left: 0;
 		margin-right: 0;
+	}
+	.performative-room-led-btn {
+		border: none;
+		background: transparent;
+		color: #1877f2;
+		padding: 0.1rem 0.16rem;
+		border-radius: 999px;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.34rem;
+		cursor: pointer;
+		line-height: 1;
+	}
+	.performative-room-led-btn:hover,
+	.performative-room-led-btn:focus-visible {
+		background: color-mix(in srgb, #1877f2 14%, transparent);
+	}
+	.performative-room-led-btn:focus-visible {
+		outline: 2px solid color-mix(in srgb, #1877f2 50%, white 50%);
+		outline-offset: 2px;
+	}
+	.performative-room-led-dot {
+		width: 0.72rem;
+		height: 0.72rem;
+		border-radius: 999px;
+		background: #2196f3;
+		box-shadow:
+			0 0 0 0 rgba(33, 150, 243, 0.42),
+			0 0 10px rgba(33, 150, 243, 0.55);
+		animation: performative-room-pulse 1.5s ease-in-out infinite;
+		flex: 0 0 auto;
+	}
+	.performative-room-led-label {
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		max-width: 0;
+		opacity: 0;
+		overflow: hidden;
+		white-space: nowrap;
+		transition: max-width 0.16s ease, opacity 0.16s ease;
+	}
+	.performative-room-led-btn:hover .performative-room-led-label,
+	.performative-room-led-btn:focus-visible .performative-room-led-label {
+		max-width: 3rem;
+		opacity: 1;
+	}
+	@keyframes performative-room-pulse {
+		0% {
+			transform: scale(1);
+			box-shadow:
+				0 0 0 0 rgba(33, 150, 243, 0.42),
+				0 0 10px rgba(33, 150, 243, 0.55);
+		}
+		60% {
+			transform: scale(1.08);
+			box-shadow:
+				0 0 0 6px rgba(33, 150, 243, 0),
+				0 0 14px rgba(33, 150, 243, 0.68);
+		}
+		100% {
+			transform: scale(1);
+			box-shadow:
+				0 0 0 0 rgba(33, 150, 243, 0),
+				0 0 10px rgba(33, 150, 243, 0.55);
+		}
 	}
 	.auth-links a {
 		padding: 0.3em 0.8em;
@@ -874,6 +995,13 @@ const withActiveCourse = (href: string) => {
 		.page-info-toggle-btn {
 			padding: 0.34rem;
 		}
+		.performative-room-led-btn {
+			padding: 0.08rem 0.12rem;
+		}
+		.performative-room-led-dot {
+			width: 0.66rem;
+			height: 0.66rem;
+		}
 		.auth-links {
 			width: 100%;
 			display: flex;
@@ -911,10 +1039,18 @@ const withActiveCourse = (href: string) => {
 	:global(.dark) .page-info-toggle-btn {
 		color: rgb(var(--black));
 	}
+	:global(.dark) .performative-room-led-btn {
+		color: #7ec8ff;
+	}
 	:global(.dark) .sun {
 		display: none;
 	}
 	:global(.dark) .moon {
 		display: block;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.performative-room-led-dot {
+			animation: none;
+		}
 	}
 </style>
