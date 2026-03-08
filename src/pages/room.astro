@@ -1,0 +1,51 @@
+---
+export const prerender = false;
+
+import BaseHead from '../components/BaseHead.astro';
+import ConferenceLayout from '../components/ConferenceLayout.astro';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+
+const session = (Astro.locals as App.Locals).session;
+
+const normalizeText = (value: unknown) => String(value ?? '').trim();
+
+const defaultRoom = normalizeText(Astro.url.searchParams.get('room')) || 'musiki-stage';
+const defaultIdentity =
+  normalizeText(Astro.url.searchParams.get('identity')) ||
+  normalizeText(Astro.url.searchParams.get('user')) ||
+  normalizeText(session?.user?.email) ||
+  normalizeText(session?.user?.name);
+const defaultName =
+  normalizeText(Astro.url.searchParams.get('name')) || normalizeText(session?.user?.name);
+const defaultRole = normalizeText(Astro.url.searchParams.get('role')).toLowerCase() === 'teacher'
+  ? 'teacher'
+  : 'student';
+const defaultPresentation =
+  normalizeText(Astro.url.searchParams.get('slides')) ||
+  normalizeText(Astro.url.searchParams.get('presentation'));
+const livekitUrl = normalizeText(import.meta.env.LIVEKIT_URL);
+---
+
+<html lang="es">
+  <head>
+    <BaseHead
+      title="Sala Performativa"
+      description="LiveKit + Astro sin React para videoconferencia, layouts y escena de presentacion."
+    />
+  </head>
+  <body>
+    <Header />
+    <main>
+      <ConferenceLayout
+        livekitUrl={livekitUrl}
+        defaultRoom={defaultRoom}
+        defaultIdentity={defaultIdentity}
+        defaultName={defaultName}
+        defaultRole={defaultRole}
+        defaultPresentation={defaultPresentation}
+      />
+    </main>
+    <Footer />
+  </body>
+</html>

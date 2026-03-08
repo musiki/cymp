@@ -6,7 +6,7 @@ chapter: "Organología I"
 type: "lesson"
 summary: esta es una clase que reune todas las tecnologías de musiki
 theme: zztt
-order: 1
+order: 2
 ---
 
 

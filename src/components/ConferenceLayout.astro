@@ -1,0 +1,665 @@
+---
+type Props = {
+  livekitUrl?: string;
+  defaultIdentity?: string;
+  defaultLayout?: 'grid' | 'teacher' | 'presentation' | 'screenshare';
+  defaultName?: string;
+  defaultPresentation?: string;
+  defaultRole?: 'teacher' | 'student';
+  defaultRoom?: string;
+};
+
+const {
+  livekitUrl = '',
+  defaultIdentity = '',
+  defaultLayout = 'presentation',
+  defaultName = '',
+  defaultPresentation = '',
+  defaultRole = 'student',
+  defaultRoom = 'musiki-stage',
+} = Astro.props as Props;
+---
+
+<section class="conference-shell" data-conference-root data-livekit-url={livekitUrl}>
+  <header class="conference-hero">
+    <div>
+      <p class="conference-eyebrow">Astro + LiveKit</p>
+      <h1>Sala performativa</h1>
+      <p class="conference-description" data-room-status>
+        Configura la sala y conecta. Astro renderiza la estructura; LiveKit la hidrata.
+      </p>
+    </div>
+    <div class="conference-state">
+      <span class="conference-chip" data-room-state>Desconectado</span>
+      <span class="conference-chip" data-participant-count>0 participantes</span>
+    </div>
+  </header>
+
+  <div class="conference-workbench">
+    <section class="conference-main">
+      <div class="conference-controls">
+        <label>
+          <span>Sala</span>
+          <input type="text" value={defaultRoom} data-room-input />
+        </label>
+        <label>
+          <span>Identity</span>
+          <input type="text" value={defaultIdentity} data-identity-input />
+        </label>
+        <label>
+          <span>Display name</span>
+          <input type="text" value={defaultName} data-name-input />
+        </label>
+        <label>
+          <span>Rol</span>
+          <select data-role-input>
+            <option value="teacher" selected={defaultRole === 'teacher'}>Teacher</option>
+            <option value="student" selected={defaultRole !== 'teacher'}>Student</option>
+          </select>
+        </label>
+        <label>
+          <span>Layout</span>
+          <select data-layout-input>
+            <option value="grid" selected={defaultLayout === 'grid'}>Grid</option>
+            <option value="teacher" selected={defaultLayout === 'teacher'}>Teacher</option>
+            <option value="presentation" selected={defaultLayout === 'presentation'}>
+              Presentation
+            </option>
+            <option value="screenshare" selected={defaultLayout === 'screenshare'}>
+              Screen share
+            </option>
+          </select>
+        </label>
+        <label class="conference-controls-wide">
+          <span>Presentation route</span>
+          <div class="conference-inline-input">
+            <input
+              type="text"
+              value={defaultPresentation}
+              placeholder="/cursos/slides/curso/leccion or curso/leccion"
+              data-presentation-input
+            />
+            <button type="button" class="conference-secondary" data-action="presentation">
+              Cargar
+            </button>
+          </div>
+        </label>
+      </div>
+
+      <div class="conference-actions">
+        <button type="button" data-action="connect">Conectar</button>
+        <button type="button" class="conference-secondary" data-action="disconnect" disabled>
+          Desconectar
+        </button>
+        <button type="button" class="conference-secondary" data-action="camera" disabled>
+          Encender camara
+        </button>
+        <button type="button" class="conference-secondary" data-action="microphone" disabled>
+          Activar microfono
+        </button>
+        <button type="button" class="conference-secondary" data-action="screen-share" disabled>
+          Compartir pantalla
+        </button>
+      </div>
+
+      <section class="conference-stage" data-stage data-layout={defaultLayout}>
+        <section class="conference-panel" data-panel="teacher">
+          <div class="conference-panel-head">
+            <h2>Teacher stage</h2>
+            <p>Presencia principal</p>
+          </div>
+          <div class="conference-slot" data-slot="teacher" data-empty-label="Waiting for teacher video"></div>
+        </section>
+
+        <section class="conference-panel" data-panel="students">
+          <div class="conference-panel-head">
+            <h2>Students</h2>
+            <p>Participantes remotos</p>
+          </div>
+          <div class="conference-slot" data-slot="students" data-empty-label="Students appear here"></div>
+        </section>
+
+        <section class="conference-panel" data-panel="presentation">
+          <div class="conference-panel-head">
+            <h2>Presentation</h2>
+            <p>Reveal deck embebido</p>
+          </div>
+          <div class="conference-presentation">
+            <iframe
+              title="Presentation stage"
+              data-presentation-frame
+              hidden
+              loading="lazy"
+              allowfullscreen
+            ></iframe>
+            <div class="conference-empty" data-presentation-placeholder>
+              Carga una ruta de slides y la escena queda integrada al layout sin React.
+            </div>
+          </div>
+        </section>
+
+        <section class="conference-panel" data-panel="screen">
+          <div class="conference-panel-head">
+            <h2>Screen share</h2>
+            <p>Captura docente o participante</p>
+          </div>
+          <div class="conference-slot" data-slot="screen" data-empty-label="Shared screens appear here"></div>
+        </section>
+      </section>
+    </section>
+
+    <aside class="conference-sidebar">
+      <div class="conference-panel conference-panel--sidebar">
+        <div class="conference-panel-head">
+          <h2>Roster</h2>
+          <p>Ordenado por rol</p>
+        </div>
+        <ul class="conference-roster" data-participant-list>
+          <li class="conference-roster-empty">Todavia no hay participantes en la sala.</li>
+        </ul>
+      </div>
+    </aside>
+  </div>
+
+  <template data-template="participant-card">
+    <article class="conference-tile conference-tile--participant">
+      <div class="conference-tile-media" data-card-media></div>
+      <div class="conference-empty conference-empty--tile" data-card-placeholder>
+        Camera inactive
+      </div>
+      <footer class="conference-tile-footer">
+        <strong data-card-name>Participant</strong>
+        <span data-card-role>Student</span>
+      </footer>
+    </article>
+  </template>
+
+  <template data-template="screen-card">
+    <article class="conference-tile conference-tile--screen">
+      <div class="conference-tile-media" data-screen-media></div>
+      <footer class="conference-tile-footer">
+        <strong data-screen-name>Screen share</strong>
+        <span>Shared display</span>
+      </footer>
+    </article>
+  </template>
+</section>
+
+<script>
+  import { mountLiveKitRoom } from '../scripts/livekit-room.ts';
+
+  let teardown = null;
+
+  const mount = () => {
+    const root = document.querySelector('[data-conference-root]');
+    if (!(root instanceof HTMLElement)) return;
+
+    if (typeof teardown === 'function') {
+      teardown();
+      teardown = null;
+    }
+
+    teardown = mountLiveKitRoom(root);
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', mount, { once: true });
+  } else {
+    mount();
+  }
+
+  document.addEventListener('astro:page-load', mount);
+  window.addEventListener('beforeunload', () => {
+    if (typeof teardown === 'function') teardown();
+    teardown = null;
+  });
+</script>
+
+<style>
+  .conference-shell {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: clamp(1rem, 2.5vw, 2rem);
+    display: grid;
+    gap: 1rem;
+  }
+
+  .conference-hero {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1rem 1.1rem;
+    border: 1px solid var(--c-border);
+    border-radius: 18px;
+    background:
+      radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 18%, transparent), transparent 40%),
+      linear-gradient(135deg, color-mix(in srgb, var(--c-bg) 92%, #08121f 8%), var(--c-bg));
+  }
+
+  .conference-eyebrow {
+    margin: 0 0 0.35rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 0.72rem;
+    color: color-mix(in srgb, var(--accent) 65%, var(--c-fg));
+  }
+
+  .conference-hero h1 {
+    margin: 0;
+    font-size: clamp(1.7rem, 4vw, 3rem);
+    line-height: 0.95;
+  }
+
+  .conference-description {
+    margin: 0.45rem 0 0;
+    max-width: 60ch;
+    color: var(--c-fg-dim);
+  }
+
+  .conference-state {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    justify-content: flex-end;
+  }
+
+  .conference-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.3rem;
+    padding: 0.45rem 0.8rem;
+    border-radius: 999px;
+    border: 1px solid var(--c-border);
+    background: color-mix(in srgb, var(--c-bg) 88%, var(--accent) 12%);
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+
+  .conference-workbench {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 1rem;
+    align-items: start;
+  }
+
+  .conference-main {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .conference-controls {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.8rem;
+    padding: 1rem;
+    border: 1px solid var(--c-border);
+    border-radius: 18px;
+    background: color-mix(in srgb, var(--c-bg) 94%, transparent);
+  }
+
+  .conference-controls label {
+    display: grid;
+    gap: 0.38rem;
+    font-size: 0.82rem;
+    color: var(--c-fg-dim);
+  }
+
+  .conference-controls span {
+    font-weight: 600;
+    color: var(--c-fg);
+  }
+
+  .conference-controls input,
+  .conference-controls select,
+  .conference-actions button,
+  .conference-inline-input button {
+    border: 1px solid var(--c-border);
+    border-radius: 10px;
+    background: var(--c-bg);
+    color: var(--c-fg);
+    font: inherit;
+  }
+
+  .conference-controls input,
+  .conference-controls select {
+    min-height: 2.7rem;
+    padding: 0.55rem 0.7rem;
+  }
+
+  .conference-controls-wide {
+    grid-column: span 2;
+  }
+
+  .conference-inline-input {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.5rem;
+  }
+
+  .conference-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65rem;
+  }
+
+  .conference-actions button,
+  .conference-inline-input button {
+    min-height: 2.7rem;
+    padding: 0.55rem 0.9rem;
+    cursor: pointer;
+  }
+
+  .conference-actions button {
+    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 88%, #001e46 12%), var(--accent));
+    color: #fff;
+    border-color: color-mix(in srgb, var(--accent) 70%, #000 30%);
+  }
+
+  .conference-actions button.conference-secondary,
+  .conference-inline-input button.conference-secondary {
+    background: var(--c-bg);
+    color: var(--c-fg);
+  }
+
+  .conference-actions button[disabled],
+  .conference-inline-input button[disabled] {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .conference-stage {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .conference-stage[data-layout='presentation'] {
+    grid-template-columns: minmax(0, 1.45fr) minmax(260px, 0.85fr);
+    grid-template-areas:
+      'presentation students'
+      'teacher students'
+      'screen students';
+  }
+
+  .conference-stage[data-layout='grid'] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      'teacher students'
+      'presentation screen';
+  }
+
+  .conference-stage[data-layout='teacher'] {
+    grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.8fr);
+    grid-template-areas:
+      'teacher students'
+      'teacher presentation'
+      'screen presentation';
+  }
+
+  .conference-stage[data-layout='screenshare'] {
+    grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.75fr);
+    grid-template-areas:
+      'screen students'
+      'screen teacher'
+      'presentation teacher';
+  }
+
+  .conference-panel {
+    border: 1px solid var(--c-border);
+    border-radius: 18px;
+    padding: 0.95rem;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--c-bg) 96%, transparent), color-mix(in srgb, var(--c-bg) 90%, var(--accent) 10%));
+    min-height: 14rem;
+  }
+
+  .conference-panel--sidebar {
+    min-height: auto;
+    position: sticky;
+    top: 1rem;
+  }
+
+  .conference-panel[data-panel='teacher'] {
+    grid-area: teacher;
+  }
+
+  .conference-panel[data-panel='students'] {
+    grid-area: students;
+  }
+
+  .conference-panel[data-panel='presentation'] {
+    grid-area: presentation;
+    min-height: 28rem;
+  }
+
+  .conference-panel[data-panel='screen'] {
+    grid-area: screen;
+    min-height: 18rem;
+  }
+
+  .conference-panel-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+    margin-bottom: 0.85rem;
+  }
+
+  .conference-panel-head h2 {
+    margin: 0;
+    font-size: 1rem;
+  }
+
+  .conference-panel-head p {
+    margin: 0;
+    color: var(--c-fg-dim);
+    font-size: 0.8rem;
+  }
+
+  .conference-slot {
+    display: grid;
+    gap: 0.75rem;
+    align-content: start;
+    min-height: calc(100% - 2.2rem);
+  }
+
+  .conference-slot[data-slot='teacher'] {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+
+  .conference-slot[data-slot='students'] {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+
+  .conference-slot[data-slot='screen'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .conference-slot:empty::before {
+    content: attr(data-empty-label);
+    min-height: 10rem;
+    display: grid;
+    place-items: center;
+    border-radius: 14px;
+    border: 1px dashed color-mix(in srgb, var(--c-border) 80%, transparent);
+    color: var(--c-fg-dim);
+    background: color-mix(in srgb, var(--c-bg) 92%, transparent);
+  }
+
+  .conference-presentation {
+    min-height: 22rem;
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--c-border) 84%, transparent);
+    background: #090909;
+  }
+
+  .conference-presentation iframe {
+    width: 100%;
+    height: 100%;
+    min-height: 22rem;
+    border: none;
+    background: #000;
+  }
+
+  .conference-empty {
+    min-height: 100%;
+    display: grid;
+    place-items: center;
+    padding: 1rem;
+    text-align: center;
+    color: var(--c-fg-dim);
+    background:
+      radial-gradient(circle at top, rgba(255, 255, 255, 0.06), transparent 45%),
+      linear-gradient(135deg, rgba(255, 255, 255, 0.02), transparent);
+  }
+
+  .conference-empty--tile {
+    min-height: 10rem;
+    border-radius: 14px;
+    border: 1px dashed color-mix(in srgb, var(--c-border) 76%, transparent);
+  }
+
+  .conference-tile {
+    display: grid;
+    gap: 0.7rem;
+    padding: 0.7rem;
+    border-radius: 16px;
+    border: 1px solid color-mix(in srgb, var(--c-border) 88%, transparent);
+    background: color-mix(in srgb, var(--c-bg) 92%, transparent);
+  }
+
+  .conference-tile[data-role='teacher'] {
+    border-color: color-mix(in srgb, var(--accent) 60%, var(--c-border));
+  }
+
+  .conference-tile-media {
+    min-height: 10rem;
+    position: relative;
+    overflow: hidden;
+    border-radius: 14px;
+    background: #06080b;
+  }
+
+  .conference-media-frame,
+  .conference-media-frame--screen {
+    width: 100%;
+    height: 100%;
+  }
+
+  .conference-media-frame video,
+  .conference-media-frame--screen video {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+    background: #000;
+  }
+
+  .conference-media-frame--screen video {
+    min-height: 18rem;
+    object-fit: contain;
+  }
+
+  .conference-tile-footer {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    align-items: baseline;
+    font-size: 0.85rem;
+  }
+
+  .conference-tile-footer strong {
+    font-size: 0.95rem;
+  }
+
+  .conference-tile-footer span {
+    color: var(--c-fg-dim);
+  }
+
+  .conference-sidebar {
+    min-width: 0;
+  }
+
+  .conference-roster {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.45rem;
+  }
+
+  .conference-roster-item,
+  .conference-roster-empty {
+    display: grid;
+    gap: 0.08rem;
+    padding: 0.65rem 0.75rem;
+    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--c-border) 88%, transparent);
+    background: color-mix(in srgb, var(--c-bg) 92%, transparent);
+    font-size: 0.9rem;
+  }
+
+  .conference-roster-item span:last-child,
+  .conference-roster-empty {
+    color: var(--c-fg-dim);
+    font-size: 0.78rem;
+  }
+
+  @media (max-width: 1100px) {
+    .conference-workbench {
+      grid-template-columns: 1fr;
+    }
+
+    .conference-panel--sidebar {
+      position: static;
+    }
+
+    .conference-controls {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .conference-controls-wide {
+      grid-column: span 2;
+    }
+  }
+
+  @media (max-width: 820px) {
+    .conference-hero {
+      flex-direction: column;
+    }
+
+    .conference-state {
+      justify-content: flex-start;
+    }
+
+    .conference-controls {
+      grid-template-columns: 1fr;
+    }
+
+    .conference-controls-wide {
+      grid-column: span 1;
+    }
+
+    .conference-inline-input {
+      grid-template-columns: 1fr;
+    }
+
+    .conference-stage,
+    .conference-stage[data-layout='presentation'],
+    .conference-stage[data-layout='grid'],
+    .conference-stage[data-layout='teacher'],
+    .conference-stage[data-layout='screenshare'] {
+      grid-template-columns: 1fr;
+      grid-template-areas:
+        'teacher'
+        'presentation'
+        'screen'
+        'students';
+    }
+
+    .conference-panel[data-panel='presentation'] {
+      min-height: 22rem;
+    }
+  }
+</style>
