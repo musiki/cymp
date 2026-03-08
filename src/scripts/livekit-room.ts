@@ -69,6 +69,7 @@ type ScreenCardRefs = {
 };
 
 type MediaMount = {
+  attached?: boolean;
   element: HTMLMediaElement;
   track: Track;
   trackSid: string;
@@ -83,6 +84,15 @@ type LocalPreviewStreamMount = {
   element: HTMLVideoElement;
   stream: MediaStream;
   wrapper: HTMLElement;
+};
+
+type WebkitDocument = Document & {
+  webkitExitFullscreen?: () => Promise<void> | void;
+  webkitFullscreenElement?: Element | null;
+};
+
+type WebkitFullscreenElement = HTMLElement & {
+  webkitRequestFullscreen?: () => Promise<void> | void;
 };
 
 type MountCollection = {
@@ -258,7 +268,9 @@ const createMediaElement = (track: Track, muted = false) => {
 
 const removeMount = (mount: MediaMount | ParticipantMount | undefined) => {
   if (!mount) return;
-  mount.track.detach(mount.element);
+  if (mount.attached !== false) {
+    mount.track.detach(mount.element);
+  }
   mount.element.remove();
   if ('wrapper' in mount) {
     mount.wrapper.remove();
@@ -367,8 +379,10 @@ const syncParticipantAudio = (
   const element = createMediaElement(publication.track);
   card.card.appendChild(element);
   publication.track.attach(element);
+  void element.play().catch(() => undefined);
 
   mounts.participantAudioMounts.set(identity, {
+    attached: true,
     element,
     track: publication.track,
     trackSid,
@@ -478,8 +492,10 @@ const syncScreenAudio = (
   const element = createMediaElement(publication.track);
   screenCard.card.appendChild(element);
   publication.track.attach(element);
+  void element.play().catch(() => undefined);
 
   mounts.screenAudioMounts.set(identity, {
+    attached: true,
     element,
     track: publication.track,
     trackSid,
@@ -533,9 +549,11 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   const liveActivityTimer = root.querySelector('[data-live-activity-timer]');
   const sessionTimer = root.querySelector('[data-session-timer]');
   const recordButton = root.querySelector('[data-action="record"]');
+  const fullscreenButton = root.querySelector('[data-action="fullscreen"]');
   const chatList = root.querySelector('[data-chat-list]');
   const chatInput = root.querySelector('[data-chat-input]');
   const chatSendButton = root.querySelector('[data-action="chat-send"]');
+  const chatDownloadButton = root.querySelector('[data-action="chat-download"]');
 
   if (
     !(roomInput instanceof HTMLInputElement) ||
@@ -564,7 +582,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     !(recordButton instanceof HTMLButtonElement) ||
     !(chatList instanceof HTMLElement) ||
     !(chatInput instanceof HTMLTextAreaElement) ||
-    !(chatSendButton instanceof HTMLButtonElement)
+    !(chatSendButton instanceof HTMLButtonElement) ||
+    !(chatDownloadButton instanceof HTMLButtonElement)
   ) {
     const missingDomNodes: string[] = [];
     if (!(roomInput instanceof HTMLInputElement)) missingDomNodes.push('room input');
@@ -600,6 +619,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     if (!(chatList instanceof HTMLElement)) missingDomNodes.push('chat list');
     if (!(chatInput instanceof HTMLTextAreaElement)) missingDomNodes.push('chat input');
     if (!(chatSendButton instanceof HTMLButtonElement)) missingDomNodes.push('chat send button');
+    if (!(chatDownloadButton instanceof HTMLButtonElement)) missingDomNodes.push('chat download button');
 
     console.error(`Conference room DOM is incomplete: ${missingDomNodes.join(', ')}`);
     if (statusNode instanceof HTMLElement) {
@@ -651,6 +671,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   let unsubscribeLiveActivity: (() => void) | null = null;
   let activeLiveSnapshot: LiveSnapshot | null = null;
   let liveActivityTickId = 0;
+  let immersiveFullscreenActive = false;
   let connectedAtMs = 0;
   let recordingAnimationId = 0;
   let recordingAudioContext: AudioContext | null = null;
@@ -675,6 +696,75 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   let micMeterGeneration = 0;
 
   const getCurrentLayout = () => setLayout(stage, layoutInput.value);
+
+  const getFullscreenTarget = () => root as WebkitFullscreenElement;
+
+  const getFullscreenElement = () =>
+    document.fullscreenElement ||
+    (document as WebkitDocument).webkitFullscreenElement ||
+    null;
+
+  const canRequestFullscreen = () => {
+    const target = getFullscreenTarget();
+    return Boolean(target.requestFullscreen || target.webkitRequestFullscreen);
+  };
+
+  const canExitFullscreen = () =>
+    Boolean(document.exitFullscreen || (document as WebkitDocument).webkitExitFullscreen);
+
+  const applyImmersiveFullscreenState = (active: boolean) => {
+    immersiveFullscreenActive = active;
+    root.dataset.immersive = active ? 'true' : 'false';
+    document.body.classList.toggle('room-page--immersive', active);
+
+    if (active) {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    }
+  };
+
+  const syncFullscreenButton = () => {
+    if (!(fullscreenButton instanceof HTMLButtonElement)) return;
+
+    const active = Boolean(getFullscreenElement()) || immersiveFullscreenActive;
+    const supported = true;
+    fullscreenButton.disabled = !supported;
+    fullscreenButton.dataset.active = active ? 'true' : 'false';
+    fullscreenButton.title = active ? 'Salir de pantalla completa' : 'Pantalla completa';
+    fullscreenButton.setAttribute(
+      'aria-label',
+      active ? 'Salir de pantalla completa' : 'Pantalla completa',
+    );
+  };
+
+  const toggleFullscreen = async () => {
+    const fullscreenElement = getFullscreenElement();
+    const target = getFullscreenTarget();
+
+    if (fullscreenElement) {
+      const exitFullscreen =
+        document.exitFullscreen?.bind(document) ||
+        (document as WebkitDocument).webkitExitFullscreen?.bind(document);
+      await exitFullscreen?.();
+      applyImmersiveFullscreenState(false);
+      return;
+    }
+
+    if (immersiveFullscreenActive) {
+      applyImmersiveFullscreenState(false);
+      return;
+    }
+
+    const requestFullscreen =
+      target.requestFullscreen?.bind(target) || target.webkitRequestFullscreen?.bind(target);
+
+    if (requestFullscreen) {
+      await requestFullscreen();
+      applyImmersiveFullscreenState(false);
+      return;
+    }
+
+    applyImmersiveFullscreenState(true);
+  };
 
   const setStatus = (message: string) => {
     statusNode.textContent = message;
@@ -1223,17 +1313,9 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     const frameDocument = frameWindow?.document;
     if (!frameWindow || !frameDocument) return null;
 
-    const revealRoot = frameDocument.querySelector('.reveal');
+    const revealRoot =
+      frameDocument.querySelector('.reveal-viewport') || frameDocument.querySelector('.reveal');
     if (!(revealRoot instanceof frameWindow.HTMLElement)) return null;
-
-    const presentSections = Array.from(frameDocument.querySelectorAll('.slides section.present')).filter(
-      (node): node is HTMLElement => node instanceof frameWindow.HTMLElement && !node.classList.contains('stack'),
-    );
-    const currentSlide = presentSections[presentSections.length - 1] || null;
-    const presentBackgrounds = Array.from(
-      frameDocument.querySelectorAll('.backgrounds .slide-background.present'),
-    ).filter((node): node is HTMLElement => node instanceof frameWindow.HTMLElement);
-    const currentBackground = presentBackgrounds[presentBackgrounds.length - 1] || null;
 
     const width = Math.max(
       2,
@@ -1252,18 +1334,9 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       `${serializeComputedStyle(frameWindow.getComputedStyle(revealRoot))};position:relative;overflow:hidden;width:${width}px;height:${height}px;background:#000;`,
     );
 
-    if (currentBackground) {
-      const backgroundClone = clonePresentationNode(currentBackground, snapshotDocument, frameWindow);
-      if (backgroundClone) {
-        wrapper.appendChild(backgroundClone);
-      }
-    }
-
-    if (currentSlide) {
-      const slideClone = clonePresentationNode(currentSlide, snapshotDocument, frameWindow);
-      if (slideClone) {
-        wrapper.appendChild(slideClone);
-      }
+    const revealClone = clonePresentationNode(revealRoot, snapshotDocument, frameWindow);
+    if (revealClone) {
+      wrapper.appendChild(revealClone);
     }
 
     const xhtml = new XMLSerializer().serializeToString(wrapper);
@@ -1481,6 +1554,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       if (track.kind !== 'audio' || track.readyState !== 'live') return;
 
       const clone = track.clone();
+      clone.enabled = true;
       recordingMicTrackClones.push(clone);
 
       const source = audioContext.createMediaStreamSource(new MediaStream([clone]));
@@ -1493,41 +1567,55 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       hasAudio = true;
     };
 
-    const participantEntries = [
-      { identity: room.localParticipant.identity, participant: room.localParticipant },
-      ...Array.from(room.remoteParticipants.values()).map((participant) => ({
-        identity: participant.identity,
-        participant,
-      })),
-    ];
+    const connectMediaElement = (element: HTMLMediaElement) => {
+      try {
+        const source = audioContext.createMediaElementSource(element);
+        const gain = audioContext.createGain();
+        gain.gain.value = 1;
+        source.connect(gain);
+        gain.connect(destination);
+        recordingMediaElementSources.push(source, gain);
+        hasAudio = true;
+      } catch {
+        // ignore duplicate or unsupported media element sources
+      }
+    };
 
-    participantEntries.forEach(({ identity, participant }) => {
-      Array.from(participant.audioTrackPublications.values()).forEach((publication) => {
-        const mediaStreamTrack = (
-          publication.track as { mediaStreamTrack?: MediaStreamTrack } | undefined
-        )?.mediaStreamTrack;
+    Array.from(mounts.participantAudioMounts.values()).forEach((mount) => {
+      if (mount.element instanceof HTMLMediaElement) {
+        connectMediaElement(mount.element);
+      }
+    });
 
-        if (!mediaStreamTrack || mediaStreamTrack.readyState !== 'live') return;
-        if (
-          participant === room.localParticipant &&
-          publication.source === Track.Source.Microphone &&
-          !room.localParticipant.isMicrophoneEnabled
-        ) {
-          return;
-        }
-        if (
-          participant === room.localParticipant &&
-          publication.source === Track.Source.ScreenShareAudio &&
-          !room.localParticipant.isScreenShareEnabled
-        ) {
-          return;
-        }
+    Array.from(mounts.screenAudioMounts.values()).forEach((mount) => {
+      if (mount.element instanceof HTMLMediaElement) {
+        connectMediaElement(mount.element);
+      }
+    });
 
-        const trackKey = `${identity}:${publication.source}:${mediaStreamTrack.id}`;
-        if (seenTrackIds.has(trackKey)) return;
-        seenTrackIds.add(trackKey);
-        connectTrack(mediaStreamTrack);
-      });
+    Array.from(room.localParticipant.audioTrackPublications.values()).forEach((publication) => {
+      const mediaStreamTrack = (
+        publication.track as { mediaStreamTrack?: MediaStreamTrack } | undefined
+      )?.mediaStreamTrack;
+
+      if (!mediaStreamTrack || mediaStreamTrack.readyState !== 'live') return;
+      if (
+        publication.source === Track.Source.Microphone &&
+        !room.localParticipant.isMicrophoneEnabled
+      ) {
+        return;
+      }
+      if (
+        publication.source === Track.Source.ScreenShareAudio &&
+        !room.localParticipant.isScreenShareEnabled
+      ) {
+        return;
+      }
+
+      const trackKey = `${room.localParticipant.identity}:${publication.source}:${mediaStreamTrack.id}`;
+      if (seenTrackIds.has(trackKey)) return;
+      seenTrackIds.add(trackKey);
+      connectTrack(mediaStreamTrack);
     });
 
     return hasAudio ? destination.stream.getAudioTracks()[0] || null : null;
@@ -1548,11 +1636,12 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     await refreshRecordingPresentationSnapshot(true).catch(() => undefined);
     drawRecordingFrame();
 
-    const stream = recordingCanvas.captureStream(30);
+    const canvasStream = recordingCanvas.captureStream(30);
     const mixedAudioTrack = await buildRecordingAudioTrack();
-    if (mixedAudioTrack) {
-      stream.addTrack(mixedAudioTrack);
-    }
+    const stream = new MediaStream([
+      ...canvasStream.getVideoTracks(),
+      ...(mixedAudioTrack ? [mixedAudioTrack] : []),
+    ]);
 
     const { recorder, mimeType } = createCompatibleMediaRecorder(stream);
     recordingStream = stream;
@@ -1640,6 +1729,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     autoSwitchedToScreenshare = false;
     syncLayoutChoiceButtons();
   };
+
+  const canChangeLayoutLocally = () => !hasActiveScreenShare();
 
   const resolveParticipantTargetSlot = (participant: Participant) => {
     const layout = getCurrentLayout();
@@ -2121,13 +2212,12 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
   const renderChat = () => {
     chatList.innerHTML = '';
+    chatDownloadButton.disabled = chatMessages.length === 0;
 
     if (chatMessages.length === 0) {
       const empty = document.createElement('li');
       empty.className = 'conference-chat-empty';
-      empty.textContent = room.state === ConnectionState.Connected
-        ? 'No hay mensajes todavia.'
-        : '';
+      empty.textContent = 'No hay mensajes todavia.';
       chatList.appendChild(empty);
       return;
     }
@@ -2136,10 +2226,11 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       const item = document.createElement('li');
       item.className = 'conference-chat-item';
 
-      const meta = document.createElement('div');
-      meta.className = 'conference-chat-meta';
+      const signature = document.createElement('div');
+      signature.className = 'conference-chat-signature';
 
       const sender = document.createElement('strong');
+      sender.className = 'conference-chat-name';
       sender.textContent = message.name;
 
       const body = document.createElement('div');
@@ -2147,18 +2238,48 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       body.textContent = message.text;
 
       const sentAt = document.createElement('time');
+      sentAt.className = 'conference-chat-time';
       sentAt.dateTime = message.sentAt;
       sentAt.textContent = new Date(message.sentAt).toLocaleTimeString([], {
         hour: '2-digit',
         minute: '2-digit',
       });
 
-      meta.append(sender, sentAt);
-      item.append(meta, body);
+      signature.append(sender, sentAt);
+      item.append(signature, body);
       chatList.appendChild(item);
     });
 
     chatList.scrollTop = chatList.scrollHeight;
+  };
+
+  const downloadChatTranscript = () => {
+    if (chatMessages.length === 0) return;
+
+    const roomName = normalizeText(roomInput.value) || 'room';
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const lines = chatMessages.map((message) => {
+      const timeLabel = new Date(message.sentAt).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+      return `${message.name} ${timeLabel}\n${message.text}\n`;
+    });
+
+    const blob = new Blob([lines.join('\n')], {
+      type: 'text/plain;charset=utf-8',
+    });
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = href;
+    anchor.download = `${roomName}-chat-${stamp}.txt`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => {
+      URL.revokeObjectURL(href);
+    }, 1000);
   };
 
   const appendChatMessage = (message: Extract<ConferenceMessage, { type: 'chat' }>) => {
@@ -2210,7 +2331,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     if (recordButton instanceof HTMLButtonElement) {
       recordButton.disabled = !connected;
     }
-    layoutInput.disabled = connected && localRole !== 'teacher';
+    layoutInput.disabled = !canChangeLayoutLocally();
     presentationSelect.disabled = connected && localRole !== 'teacher';
     if (presentationButton instanceof HTMLButtonElement) {
       presentationButton.disabled = connected && localRole !== 'teacher';
@@ -2230,6 +2351,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     }
     chatInput.disabled = !connected;
     chatSendButton.disabled = !connected;
+    chatDownloadButton.disabled = chatMessages.length === 0;
     roomInput.disabled = connected || connecting;
     identityInput.disabled = connected || connecting;
     nameInput.disabled = connected || connecting;
@@ -2274,6 +2396,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     renderSessionTimer();
     setRecordState(Boolean(mediaRecorder && mediaRecorder.state !== 'inactive'));
     syncMicMeter();
+    syncFullscreenButton();
   };
 
   const ensureParticipantCard = (participant: Participant) => {
@@ -2633,6 +2756,11 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       if (message.type === 'layout') {
         const nextLayout = setLayout(stage, message.layout);
         layoutInput.value = nextLayout;
+        if (nextLayout !== 'screenshare') {
+          layoutBeforeAutoScreenshare = nextLayout;
+          autoSwitchedToScreenshare = false;
+        }
+        syncAllParticipants();
         return;
       }
 
@@ -2781,6 +2909,16 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     });
   }
 
+  if (fullscreenButton instanceof HTMLButtonElement) {
+    fullscreenButton.addEventListener('click', () => {
+      void toggleFullscreen().catch((error) => {
+        applyImmersiveFullscreenState(false);
+        syncFullscreenButton();
+        setStatus(safeErrorMessage(error));
+      });
+    });
+  }
+
   if (audioInputSelect instanceof HTMLSelectElement) {
     audioInputSelect.addEventListener('change', async () => {
       const nextDeviceId = normalizeText(audioInputSelect.value);
@@ -2849,6 +2987,9 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   });
 
   layoutInput.addEventListener('change', () => {
+    if (hasActiveScreenShare()) {
+      layoutInput.value = 'screenshare';
+    }
     const nextLayout = setLayout(stage, layoutInput.value);
     layoutInput.value = nextLayout;
     if (nextLayout !== 'screenshare') {
@@ -2928,6 +3069,10 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     void sendChatMessage();
   });
 
+  chatDownloadButton.addEventListener('click', () => {
+    downloadChatTranscript();
+  });
+
   chatInput.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' || event.shiftKey) return;
     event.preventDefault();
@@ -2952,6 +3097,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   presentationFrame.addEventListener('load', handlePresentationLoad);
 
   window.addEventListener('message', handlePresentationMessage);
+  document.addEventListener('fullscreenchange', syncFullscreenButton);
+  document.addEventListener('webkitfullscreenchange', syncFullscreenButton as EventListener);
 
   syncRoleUi();
   setLayout(stage, layoutInput.value);
@@ -2998,6 +3145,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     navigator.mediaDevices?.removeEventListener?.('devicechange', handleDeviceChange);
     presentationFrame.removeEventListener('load', handlePresentationLoad);
     window.removeEventListener('message', handlePresentationMessage);
+    document.removeEventListener('fullscreenchange', syncFullscreenButton);
+    document.removeEventListener('webkitfullscreenchange', syncFullscreenButton as EventListener);
     unsubscribeLiveActivity?.();
     unsubscribeLiveActivity = null;
     if (liveActivityTickId) {
@@ -3006,6 +3155,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     }
     stopMicMeter();
     closeMicMeterAudioContext();
+    applyImmersiveFullscreenState(false);
     stopRecording();
     disableDisconnectedCameraPreview();
     disconnectRoom();

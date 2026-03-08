@@ -1886,6 +1886,29 @@ if (activeCourse) {
         };
 
         const setForumBodyContent = (container, post) => {
+          const normalizeForumBodyNode = (root) => {
+            if (!(root instanceof HTMLElement)) return;
+            root.style.color = 'var(--forum-text-primary, var(--c-fg, #1c1f23))';
+            root.style.opacity = '1';
+            root.style.visibility = 'visible';
+
+            root.querySelectorAll('[hidden]').forEach((node) => {
+              if (node instanceof HTMLElement) {
+                node.hidden = false;
+                node.removeAttribute('hidden');
+              }
+            });
+
+            root.querySelectorAll('*').forEach((node) => {
+              if (!(node instanceof HTMLElement)) return;
+              if (node.closest('svg, .mermaid, .katex, .lily-score')) return;
+              if (node.style.display === 'none') node.style.display = '';
+              if (node.style.visibility === 'hidden') node.style.visibility = 'visible';
+              if (node.style.opacity === '0') node.style.opacity = '1';
+              if (!node.style.color) node.style.color = 'inherit';
+            });
+          };
+
           container.replaceChildren();
 
           const nextHtml = getForumBodyHtml(post);
@@ -1908,6 +1931,8 @@ if (activeCourse) {
               : 'Sin contenido.';
             container.replaceChildren(paragraph);
           }
+
+          normalizeForumBodyNode(container);
         };
 
         const replaceForumTextareaSelection = (textarea, nextText, start, end, cursorStart, cursorEnd = cursorStart) => {

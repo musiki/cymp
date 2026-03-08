@@ -561,7 +561,7 @@ ul {
 
 ul > li {
   position: relative;
-  padding-left: 1.25em;
+  padding-left: 1.02em;
   margin: 0.45em 0;
 }
 
@@ -569,14 +569,14 @@ ul > li::before {
   content: "→";
   position: absolute;
   left: 0;
-  transform: translateY(-10%);
+  top: 0.18em;
   font-size: 1em;
   color: #d4d700;
   text-align: center;
 }
 
 ul ul > li {
-  padding-left: 1.6em;
+  padding-left: 1.34em;
   margin: 0.28em 0;
   text-align: left;
 }
@@ -584,13 +584,13 @@ ul ul > li {
 ul ul > li::before {
   content: "○";
   position: absolute;
-  left: 0.5em;
-  top: 0.2em;
+  left: 0.36em;
+  top: 0.22em;
   font-size: 0.85em;
 }
 
 ul ul ul > li {
-  padding-left: 1.6em;
+  padding-left: 1.36em;
   margin: 0.25em 0;
   text-align: left;
 }
@@ -598,8 +598,8 @@ ul ul ul > li {
 ul ul ul > li::before {
   content: "▪";
   position: absolute;
-  left: 0.2em;
-  top: -0.09em;
+  left: 0.1em;
+  top: 0.02em;
   font-size: 1.8em;
 }
 
@@ -1105,11 +1105,45 @@ ol ol ol ol > li::marker {
   max-width: 100% !important;
   overflow-wrap: anywhere !important;
   word-break: break-word !important;
+  color: var(--forum-text-primary, var(--c-fg, #1c1f23)) !important;
+  opacity: 1 !important;
+  visibility: visible !important;
 }
 
 :is(#lesson-forum, #forum-reader-root) .forum-post-body :is(p, ul, ol, pre, blockquote, table, .mermaid, .katex-display, .lily-score, .callout) {
   max-width: 100% !important;
   margin: 0 0 0.32rem 0 !important;
+}
+
+:is(#lesson-forum, #forum-reader-root) .forum-post-body :is(
+  p,
+  ul,
+  ol,
+  li,
+  div,
+  span,
+  strong,
+  em,
+  a,
+  blockquote,
+  table,
+  thead,
+  tbody,
+  tr,
+  th,
+  td
+) {
+  color: inherit !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+:is(#lesson-forum, #forum-reader-root) .forum-post-body a {
+  color: var(--forum-accent, var(--accent, #2f6fff)) !important;
+}
+
+:is(#lesson-forum, #forum-reader-root) .forum-post-body blockquote {
+  color: var(--forum-text-secondary, var(--c-fg-dim, #6b7480)) !important;
 }
 
 :is(#lesson-forum, #forum-reader-root) .forum-post-body pre,
