@@ -201,6 +201,31 @@ const readPresentationPageSlug = (href: string | null | undefined) => {
   }
 };
 
+const readPresentationCourseId = (href: string | null | undefined) => {
+  const normalizedHref = normalizeText(href);
+  if (!normalizedHref) return '';
+
+  try {
+    const url = new URL(normalizedHref, window.location.origin);
+    const parts = url.pathname
+      .split('/')
+      .filter(Boolean)
+      .map(normalizeCoursePathPart);
+
+    if (parts[0] === 'cursos' && parts[1] === 'slides' && parts[2]) {
+      return parts[2];
+    }
+
+    if (parts[0] === 'cursos' && parts[1]) {
+      return parts[1];
+    }
+
+    return '';
+  } catch {
+    return '';
+  }
+};
+
 const normalizeSlideState = (value: Partial<SlideState> | null | undefined): SlideState | null => {
   if (!value || typeof value !== 'object') return null;
   const indexh = Number(value.indexh);
@@ -839,8 +864,12 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
   const syncLocalParticipantMetadata = async () => {
     if (room.state !== ConnectionState.Connected) return;
+    const currentMetadata = readParticipantMetadata(room.localParticipant as unknown as Participant);
     await updateLocalParticipantMetadata(
       JSON.stringify({
+        ...currentMetadata,
+        courseId: getEffectiveCourseId() || normalizeText(currentMetadata.courseId),
+        pageSlug: getCurrentPresentationPageSlug() || normalizeText(currentMetadata.pageSlug),
         role: localRole,
         handRaised: localHandRaised,
       }),
@@ -950,14 +979,24 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   const getCurrentPresentationHref = () =>
     normalizeText(presentationSelect.value) || presentation.getHref() || null;
 
+  const getSelectedPresentationCourseId = () => {
+    const selectedOption = presentationSelect.selectedOptions.item(0);
+    if (!(selectedOption instanceof HTMLOptionElement)) return '';
+    return normalizeText(selectedOption.dataset.courseId);
+  };
+
+  const getEffectiveCourseId = () =>
+    courseId || getSelectedPresentationCourseId() || readPresentationCourseId(getCurrentPresentationHref());
+
   const getCurrentPresentationPageSlug = () => readPresentationPageSlug(getCurrentPresentationHref());
 
   const getLiveActivityHref = (snapshot: LiveSnapshot | null) => {
     const sessionId = normalizeText(snapshot?.sessionId);
     if (!sessionId) return '';
     const url = new URL(`/live/${encodeURIComponent(sessionId)}`, window.location.origin);
-    if (courseId) {
-      url.searchParams.set('courseId', courseId);
+    const effectiveCourseId = getEffectiveCourseId() || normalizeText(snapshot?.courseId);
+    if (effectiveCourseId) {
+      url.searchParams.set('courseId', effectiveCourseId);
     }
     return `${url.pathname}${url.search}`;
   };
@@ -966,13 +1005,14 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     if (!(liveActivityButton instanceof HTMLButtonElement)) return;
 
     const snapshot = activeLiveSnapshot;
+    const effectiveCourseId = getEffectiveCourseId();
     const snapshotCourseId = normalizeText(snapshot?.courseId);
     const remainingMs = snapshot?.endsAt ? getRemainingMs(snapshot.endsAt, Date.now()) : null;
     const isVisible = Boolean(
       snapshot?.active &&
       normalizeText(snapshot?.sessionId) &&
       (remainingMs === null || remainingMs > 0) &&
-      (!courseId || !snapshotCourseId || snapshotCourseId === courseId),
+      (!effectiveCourseId || !snapshotCourseId || snapshotCourseId === effectiveCourseId),
     );
 
     liveActivityButton.hidden = !isVisible;
@@ -2100,14 +2140,17 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     unsubscribeLiveActivity?.();
     unsubscribeLiveActivity = null;
 
-    if (!courseId) {
+    const effectiveCourseId = getEffectiveCourseId();
+
+    if (!effectiveCourseId) {
       activeLiveSnapshot = null;
+      postToPresentation({ type: 'musiki:live-snapshot', snapshot: null });
       renderLiveActivity();
       return;
     }
 
     unsubscribeLiveActivity = subscribeToLive({
-      courseId,
+      courseId: effectiveCourseId,
       onEvent: (eventName, payload) => {
         if (eventName === 'live.ended') {
           const endedSessionId = normalizeText((payload as LiveSnapshot | null)?.sessionId);
@@ -2183,8 +2226,9 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
   const writeQueryState = () => {
     const params = new URLSearchParams(window.location.search);
-    if (courseId) {
-      params.set('course', courseId);
+    const effectiveCourseId = getEffectiveCourseId();
+    if (effectiveCourseId) {
+      params.set('course', effectiveCourseId);
     } else {
       params.delete('course');
     }
@@ -2335,6 +2379,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
         }
 
         writeQueryState();
+        syncLiveActivityTransport();
+        void syncLocalParticipantMetadata().catch(() => undefined);
         renderLiveActivity();
         setStatus(successMessage);
 
@@ -2366,27 +2412,31 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       const item = document.createElement('li');
       item.className = 'conference-chat-item';
 
-      const signature = document.createElement('div');
-      signature.className = 'conference-chat-meta';
+      const header = document.createElement('div');
+      header.className = 'conference-chat-header';
 
-      const sender = document.createElement('strong');
-      sender.className = 'conference-chat-name';
+      const sender = document.createElement('span');
+      sender.className = 'conference-chat-author';
       sender.textContent = message.name;
 
       const body = document.createElement('div');
-      body.className = 'conference-chat-body';
+      body.className = 'conference-chat-text';
       body.textContent = message.text;
 
+      const separator = document.createElement('span');
+      separator.className = 'conference-chat-header-separator';
+      separator.textContent = '·';
+
       const sentAt = document.createElement('time');
-      sentAt.className = 'conference-chat-time';
+      sentAt.className = 'conference-chat-stamp';
       sentAt.dateTime = message.sentAt;
       sentAt.textContent = new Date(message.sentAt).toLocaleTimeString([], {
         hour: '2-digit',
         minute: '2-digit',
       });
 
-      signature.append(sender, sentAt);
-      item.append(signature, body);
+      header.append(sender, separator, sentAt);
+      item.append(header, body);
       chatList.appendChild(item);
     });
 
@@ -2723,8 +2773,13 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       tokenUrl.searchParams.set('room', roomName);
       tokenUrl.searchParams.set('identity', identity);
       tokenUrl.searchParams.set('name', displayName);
-      if (courseId) {
-        tokenUrl.searchParams.set('course', courseId);
+      const pageSlug = getCurrentPresentationPageSlug();
+      const effectiveCourseId = getEffectiveCourseId();
+      if (effectiveCourseId) {
+        tokenUrl.searchParams.set('course', effectiveCourseId);
+      }
+      if (pageSlug) {
+        tokenUrl.searchParams.set('pageSlug', pageSlug);
       }
 
       const tokenResponse = await fetch(tokenUrl, {

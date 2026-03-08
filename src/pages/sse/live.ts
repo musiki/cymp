@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { cleanupExpiredInteractions, getLiveSnapshot, subscribeToLiveEvents } from '../../lib/live/server-store.mjs';
+import { canonicalizeCourseId } from '../../lib/course-alias';
 
 const encoder = new TextEncoder();
 
@@ -12,7 +13,8 @@ const toCommentChunk = (message = 'keepalive') =>
   encoder.encode(`: ${message}\n\n`);
 
 export const GET: APIRoute = async ({ request, url }) => {
-  const courseId = String(url.searchParams.get('courseId') || '').trim();
+  const requestedCourseId = String(url.searchParams.get('courseId') || '').trim();
+  const courseId = await canonicalizeCourseId(requestedCourseId);
 
   let unsubscribe: null | (() => void) = null;
   let heartbeatId: ReturnType<typeof setInterval> | null = null;

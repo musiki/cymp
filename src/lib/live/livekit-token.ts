@@ -1,6 +1,8 @@
 import type { APIContext } from 'astro';
 import { AccessToken } from 'livekit-server-sdk';
-import { resolveLiveParticipantRole } from './access';
+import { createSupabaseServerClient, ensureDbUserFromSession } from '../forum-server';
+import { canonicalizeCourseId } from '../course-alias';
+import { resolveLiveManageAccess, resolveLiveParticipantRole } from './access';
 
 export type LiveKitParticipantRole = 'teacher' | 'student';
 
@@ -45,9 +47,11 @@ export const createLiveKitTokenResponse = async ({ request, locals }: APIContext
     url.searchParams.get('username');
   const requestedName = url.searchParams.get('name');
   const requestedCourse = normalizeText(url.searchParams.get('course'));
+  const requestedPageSlug = normalizeText(url.searchParams.get('pageSlug'));
 
   const sessionName = normalizeText(session?.user?.name);
   const sessionEmail = normalizeText(session?.user?.email);
+  const normalizedCourseId = await canonicalizeCourseId(requestedCourse);
 
   const identity =
     sanitizeIdentity(requestedIdentity) ||
@@ -56,6 +60,20 @@ export const createLiveKitTokenResponse = async ({ request, locals }: APIContext
     createGuestIdentity();
   const name = normalizeText(requestedName) || sessionName || identity;
   const role = await resolveLiveParticipantRole(session, requestedCourse);
+  let userId = '';
+
+  try {
+    if (normalizedCourseId) {
+      const access = await resolveLiveManageAccess(session, normalizedCourseId);
+      userId = normalizeText(access.userId);
+    } else if (session?.user?.email) {
+      const supabase = createSupabaseServerClient();
+      const dbUser = await ensureDbUserFromSession(supabase, session);
+      userId = normalizeText(dbUser?.id);
+    }
+  } catch (error) {
+    console.error('LiveKit token user resolution failed:', error);
+  }
 
   const apiKey = normalizeText(import.meta.env.LIVEKIT_API_KEY);
   const apiSecret = normalizeText(import.meta.env.LIVEKIT_API_SECRET);
@@ -69,8 +87,11 @@ export const createLiveKitTokenResponse = async ({ request, locals }: APIContext
     identity,
     name,
     metadata: JSON.stringify({
+      courseId: normalizedCourseId,
+      pageSlug: requestedPageSlug,
       role,
       name,
+      userId,
     }),
   });
 
@@ -80,6 +101,7 @@ export const createLiveKitTokenResponse = async ({ request, locals }: APIContext
     canPublish: true,
     canPublishData: true,
     canSubscribe: true,
+    canUpdateOwnMetadata: true,
   });
 
   const token = await accessToken.toJwt();

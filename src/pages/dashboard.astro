@@ -4,6 +4,7 @@ import BaseHead from '../components/BaseHead.astro';
 import Footer from '../components/Footer.astro';
 import Header from '../components/Header.astro';
 import { createClient } from '@supabase/supabase-js';
+import { createSupabaseServerClient } from '../lib/forum-server';
 import { getResultIcon, getSubmissionAnswerText, getSubmissionResultState } from '../lib/submission-table';
 import { getEvalOptionMap } from '../lib/eval-option-map';
 import {
@@ -141,6 +142,8 @@ if (isTeacher && normalizeRole(dbUser?.role) !== 'teacher') {
 
 // --- TEACHER DASHBOARD ---
 let allUsers, allEnrollments, allSubmissions, allAssignments;
+let allLiveClassSessions: any[] = [];
+let allLiveClassAttendance: any[] = [];
 
 if (isTeacher) {
   // Query all data for teacher view
@@ -148,6 +151,31 @@ if (isTeacher) {
   const { data: e } = await supabase.from('Enrollment').select('*'); allEnrollments = e || [];
   const { data: s } = await supabase.from('Submission').select('*').order('submittedAt', { ascending: false }); allSubmissions = s || [];
   const { data: a } = await supabase.from('Assignment').select('*'); allAssignments = a || [];
+
+  try {
+    const attendanceSupabase = createSupabaseServerClient({ requireServiceRole: true });
+    const { data: liveSessions, error: liveSessionsError } = await attendanceSupabase
+      .from('LiveClassSession')
+      .select('*')
+      .order('startedAt', { ascending: false });
+    if (liveSessionsError) {
+      console.error('Error loading LiveClassSession rows:', liveSessionsError);
+    } else {
+      allLiveClassSessions = liveSessions || [];
+    }
+
+    const { data: liveAttendance, error: liveAttendanceError } = await attendanceSupabase
+      .from('LiveClassAttendance')
+      .select('*')
+      .order('lastEventAt', { ascending: false });
+    if (liveAttendanceError) {
+      console.error('Error loading LiveClassAttendance rows:', liveAttendanceError);
+    } else {
+      allLiveClassAttendance = liveAttendance || [];
+    }
+  } catch (error) {
+    console.error('Error initializing attendance dashboard queries:', error);
+  }
 }
 
 // --- STUDENT DASHBOARD ---
@@ -342,6 +370,50 @@ const getEnrollmentYear = (enrollment: any) => {
   }
 
   return String(new Date().getFullYear());
+};
+
+const getLiveSessionYear = (session: any) => {
+  const dateCandidates = [session?.startedAt, session?.finishedAt, session?.lastEventAt, session?.createdAt];
+  for (const candidate of dateCandidates) {
+    const parsed = new Date(String(candidate || ''));
+    if (!Number.isNaN(parsed.getTime())) return String(parsed.getFullYear());
+  }
+
+  return String(new Date().getFullYear());
+};
+
+const getDateTimestamp = (value: unknown) => {
+  const parsed = new Date(String(value || ''));
+  if (Number.isNaN(parsed.getTime())) return 0;
+  return parsed.getTime();
+};
+
+const formatDurationFromMs = (value: unknown) => {
+  const ms = Number(value || 0);
+  if (!Number.isFinite(ms) || ms <= 0) return '—';
+
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+};
+
+const computeAttendanceDurationMs = (attendance: any, session: any) => {
+  const startedAt = getDateTimestamp(attendance?.firstJoinedAt);
+  const endedAt =
+    getDateTimestamp(attendance?.lastLeftAt)
+    || getDateTimestamp(attendance?.lastEventAt)
+    || getDateTimestamp(session?.finishedAt)
+    || getDateTimestamp(session?.lastEventAt);
+
+  if (!startedAt || !endedAt || endedAt <= startedAt) return 0;
+  return endedAt - startedAt;
 };
 
 const isCourseStudentMetaSubmission = (submission: any) => {
@@ -619,6 +691,230 @@ const recentTeacherSubmissions = isTeacher
   ? [...scopedTeacherSubmissions].sort((a: any, b: any) => {
       return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
     })
+  : [];
+
+const allUsersById = new Map<string, any>(
+  (allUsers || []).map((user: any) => [String(user?.id || ''), user]),
+);
+
+const teacherLiveSessions = isTeacher
+  ? (allLiveClassSessions || []).filter((session: any) => {
+      if (teacherManagedCourseIds.size === 0) return false;
+      const sessionCourseId = canonicalizeCourseId(session?.courseId);
+      return Boolean(sessionCourseId) && teacherManagedCourseIds.has(normalizeTextLower(sessionCourseId));
+    })
+  : [];
+
+const scopedTeacherLiveSessions = isTeacher
+  ? teacherLiveSessions.filter((session: any) => {
+      const sessionCourseId = canonicalizeCourseId(session?.courseId);
+      if (activeCourseId && sessionCourseId !== activeCourseId) return false;
+      if (activeYear && getLiveSessionYear(session) !== activeYear) return false;
+      return true;
+    })
+  : [];
+
+const scopedTeacherLiveSessionById = new Map<string, any>(
+  scopedTeacherLiveSessions.map((session: any) => [String(session?.id || ''), session]),
+);
+
+const scopedTeacherLiveAttendance = isTeacher
+  ? (allLiveClassAttendance || []).filter((attendance: any) => {
+      const sessionId = String(attendance?.sessionId || '');
+      if (sessionId && scopedTeacherLiveSessionById.has(sessionId)) return true;
+
+      const attendanceCourseId = canonicalizeCourseId(attendance?.courseId);
+      if (!attendanceCourseId || !teacherManagedCourseIds.has(normalizeTextLower(attendanceCourseId))) {
+        return false;
+      }
+      if (activeCourseId && attendanceCourseId !== activeCourseId) return false;
+      if (activeYear) {
+        const attendanceYear = getLiveSessionYear(attendance);
+        if (attendanceYear !== activeYear) return false;
+      }
+      return true;
+    })
+  : [];
+
+const attendanceCourseSummaryRows = isTeacher
+  ? (() => {
+      const summaryByKey = new Map<string, any>();
+      const totalSessions = scopedTeacherLiveSessions.length;
+
+      scopedTeacherEnrollments
+        .filter((enrollment: any) => normalizeRole(enrollment?.roleInCourse) === 'student')
+        .forEach((enrollment: any) => {
+          const studentUser = allUsersById.get(String(enrollment?.userId || ''));
+          const key = `user:${String(enrollment?.userId || '')}`;
+          if (!String(enrollment?.userId || '').trim() || summaryByKey.has(key)) return;
+
+          summaryByKey.set(key, {
+            key,
+            userId: String(enrollment?.userId || ''),
+            identity: '',
+            name: String(studentUser?.name || studentUser?.email || enrollment?.userId || 'Estudiante'),
+            email: String(studentUser?.email || ''),
+            sessionsAttended: 0,
+            totalJoinCount: 0,
+            totalLeaveCount: 0,
+            totalAbortedCount: 0,
+            totalDurationMs: 0,
+            lastStatus: '',
+            lastSeenAt: '',
+            sessionIds: new Set<string>(),
+          });
+        });
+
+      scopedTeacherLiveAttendance
+        .filter((attendance: any) => normalizeRole(attendance?.role) === 'student')
+        .forEach((attendance: any) => {
+          const userId = String(attendance?.userId || '');
+          const identity = String(attendance?.identity || '');
+          const key = userId ? `user:${userId}` : identity ? `identity:${identity}` : '';
+          if (!key) return;
+
+          const user = userId ? allUsersById.get(userId) : null;
+          const session = scopedTeacherLiveSessionById.get(String(attendance?.sessionId || ''));
+          const existing = summaryByKey.get(key) || {
+            key,
+            userId,
+            identity,
+            name: String(user?.name || attendance?.name || identity || 'Participante'),
+            email: String(user?.email || ''),
+            sessionsAttended: 0,
+            totalJoinCount: 0,
+            totalLeaveCount: 0,
+            totalAbortedCount: 0,
+            totalDurationMs: 0,
+            lastStatus: '',
+            lastSeenAt: '',
+            sessionIds: new Set<string>(),
+          };
+
+          existing.name = String(existing.name || user?.name || attendance?.name || identity || 'Participante');
+          existing.email = String(existing.email || user?.email || '');
+          existing.totalJoinCount += Math.max(0, Number(attendance?.joinCount || 0));
+          existing.totalLeaveCount += Math.max(0, Number(attendance?.leaveCount || 0));
+          existing.totalAbortedCount += Math.max(0, Number(attendance?.abortedCount || 0));
+          existing.totalDurationMs += computeAttendanceDurationMs(attendance, session);
+
+          const sessionId = String(attendance?.sessionId || '');
+          if (sessionId && Number(attendance?.joinCount || 0) > 0 && !existing.sessionIds.has(sessionId)) {
+            existing.sessionIds.add(sessionId);
+            existing.sessionsAttended += 1;
+          }
+
+          const nextLastSeenAt = String(attendance?.lastEventAt || attendance?.lastLeftAt || attendance?.lastJoinedAt || '');
+          if (getDateTimestamp(nextLastSeenAt) >= getDateTimestamp(existing.lastSeenAt)) {
+            existing.lastSeenAt = nextLastSeenAt;
+            existing.lastStatus = String(attendance?.lastStatus || existing.lastStatus || '');
+          }
+
+          summaryByKey.set(key, existing);
+        });
+
+      return Array.from(summaryByKey.values())
+        .map((row: any) => ({
+          ...row,
+          totalSessions,
+          totalDurationLabel: formatDurationFromMs(row.totalDurationMs),
+          lastSeenLabel: formatSubmissionDate(row.lastSeenAt),
+        }))
+        .sort((left: any, right: any) =>
+          String(left.name || '').localeCompare(String(right.name || ''), 'es'),
+        );
+    })()
+  : [];
+
+const attendanceRowsBySessionId = (() => {
+  const grouped = new Map<string, any[]>();
+  scopedTeacherLiveAttendance.forEach((attendance: any) => {
+    const sessionId = String(attendance?.sessionId || '');
+    if (!sessionId) return;
+    if (!grouped.has(sessionId)) grouped.set(sessionId, []);
+    grouped.get(sessionId)?.push(attendance);
+  });
+  return grouped;
+})();
+
+const attendanceLessonGroups = isTeacher
+  ? (() => {
+      const groups = new Map<string, any>();
+
+      scopedTeacherLiveSessions.forEach((session: any) => {
+        const sessionId = String(session?.id || '');
+        if (!sessionId) return;
+
+        const pageSlug = String(session?.pageSlug || '').trim() || 'sin-clase';
+        const lessonLabel = decodeUriSafe(pageSlug.split('/').pop() || pageSlug || session?.roomName || 'Clase');
+        const sessionAttendance = [...(attendanceRowsBySessionId.get(sessionId) || [])].sort((left: any, right: any) => {
+          const leftRole = normalizeRole(left?.role) === 'teacher' ? 0 : 1;
+          const rightRole = normalizeRole(right?.role) === 'teacher' ? 0 : 1;
+          if (leftRole !== rightRole) return leftRole - rightRole;
+
+          const leftUser = allUsersById.get(String(left?.userId || ''));
+          const rightUser = allUsersById.get(String(right?.userId || ''));
+          const leftName = String(leftUser?.name || left?.name || left?.identity || '');
+          const rightName = String(rightUser?.name || right?.name || right?.identity || '');
+          return leftName.localeCompare(rightName, 'es');
+        });
+
+        const participants = sessionAttendance.map((attendance: any) => {
+          const user = allUsersById.get(String(attendance?.userId || ''));
+          return {
+            ...attendance,
+            displayName: String(user?.name || attendance?.name || attendance?.identity || 'Participante'),
+            email: String(user?.email || ''),
+            durationLabel: formatDurationFromMs(computeAttendanceDurationMs(attendance, session)),
+            firstJoinedLabel: formatSubmissionDate(attendance?.firstJoinedAt),
+            lastLeftLabel: formatSubmissionDate(attendance?.lastLeftAt),
+            lastEventLabel: formatSubmissionDate(attendance?.lastEventAt),
+          };
+        });
+
+        const group = groups.get(pageSlug) || {
+          pageSlug,
+          lessonLabel,
+          latestStartedAt: '',
+          sessions: [],
+        };
+
+        group.sessions.push({
+          id: sessionId,
+          roomName: String(session?.roomName || ''),
+          startedAt: String(session?.startedAt || ''),
+          startedAtLabel: formatSubmissionDate(session?.startedAt),
+          finishedAtLabel: formatSubmissionDate(session?.finishedAt),
+          durationLabel: formatDurationFromMs(
+            Math.max(
+              0,
+              getDateTimestamp(session?.finishedAt || session?.lastEventAt) - getDateTimestamp(session?.startedAt),
+            ),
+          ),
+          studentCount: participants.filter((attendance: any) => normalizeRole(attendance?.role) === 'student').length,
+          participantCount: participants.length,
+          participants,
+        });
+
+        if (getDateTimestamp(session?.startedAt) >= getDateTimestamp(group.latestStartedAt)) {
+          group.latestStartedAt = String(session?.startedAt || '');
+        }
+
+        groups.set(pageSlug, group);
+      });
+
+      return Array.from(groups.values())
+        .map((group: any) => ({
+          ...group,
+          sessions: [...group.sessions].sort(
+            (left: any, right: any) => getDateTimestamp(right.startedAt) - getDateTimestamp(left.startedAt),
+          ),
+        }))
+        .sort(
+          (left: any, right: any) =>
+            getDateTimestamp(right.latestStartedAt) - getDateTimestamp(left.latestStartedAt),
+        );
+    })()
   : [];
 
 const buildSubmissionLogRows = (submissions: any[], options: { includeUser: boolean }) => {
@@ -1355,6 +1651,7 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
             <div class="tab active" data-tab="users">Usuarios</div>
             <div class="tab" data-tab="enrollments">Inscripciones</div>
             <div class="tab" data-tab="deliveries">Entregas</div>
+            <div class="tab" data-tab="attendance">Asistencia</div>
             <div class="dashboard-scope-controls">
               <label class="dashboard-scope-field">
                 <span>Curso</span>
@@ -1495,18 +1792,39 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                         <tr>
                           <th>Usuario</th>
                           <th>Rol</th>
+                          <th>Acciones</th>
                         </tr>
                       </thead>
                       <tbody>
                         {courseEnrollments.map((enrollment: any) => {
                           const user = allUsers.find((u: any) => u.id === enrollment.userId);
+                          const enrollmentRole = normalizeRole(enrollment?.roleInCourse);
+                          const enrollmentLabel = String(user?.name || user?.email || enrollment.userId || 'estudiante').trim();
                           return (
                             <tr>
                               <td>{user?.name || enrollment.userId}</td>
                               <td>
-                                <span class:list={['role-badge', enrollment.roleInCourse === 'teacher' ? 'role-teacher' : 'role-student']}>
+                                <span class:list={['role-badge', enrollmentRole === 'teacher' ? 'role-teacher' : 'role-student']}>
                                   {enrollment.roleInCourse}
                                 </span>
+                              </td>
+                              <td>
+                                {enrollmentRole === 'student' ? (
+                                  <button
+                                    type="button"
+                                    class="icon-btn icon-btn-danger js-unenroll-student"
+                                    data-enrollment-id={enrollment.id}
+                                    data-user-name={enrollmentLabel}
+                                    aria-label={`Desinscribir a ${enrollmentLabel}`}
+                                    title={`Desinscribir a ${enrollmentLabel}`}
+                                  >
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                      <path fill="currentColor" d="M9 3h6l1 2h5v2H3V5h5l1-2Zm1 6h2v9h-2V9Zm4 0h2v9h-2V9ZM7 9h2v9H7V9Zm-1 12a2 2 0 0 1-2-2V8h16v11a2 2 0 0 1-2 2H6Z" />
+                                    </svg>
+                                  </button>
+                                ) : (
+                                  <span style="color: var(--c-fg-dim);">—</span>
+                                )}
                               </td>
                             </tr>
                           );
@@ -2107,6 +2425,160 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
               <p class="log-empty" data-log-empty hidden>No hay resultados para los filtros actuales.</p>
             </section>
           </div>
+
+          <div id="attendance-content" style="display: none;">
+            <h2>Asistencia</h2>
+            <p class="fold-shortcuts">
+              <strong>Atajos:</strong>
+              <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>↑</kbd> fold all,
+              <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>↓</kbd> unfold all,
+              <kbd>⌘</kbd> + <kbd>↑</kbd> fold un nivel,
+              <kbd>⌘</kbd> + <kbd>↓</kbd> unfold un nivel.
+            </p>
+
+            {!activeCourseId ? (
+              <p class="student-empty">Selecciona un curso activo para ver la asistencia.</p>
+            ) : scopedTeacherLiveSessions.length === 0 && attendanceCourseSummaryRows.length === 0 ? (
+              <p class="student-empty">Todavía no hay registros de asistencia para este curso y año.</p>
+            ) : (
+              <>
+                <section
+                  class="fold-node fold-level-1"
+                  data-fold-level="1"
+                  data-fold-node
+                  data-fold-scope="attendance"
+                  style="margin-bottom: 0.75rem;"
+                >
+                  <button type="button" class="fold-header" data-fold-toggle>
+                    <span class="fold-toggle-icon">▾</span>
+                    <span>📘 Curso</span>
+                    <span class="fold-student-summary">
+                      {activeCourseMeta?.title || decodeUriSafe(activeCourseId)} • {attendanceCourseSummaryRows.length} estudiantes • {scopedTeacherLiveSessions.length} clases
+                    </span>
+                  </button>
+                  <div class="fold-children">
+                    {attendanceCourseSummaryRows.length > 0 ? (
+                      <table class="admin-table" style="margin-top: 0;">
+                        <thead>
+                          <tr>
+                            <th>Estudiante</th>
+                            <th>Email</th>
+                            <th>Clases</th>
+                            <th>Ingresos</th>
+                            <th>Salidas</th>
+                            <th>Abortos</th>
+                            <th>Tiempo total</th>
+                            <th>Última actividad</th>
+                            <th>Estado</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {attendanceCourseSummaryRows.map((row: any) => (
+                            <tr>
+                              <td>{row.name}</td>
+                              <td style="font-size: 0.85rem; color: var(--c-fg-dim);">{row.email || '—'}</td>
+                              <td>{row.sessionsAttended}/{row.totalSessions}</td>
+                              <td>{row.totalJoinCount}</td>
+                              <td>{row.totalLeaveCount}</td>
+                              <td>{row.totalAbortedCount}</td>
+                              <td>{row.totalDurationLabel}</td>
+                              <td>{row.lastSeenLabel}</td>
+                              <td>{row.lastStatus || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <p class="student-empty" style="margin: 0.75rem 0 0;">No hay estudiantes con asistencia registrada en este curso.</p>
+                    )}
+                  </div>
+                </section>
+
+                {attendanceLessonGroups.map((group: any) => (
+                  <section
+                    class="fold-node fold-level-1"
+                    data-fold-level="1"
+                    data-fold-node
+                    data-fold-scope="attendance"
+                    style="margin-bottom: 0.7rem;"
+                  >
+                    <button type="button" class="fold-header" data-fold-toggle>
+                      <span class="fold-toggle-icon">▾</span>
+                      <span>🎬 {group.lessonLabel}</span>
+                      <span class="fold-student-summary">{group.sessions.length} sesiones</span>
+                    </button>
+                    <div class="fold-children">
+                      {group.sessions.map((session: any) => (
+                        <section
+                          class="fold-node fold-level-2"
+                          data-fold-level="2"
+                          data-fold-node
+                          data-fold-scope="attendance"
+                          style="margin-bottom: 0.55rem;"
+                        >
+                          <button type="button" class="fold-header" data-fold-toggle>
+                            <span class="fold-toggle-icon">▾</span>
+                            <span>{session.startedAtLabel}</span>
+                            <span class="fold-student-summary">
+                              {session.studentCount} estudiantes • {session.participantCount} participantes • {session.durationLabel}
+                            </span>
+                          </button>
+                          <div class="fold-children">
+                            <table class="admin-table" style="margin-top: 0;">
+                              <thead>
+                                <tr>
+                                  <th>Participante</th>
+                                  <th>Rol</th>
+                                  <th>Email / Identity</th>
+                                  <th>Ingresos</th>
+                                  <th>Salidas</th>
+                                  <th>Abortos</th>
+                                  <th>Primera entrada</th>
+                                  <th>Última salida</th>
+                                  <th>Duración</th>
+                                  <th>Estado</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {session.participants.length > 0 ? (
+                                  session.participants.map((participant: any) => (
+                                    <tr>
+                                      <td>{participant.displayName}</td>
+                                      <td>
+                                        <span class:list={['role-badge', normalizeRole(participant?.role) === 'teacher' ? 'role-teacher' : 'role-student']}>
+                                          {participant.role || 'student'}
+                                        </span>
+                                      </td>
+                                      <td style="font-size: 0.85rem; color: var(--c-fg-dim);">
+                                        {participant.email || participant.identity || '—'}
+                                      </td>
+                                      <td>{participant.joinCount || 0}</td>
+                                      <td>{participant.leaveCount || 0}</td>
+                                      <td>{participant.abortedCount || 0}</td>
+                                      <td>{participant.firstJoinedLabel}</td>
+                                      <td>{participant.lastLeftLabel}</td>
+                                      <td>{participant.durationLabel}</td>
+                                      <td>{participant.lastStatus || '—'}</td>
+                                    </tr>
+                                  ))
+                                ) : (
+                                  <tr>
+                                    <td colspan="10" style="color: var(--c-fg-dim); font-style: italic;">
+                                      No hay participantes registrados para esta sesión.
+                                    </td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </section>
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </>
+            )}
+          </div>
           </div>
 
           <script>
@@ -2135,6 +2607,7 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
 
             function getActiveFoldScope() {
               const activeTabName = getActiveTabName();
+              if (activeTabName === 'attendance') return 'attendance';
               if (activeTabName !== 'deliveries') return null;
               const view = getActiveDeliveryView();
               if (view === 'recent') return 'submissions';
@@ -2155,6 +2628,11 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
 
               if (tabName === 'deliveries') {
                 initializeDeliveriesTab();
+                return;
+              }
+
+              if (tabName === 'attendance') {
+                initializeAttendanceTab();
               }
             }
 
@@ -2219,7 +2697,7 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
               const params = new URLSearchParams(window.location.search);
               const tab = String(params.get('tab') || '').trim();
               const deliveryView = String(params.get('deliveryView') || '').trim();
-              if (tab && ['users', 'enrollments', 'deliveries'].includes(tab)) {
+              if (tab && ['users', 'enrollments', 'deliveries', 'attendance'].includes(tab)) {
                 showMainTab(tab);
               }
               if (tab === 'deliveries' && deliveryView) {
@@ -2359,6 +2837,10 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                 initializeDashboardLogPanels();
               }
               switchDeliveryView(getActiveDeliveryView());
+            }
+
+            function initializeAttendanceTab() {
+              initializeCorrectionFolding('attendance');
             }
 
             function debounce(func, wait) {
@@ -2943,10 +3425,46 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
               });
             }
 
+            async function handleUnenrollStudent(button) {
+              const enrollmentId = String(button.getAttribute('data-enrollment-id') || '').trim();
+              const userName = String(button.getAttribute('data-user-name') || 'este estudiante').trim();
+              if (!enrollmentId) return;
+
+              const confirmed = window.confirm(`¿Desinscribir a "${userName}" de este curso?`);
+              if (!confirmed) return;
+
+              button.disabled = true;
+              try {
+                const response = await fetch('/api/enroll', {
+                  method: 'DELETE',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ enrollmentId }),
+                });
+                if (!response.ok) {
+                  const payload = await response.json().catch(() => ({}));
+                  throw new Error(payload?.error || 'No se pudo desinscribir al estudiante');
+                }
+                window.location.reload();
+              } catch (error) {
+                console.error('Error removing enrollment:', error);
+                alert(error?.message || 'No se pudo desinscribir al estudiante');
+                button.disabled = false;
+              }
+            }
+
+            function initializeUnenrollButtons() {
+              document.querySelectorAll('.js-unenroll-student').forEach((button) => {
+                if (button.dataset.bound === 'true') return;
+                button.dataset.bound = 'true';
+                button.addEventListener('click', () => handleUnenrollStudent(button));
+              });
+            }
+
             document.addEventListener('DOMContentLoaded', () => {
               bindMainTabs();
               initializeDashboardScopeSelectors();
               initializeUserDeleteButtons();
+              initializeUnenrollButtons();
               restoreDashboardTabFromQuery();
               const activeTab = getActiveTabName();
               if (activeTab === 'deliveries') {
@@ -3538,9 +4056,49 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
         });
       };
 
+      const handleUnenrollStudent = async (button) => {
+        const enrollmentId = String(button.getAttribute('data-enrollment-id') || '').trim();
+        const userName = String(button.getAttribute('data-user-name') || 'este estudiante').trim();
+        if (!enrollmentId) return;
+
+        const confirmed = window.confirm(`¿Desinscribir a "${userName}" de este curso?`);
+        if (!confirmed) return;
+
+        button.disabled = true;
+        try {
+          const response = await fetch('/api/enroll', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enrollmentId }),
+          });
+
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            throw new Error(payload?.error || 'No se pudo desinscribir al estudiante');
+          }
+
+          window.location.reload();
+        } catch (error) {
+          console.error('Error removing enrollment:', error);
+          alert(error?.message || 'No se pudo desinscribir al estudiante');
+          button.disabled = false;
+        }
+      };
+
+      const initializeUnenrollButtons = () => {
+        document.querySelectorAll('.js-unenroll-student').forEach((button) => {
+          if (button.dataset.bound === 'true') return;
+          button.dataset.bound = 'true';
+          button.addEventListener('click', () => {
+            void handleUnenrollStudent(button);
+          });
+        });
+      };
+
       const bootDashboardEnhancements = () => {
         initializeDashboardLogPanels();
         initializeEnrollButtons();
+        initializeUnenrollButtons();
         attachEvalPreviewHandlers(document);
       };
 

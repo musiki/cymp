@@ -9,6 +9,7 @@ type Props = {
   description?: string;
   slideTheme?: string;
   canManageLive?: boolean;
+  canonicalCourseId?: string;
 };
 
 const {
@@ -16,6 +17,7 @@ const {
   description = '',
   slideTheme = '/inc/reveal/themes/zztt-reveal.css',
   canManageLive = false,
+  canonicalCourseId = '',
 } = Astro.props as Props;
 
 const resolvedSlideTheme =
@@ -27,7 +29,11 @@ const resolvedSlideTheme =
 ---
 
 <!doctype html>
-<html lang="es" data-can-manage-live={canManageLive ? 'true' : 'false'}>
+<html
+  lang="es"
+  data-can-manage-live={canManageLive ? 'true' : 'false'}
+  data-course-id={canonicalCourseId}
+>
   <head>
     <BaseHead title={`${title} | Slides`} description={description} />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -701,6 +707,9 @@ const resolvedSlideTheme =
         };
 
         const inferLiveCourseId = () => {
+          const canonicalCourseId = decodePathPart(document.documentElement.dataset.courseId || '');
+          if (canonicalCourseId) return canonicalCourseId;
+
           const currentUrl = new URL(window.location.href);
           const explicitCourseId = decodePathPart(currentUrl.searchParams.get('courseId') || '');
           if (explicitCourseId) return explicitCourseId;
