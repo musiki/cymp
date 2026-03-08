@@ -105,13 +105,14 @@ if (
           <div class="conference-meta-fields">
             <div class="conference-field">
               <label for="conference-room-input">Sala</label>
-              <input id="conference-room-input" type="text" value={defaultRoom} data-room-input />
+              <input id="conference-room-input" name="room" type="text" value={defaultRoom} data-room-input />
             </div>
 
             <div class="conference-field">
               <label for="conference-identity-input">Identity</label>
               <input
                 id="conference-identity-input"
+                name="identity"
                 type="text"
                 value={defaultIdentity}
                 data-identity-input
@@ -121,12 +122,12 @@ if (
             <div class="conference-field">
               <label for="conference-name-input">Nombre</label>
               <div class="conference-name-row">
-                <input id="conference-name-input" type="text" value={defaultName} data-name-input />
+                <input id="conference-name-input" name="name" type="text" value={defaultName} data-name-input />
                 <span class="conference-role-tag" data-role-label
                   >{defaultRole === 'teacher' ? 'teacher' : 'student'}</span
                 >
               </div>
-              <input type="hidden" value={defaultRole} data-role-input />
+              <input type="hidden" name="role" value={defaultRole} data-role-input />
             </div>
           </div>
 
@@ -152,7 +153,7 @@ if (
             <li class="conference-chat-empty">Conecta la sala para habilitar el chat.</li>
           </ul>
           <div class="conference-chat-compose">
-            <textarea rows="3" placeholder="Escribe un mensaje" data-chat-input></textarea>
+            <textarea rows="3" name="chat" placeholder="Escribe un mensaje" data-chat-input></textarea>
             <button type="button" class="conference-chat-send" data-action="chat-send" disabled>
               Send
             </button>
@@ -246,7 +247,7 @@ if (
         </button>
         <div class="conference-device-panel" data-audio-input-panel hidden>
           <label for="conference-audio-input-select">Microphone</label>
-          <select id="conference-audio-input-select" data-audio-input-select>
+          <select id="conference-audio-input-select" name="audio-input" data-audio-input-select>
             <option value="">Selecciona un microfono</option>
           </select>
         </div>
@@ -270,7 +271,7 @@ if (
         </button>
         <div class="conference-device-panel" data-video-input-panel hidden>
           <label for="conference-video-input-select">Camera</label>
-          <select id="conference-video-input-select" data-video-input-select>
+          <select id="conference-video-input-select" name="video-input" data-video-input-select>
             <option value="">Selecciona una camara</option>
           </select>
         </div>
@@ -288,7 +289,7 @@ if (
 
     <div class="conference-bar-group conference-bar-group--presentation">
       <label class="conference-sr-only" for="conference-presentation-select">Presentacion</label>
-      <select id="conference-presentation-select" data-presentation-select>
+      <select id="conference-presentation-select" name="presentation" data-presentation-select>
         <option value="">none</option>
         {normalizedPresentationOptions.map((option) => (
           <option value={option.value} selected={option.value === defaultPresentation}>
@@ -369,7 +370,7 @@ if (
   }
 
   document.addEventListener('astro:page-load', mount);
-  window.addEventListener('beforeunload', () => {
+  window.addEventListener('pagehide', () => {
     if (typeof teardown === 'function') teardown();
     teardown = null;
   });

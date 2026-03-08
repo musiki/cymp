@@ -491,7 +491,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     return () => {};
   }
 
-  const livekitUrl = normalizeText(root.dataset.livekitUrl);
+  let livekitUrl = normalizeText(root.dataset.livekitUrl);
   const courseId = normalizeText(root.dataset.courseId);
 
   const roomInput = root.querySelector('[data-room-input]');
@@ -813,12 +813,6 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       micMeterAnalyser = null;
     }
 
-    if (micMeterAudioContext) {
-      if (micMeterAudioContext.state === 'running') {
-        void micMeterAudioContext.suspend().catch(() => undefined);
-      }
-    }
-
     micMeterData = null;
     micMeterTrackId = '';
     setMicMeterLevel(0);
@@ -872,12 +866,20 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       return;
     }
 
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 256;
-    analyser.smoothingTimeConstant = 0.82;
+    let analyser: AnalyserNode;
+    let source: MediaStreamAudioSourceNode;
 
-    const source = audioContext.createMediaStreamSource(new MediaStream([track]));
-    source.connect(analyser);
+    try {
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.82;
+
+      source = audioContext.createMediaStreamSource(new MediaStream([track]));
+      source.connect(analyser);
+    } catch {
+      stopMicMeter();
+      return;
+    }
 
     if (nextGeneration !== micMeterGeneration || audioContext.state !== 'running') {
       try {
@@ -2174,7 +2176,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       room.state === ConnectionState.Connecting ||
       room.state === ConnectionState.Reconnecting ||
       room.state === ConnectionState.SignalReconnecting;
-    const livekitReady = Boolean(livekitUrl);
+    const livekitReady = true;
 
     stateNode.textContent = connectionStateLabel(room.state);
     const participantCount = room.remoteParticipants.size + (connected ? 1 : 0);
@@ -2424,12 +2426,6 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     const displayName = nameInput.value.trim() || identity;
     localRole = normalizeRole(roleInput.value);
 
-    if (!livekitUrl) {
-      setStatus('LIVEKIT_URL is not configured on this deployment.');
-      setControlState();
-      return;
-    }
-
     if (!roomName || !identity) {
       setStatus('Room and identity are required before connecting.');
       return;
@@ -2467,6 +2463,11 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
         throw new Error(
           normalizeText(tokenPayload?.error) || 'Could not create a LiveKit access token.',
         );
+      }
+
+      livekitUrl = normalizeText(tokenPayload.livekitUrl) || livekitUrl;
+      if (!livekitUrl) {
+        throw new Error('LIVEKIT_URL is not configured on this deployment.');
       }
 
       identityInput.value = normalizeText(tokenPayload.identity) || identity;
@@ -2967,15 +2968,11 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     });
   }
 
-  if (!livekitUrl) {
-    setStatus('LIVEKIT_URL is missing. Add it to the server environment before connecting.');
-  } else {
-    setStatus(
-      presentationSelect.value
-        ? 'Escena Reveal preparada.'
-        : 'Configura la sala y conecta.',
-    );
-  }
+  setStatus(
+    presentationSelect.value
+      ? 'Escena Reveal preparada.'
+      : 'Configura la sala y conecta.',
+  );
 
   setControlState();
 
@@ -3015,7 +3012,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     root.dataset.mounted = 'false';
   };
 
-  window.addEventListener('beforeunload', teardown, { once: true });
+  window.addEventListener('pagehide', teardown, { once: true });
 
   return teardown;
 };

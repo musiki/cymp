@@ -2,6 +2,8 @@
 import BaseHead from '../components/BaseHead.astro';
 import 'reveal.js/dist/reveal.css';
 
+const ABSOLUTE_URL_RE = /^[a-z][a-z0-9+.-]*:/i;
+
 type Props = {
   title: string;
   description?: string;
@@ -15,6 +17,13 @@ const {
   slideTheme = '/inc/reveal/themes/zztt-reveal.css',
   canManageLive = false,
 } = Astro.props as Props;
+
+const resolvedSlideTheme =
+  typeof slideTheme === 'string' && slideTheme.trim()
+    ? slideTheme.startsWith('/') || ABSOLUTE_URL_RE.test(slideTheme)
+      ? slideTheme.trim()
+      : `/inc/reveal/themes/${slideTheme.trim().replace(/^\/+/, '')}`
+    : '/inc/reveal/themes/zztt-reveal.css';
 ---
 
 <!doctype html>
@@ -23,7 +32,7 @@ const {
     <BaseHead title={`${title} | Slides`} description={description} />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css" />
-    <link rel="stylesheet" href={slideTheme} />
+    <link rel="stylesheet" href={resolvedSlideTheme} />
     <style is:global>
       html.slides-view,
       body.slides-view {

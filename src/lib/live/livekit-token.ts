@@ -59,6 +59,7 @@ export const createLiveKitTokenResponse = async ({ request, locals }: APIContext
 
   const apiKey = normalizeText(import.meta.env.LIVEKIT_API_KEY);
   const apiSecret = normalizeText(import.meta.env.LIVEKIT_API_SECRET);
+  const livekitUrl = normalizeText(import.meta.env.LIVEKIT_URL || import.meta.env.PUBLIC_LIVEKIT_URL);
 
   if (!apiKey || !apiSecret) {
     return json({ error: 'LiveKit server environment variables are not set' }, 500);
@@ -87,6 +88,7 @@ export const createLiveKitTokenResponse = async ({ request, locals }: APIContext
     token,
     room,
     identity,
+    livekitUrl,
     name,
     role,
   });
