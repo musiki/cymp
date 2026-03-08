@@ -1,4 +1,6 @@
 ---
+import type { RoomPresentationOption } from '../lib/live/presentation-options';
+
 type Props = {
   livekitUrl?: string;
   defaultIdentity?: string;
@@ -7,6 +9,7 @@ type Props = {
   defaultPresentation?: string;
   defaultRole?: 'teacher' | 'student';
   defaultRoom?: string;
+  presentationOptions?: RoomPresentationOption[];
 };
 
 const {
@@ -17,7 +20,25 @@ const {
   defaultPresentation = '',
   defaultRole = 'student',
   defaultRoom = 'musiki-stage',
+  presentationOptions = [],
 } = Astro.props as Props;
+
+const normalizedPresentationOptions = Array.isArray(presentationOptions)
+  ? [...presentationOptions]
+  : [];
+
+if (
+  defaultPresentation &&
+  !normalizedPresentationOptions.some((option) => option.value === defaultPresentation)
+) {
+  normalizedPresentationOptions.unshift({
+    courseId: '',
+    label: defaultPresentation,
+    lessonId: '',
+    theme: '',
+    value: defaultPresentation,
+  });
+}
 ---
 
 <section class="conference-shell" data-conference-root data-livekit-url={livekitUrl}>
@@ -37,71 +58,6 @@ const {
 
   <div class="conference-workbench">
     <section class="conference-main">
-      <div class="conference-controls">
-        <label>
-          <span>Sala</span>
-          <input type="text" value={defaultRoom} data-room-input />
-        </label>
-        <label>
-          <span>Identity</span>
-          <input type="text" value={defaultIdentity} data-identity-input />
-        </label>
-        <label>
-          <span>Display name</span>
-          <input type="text" value={defaultName} data-name-input />
-        </label>
-        <label>
-          <span>Rol</span>
-          <select data-role-input>
-            <option value="teacher" selected={defaultRole === 'teacher'}>Teacher</option>
-            <option value="student" selected={defaultRole !== 'teacher'}>Student</option>
-          </select>
-        </label>
-        <label>
-          <span>Layout</span>
-          <select data-layout-input>
-            <option value="grid" selected={defaultLayout === 'grid'}>Grid</option>
-            <option value="teacher" selected={defaultLayout === 'teacher'}>Teacher</option>
-            <option value="presentation" selected={defaultLayout === 'presentation'}>
-              Presentation
-            </option>
-            <option value="screenshare" selected={defaultLayout === 'screenshare'}>
-              Screen share
-            </option>
-          </select>
-        </label>
-        <label class="conference-controls-wide">
-          <span>Presentation route</span>
-          <div class="conference-inline-input">
-            <input
-              type="text"
-              value={defaultPresentation}
-              placeholder="/cursos/slides/curso/leccion or curso/leccion"
-              data-presentation-input
-            />
-            <button type="button" class="conference-secondary" data-action="presentation">
-              Cargar
-            </button>
-          </div>
-        </label>
-      </div>
-
-      <div class="conference-actions">
-        <button type="button" data-action="connect">Conectar</button>
-        <button type="button" class="conference-secondary" data-action="disconnect" disabled>
-          Desconectar
-        </button>
-        <button type="button" class="conference-secondary" data-action="camera" disabled>
-          Encender camara
-        </button>
-        <button type="button" class="conference-secondary" data-action="microphone" disabled>
-          Activar microfono
-        </button>
-        <button type="button" class="conference-secondary" data-action="screen-share" disabled>
-          Compartir pantalla
-        </button>
-      </div>
-
       <section class="conference-stage" data-stage data-layout={defaultLayout}>
         <section class="conference-panel" data-panel="teacher">
           <div class="conference-panel-head">
@@ -109,14 +65,6 @@ const {
             <p>Presencia principal</p>
           </div>
           <div class="conference-slot" data-slot="teacher" data-empty-label="Waiting for teacher video"></div>
-        </section>
-
-        <section class="conference-panel" data-panel="students">
-          <div class="conference-panel-head">
-            <h2>Students</h2>
-            <p>Participantes remotos</p>
-          </div>
-          <div class="conference-slot" data-slot="students" data-empty-label="Students appear here"></div>
         </section>
 
         <section class="conference-panel" data-panel="presentation">
@@ -149,14 +97,120 @@ const {
     </section>
 
     <aside class="conference-sidebar">
-      <div class="conference-panel conference-panel--sidebar">
-        <div class="conference-panel-head">
-          <h2>Roster</h2>
-          <p>Ordenado por rol</p>
-        </div>
-        <ul class="conference-roster" data-participant-list>
-          <li class="conference-roster-empty">Todavia no hay participantes en la sala.</li>
-        </ul>
+      <div class="conference-sidebar-stack">
+        <section class="conference-panel conference-panel--sidebar">
+          <div class="conference-panel-head">
+            <h2>Session controls</h2>
+            <p>La sala central sigue siendo /room</p>
+          </div>
+
+          <div class="conference-controls conference-controls--sidebar">
+            <label>
+              <span>Sala</span>
+              <input type="text" value={defaultRoom} data-room-input />
+            </label>
+            <label>
+              <span>Identity</span>
+              <input type="text" value={defaultIdentity} data-identity-input />
+            </label>
+            <label>
+              <span>Display name</span>
+              <input type="text" value={defaultName} data-name-input />
+            </label>
+            <label>
+              <span>Rol</span>
+              <select data-role-input>
+                <option value="teacher" selected={defaultRole === 'teacher'}>Teacher</option>
+                <option value="student" selected={defaultRole !== 'teacher'}>Student</option>
+              </select>
+            </label>
+            <label>
+              <span>Layout</span>
+              <select data-layout-input>
+                <option value="grid" selected={defaultLayout === 'grid'}>Grid</option>
+                <option value="teacher" selected={defaultLayout === 'teacher'}>Teacher</option>
+                <option value="presentation" selected={defaultLayout === 'presentation'}>
+                  Presentation
+                </option>
+                <option value="screenshare" selected={defaultLayout === 'screenshare'}>
+                  Screen share
+                </option>
+              </select>
+            </label>
+            <label>
+              <span>Lesson with theme</span>
+              <div class="conference-inline-input conference-inline-input--stack">
+                <select data-presentation-select>
+                  <option value="">Sin presentacion cargada</option>
+                  {normalizedPresentationOptions.map((option) => (
+                    <option value={option.value} selected={option.value === defaultPresentation}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <button type="button" class="conference-secondary" data-action="presentation">
+                  Aplicar clase
+                </button>
+              </div>
+            </label>
+          </div>
+
+          <div class="conference-actions conference-actions--sidebar">
+            <button type="button" data-action="connect">Conectar</button>
+            <button type="button" class="conference-secondary" data-action="disconnect" disabled>
+              Desconectar
+            </button>
+            <button type="button" class="conference-secondary" data-action="camera" disabled>
+              Encender camara
+            </button>
+            <button type="button" class="conference-secondary" data-action="microphone" disabled>
+              Activar microfono
+            </button>
+            <button type="button" class="conference-secondary" data-action="screen-share" disabled>
+              Compartir pantalla
+            </button>
+          </div>
+        </section>
+
+        <section class="conference-panel conference-panel--sidebar">
+          <div class="conference-panel-head">
+            <h2>Chat</h2>
+            <p>Canal comun de la sala</p>
+          </div>
+          <div class="conference-chat">
+            <ul class="conference-chat-list" data-chat-list>
+              <li class="conference-chat-empty">Conecta la sala para habilitar el chat.</li>
+            </ul>
+            <div class="conference-chat-compose">
+              <textarea
+                rows="3"
+                placeholder="Escribe un mensaje al grupo"
+                data-chat-input
+              ></textarea>
+              <button type="button" class="conference-secondary" data-action="chat-send" disabled>
+                Enviar
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section class="conference-panel conference-panel--sidebar">
+          <div class="conference-panel-head">
+            <h2>Student visuals</h2>
+            <p>Grid lateral de participantes</p>
+          </div>
+          <div class="conference-slot conference-slot--sidebar" data-slot="students" data-empty-label="Students appear here"></div>
+        </section>
+
+        <section class="conference-panel conference-panel--sidebar">
+          <div class="conference-panel-head">
+            <h2>Roster</h2>
+            <p>Ordenado por rol</p>
+          </div>
+          <ul class="conference-roster" data-participant-list>
+            <li class="conference-roster-empty">Todavia no hay participantes en la sala.</li>
+          </ul>
+        </section>
       </div>
     </aside>
   </div>
@@ -284,18 +338,13 @@ const {
   }
 
   .conference-main {
-    display: grid;
-    gap: 1rem;
+    min-width: 0;
   }
 
   .conference-controls {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: 1fr;
     gap: 0.8rem;
-    padding: 1rem;
-    border: 1px solid var(--c-border);
-    border-radius: 18px;
-    background: color-mix(in srgb, var(--c-bg) 94%, transparent);
   }
 
   .conference-controls label {
@@ -327,19 +376,19 @@ const {
     padding: 0.55rem 0.7rem;
   }
 
-  .conference-controls-wide {
-    grid-column: span 2;
-  }
-
   .conference-inline-input {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 0.5rem;
   }
 
+  .conference-inline-input--stack {
+    grid-template-columns: 1fr;
+  }
+
   .conference-actions {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.65rem;
   }
 
@@ -376,32 +425,29 @@ const {
   .conference-stage[data-layout='presentation'] {
     grid-template-columns: minmax(0, 1.45fr) minmax(260px, 0.85fr);
     grid-template-areas:
-      'presentation students'
-      'teacher students'
-      'screen students';
+      'presentation teacher'
+      'presentation screen';
   }
 
   .conference-stage[data-layout='grid'] {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-areas:
-      'teacher students'
-      'presentation screen';
+      'teacher presentation'
+      'screen presentation';
   }
 
   .conference-stage[data-layout='teacher'] {
     grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.8fr);
     grid-template-areas:
-      'teacher students'
       'teacher presentation'
-      'screen presentation';
+      'teacher screen';
   }
 
   .conference-stage[data-layout='screenshare'] {
     grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.75fr);
     grid-template-areas:
-      'screen students'
-      'screen teacher'
-      'presentation teacher';
+      'screen presentation'
+      'screen teacher';
   }
 
   .conference-panel {
@@ -421,10 +467,6 @@ const {
 
   .conference-panel[data-panel='teacher'] {
     grid-area: teacher;
-  }
-
-  .conference-panel[data-panel='students'] {
-    grid-area: students;
   }
 
   .conference-panel[data-panel='presentation'] {
@@ -468,7 +510,7 @@ const {
   }
 
   .conference-slot[data-slot='students'] {
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns: 1fr;
   }
 
   .conference-slot[data-slot='screen'] {
@@ -581,6 +623,70 @@ const {
     min-width: 0;
   }
 
+  .conference-sidebar-stack {
+    display: grid;
+    gap: 1rem;
+    position: sticky;
+    top: 1rem;
+  }
+
+  .conference-slot--sidebar .conference-tile-media {
+    min-height: 8.5rem;
+  }
+
+  .conference-chat {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .conference-chat-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.55rem;
+    max-height: 15rem;
+    overflow-y: auto;
+  }
+
+  .conference-chat-item,
+  .conference-chat-empty {
+    padding: 0.7rem 0.8rem;
+    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--c-border) 88%, transparent);
+    background: color-mix(in srgb, var(--c-bg) 92%, transparent);
+  }
+
+  .conference-chat-item strong {
+    display: block;
+    margin-bottom: 0.18rem;
+    font-size: 0.82rem;
+  }
+
+  .conference-chat-item time {
+    display: block;
+    margin-top: 0.35rem;
+    font-size: 0.72rem;
+    color: var(--c-fg-dim);
+  }
+
+  .conference-chat-compose {
+    display: grid;
+    gap: 0.55rem;
+  }
+
+  .conference-chat-compose textarea {
+    width: 100%;
+    min-height: 5.5rem;
+    resize: vertical;
+    border: 1px solid var(--c-border);
+    border-radius: 12px;
+    background: var(--c-bg);
+    color: var(--c-fg);
+    font: inherit;
+    padding: 0.7rem 0.8rem;
+  }
+
   .conference-roster {
     list-style: none;
     margin: 0;
@@ -615,12 +721,8 @@ const {
       position: static;
     }
 
-    .conference-controls {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .conference-controls-wide {
-      grid-column: span 2;
+    .conference-sidebar-stack {
+      position: static;
     }
   }
 
@@ -637,10 +739,6 @@ const {
       grid-template-columns: 1fr;
     }
 
-    .conference-controls-wide {
-      grid-column: span 1;
-    }
-
     .conference-inline-input {
       grid-template-columns: 1fr;
     }
@@ -654,12 +752,15 @@ const {
       grid-template-areas:
         'teacher'
         'presentation'
-        'screen'
-        'students';
+        'screen';
     }
 
     .conference-panel[data-panel='presentation'] {
       min-height: 22rem;
+    }
+
+    .conference-actions {
+      grid-template-columns: 1fr;
     }
   }
 </style>

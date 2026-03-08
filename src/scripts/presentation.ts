@@ -4,13 +4,11 @@ const SLIDES_PREFIX = '/cursos/slides/';
 export type PresentationController = {
   clear: () => void;
   getHref: () => string | null;
-  readDraft: () => string;
   setHref: (nextValue: string | null | undefined) => string | null;
 };
 
 type PresentationControllerOptions = {
   frame: HTMLIFrameElement;
-  input: HTMLInputElement;
   placeholder: HTMLElement;
 };
 
@@ -36,7 +34,6 @@ export const normalizePresentationHref = (
 
 export const createPresentationController = ({
   frame,
-  input,
   placeholder,
 }: PresentationControllerOptions): PresentationController => {
   let currentHref: string | null = null;
@@ -50,14 +47,12 @@ export const createPresentationController = ({
 
   const setHref = (nextValue: string | null | undefined) => {
     currentHref = normalizePresentationHref(nextValue);
-    input.value = currentHref ?? '';
     render();
     return currentHref;
   };
 
   const clear = () => {
     currentHref = null;
-    input.value = '';
     render();
   };
 
@@ -66,7 +61,6 @@ export const createPresentationController = ({
   return {
     clear,
     getHref: () => currentHref,
-    readDraft: () => String(input.value ?? '').trim(),
     setHref,
   };
 };

@@ -21,6 +21,15 @@ type ConferenceMessage =
       layout: LayoutMode;
     }
   | {
+      id: string;
+      identity: string;
+      name: string;
+      role: ParticipantRole;
+      sentAt: string;
+      text: string;
+      type: 'chat';
+    }
+  | {
       type: 'presentation';
       href: string | null;
     };
@@ -353,7 +362,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   const nameInput = root.querySelector('[data-name-input]');
   const roleInput = root.querySelector('[data-role-input]');
   const layoutInput = root.querySelector('[data-layout-input]');
-  const presentationInput = root.querySelector('[data-presentation-input]');
+  const presentationSelect = root.querySelector('[data-presentation-select]');
   const statusNode = root.querySelector('[data-room-status]');
   const stateNode = root.querySelector('[data-room-state]');
   const countNode = root.querySelector('[data-participant-count]');
@@ -372,6 +381,9 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   const screenTemplate = root.querySelector('[data-template="screen-card"]');
   const presentationFrame = root.querySelector('[data-presentation-frame]');
   const presentationPlaceholder = root.querySelector('[data-presentation-placeholder]');
+  const chatList = root.querySelector('[data-chat-list]');
+  const chatInput = root.querySelector('[data-chat-input]');
+  const chatSendButton = root.querySelector('[data-action="chat-send"]');
 
   if (
     !(roomInput instanceof HTMLInputElement) ||
@@ -379,7 +391,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     !(nameInput instanceof HTMLInputElement) ||
     !(roleInput instanceof HTMLSelectElement) ||
     !(layoutInput instanceof HTMLSelectElement) ||
-    !(presentationInput instanceof HTMLInputElement) ||
+    !(presentationSelect instanceof HTMLSelectElement) ||
     !(statusNode instanceof HTMLElement) ||
     !(stateNode instanceof HTMLElement) ||
     !(countNode instanceof HTMLElement) ||
@@ -397,7 +409,10 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     !(participantTemplate instanceof HTMLTemplateElement) ||
     !(screenTemplate instanceof HTMLTemplateElement) ||
     !(presentationFrame instanceof HTMLIFrameElement) ||
-    !(presentationPlaceholder instanceof HTMLElement)
+    !(presentationPlaceholder instanceof HTMLElement) ||
+    !(chatList instanceof HTMLElement) ||
+    !(chatInput instanceof HTMLTextAreaElement) ||
+    !(chatSendButton instanceof HTMLButtonElement)
   ) {
     throw new Error('Conference room DOM is incomplete.');
   }
@@ -409,7 +424,6 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
   const presentation = createPresentationController({
     frame: presentationFrame,
-    input: presentationInput,
     placeholder: presentationPlaceholder,
   });
 
@@ -421,6 +435,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     screenAudioMounts: new Map(),
     screenVideoMounts: new Map(),
   };
+  const chatMessages: Extract<ConferenceMessage, { type: 'chat' }>[] = [];
 
   let destroyed = false;
   let localRole = normalizeRole(roleInput.value);
@@ -454,6 +469,23 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
         };
       }
 
+      if (parsed.type === 'chat') {
+        const text = normalizeText((parsed as { text?: string }).text);
+        const id = normalizeText((parsed as { id?: string }).id);
+        if (!text || !id) return null;
+
+        return {
+          type: 'chat',
+          id,
+          identity: normalizeText((parsed as { identity?: string }).identity),
+          name: normalizeText((parsed as { name?: string }).name) || 'Participant',
+          role: normalizeRole((parsed as { role?: string }).role),
+          sentAt:
+            normalizeText((parsed as { sentAt?: string }).sentAt) || new Date().toISOString(),
+          text,
+        };
+      }
+
       return null;
     } catch {
       return null;
@@ -471,7 +503,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     }
     params.set('role', roleInput.value);
 
-    const presentationHref = presentation.getHref() || presentation.readDraft();
+    const presentationHref = presentation.getHref();
     if (presentationHref) {
       params.set('slides', presentationHref);
     } else {
@@ -506,6 +538,60 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     });
   };
 
+  const syncPresentationSelection = (href: string | null) => {
+    if (href && Array.from(presentationSelect.options).some((option) => option.value === href)) {
+      presentationSelect.value = href;
+      return;
+    }
+    presentationSelect.value = '';
+  };
+
+  const renderChat = () => {
+    chatList.innerHTML = '';
+
+    if (chatMessages.length === 0) {
+      const empty = document.createElement('li');
+      empty.className = 'conference-chat-empty';
+      empty.textContent = room.state === ConnectionState.Connected
+        ? 'No hay mensajes todavia.'
+        : 'Conecta la sala para habilitar el chat.';
+      chatList.appendChild(empty);
+      return;
+    }
+
+    chatMessages.slice(-60).forEach((message) => {
+      const item = document.createElement('li');
+      item.className = 'conference-chat-item';
+
+      const sender = document.createElement('strong');
+      sender.textContent = `${message.name} · ${message.role === 'teacher' ? 'Teacher' : 'Student'}`;
+
+      const body = document.createElement('div');
+      body.textContent = message.text;
+
+      const sentAt = document.createElement('time');
+      sentAt.dateTime = message.sentAt;
+      sentAt.textContent = new Date(message.sentAt).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+
+      item.append(sender, body, sentAt);
+      chatList.appendChild(item);
+    });
+
+    chatList.scrollTop = chatList.scrollHeight;
+  };
+
+  const appendChatMessage = (message: Extract<ConferenceMessage, { type: 'chat' }>) => {
+    if (chatMessages.some((entry) => entry.id === message.id)) return;
+    chatMessages.push(message);
+    if (chatMessages.length > 80) {
+      chatMessages.splice(0, chatMessages.length - 80);
+    }
+    renderChat();
+  };
+
   const setControlState = () => {
     const connected = room.state === ConnectionState.Connected;
     const connecting =
@@ -523,8 +609,10 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     microphoneButton.disabled = !connected;
     shareScreenButton.disabled = !connected;
     layoutInput.disabled = connected && localRole !== 'teacher';
-    presentationInput.disabled = connected && localRole !== 'teacher';
+    presentationSelect.disabled = connected && localRole !== 'teacher';
     presentationButton.disabled = connected && localRole !== 'teacher';
+    chatInput.disabled = !connected;
+    chatSendButton.disabled = !connected;
     roleInput.disabled = connected || connecting;
     roomInput.disabled = connected || connecting;
     identityInput.disabled = connected || connecting;
@@ -731,7 +819,11 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       }
 
       try {
-        presentation.setHref(presentation.readDraft());
+        if (presentationSelect.value) {
+          presentation.setHref(presentationSelect.value);
+        } else {
+          presentation.clear();
+        }
       } catch (error) {
         setStatus(safeErrorMessage(error));
       }
@@ -809,10 +901,21 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     })
     .on(RoomEvent.DataReceived, (payload, participant, kind, topic) => {
       if (kind !== DataPacket_Kind.RELIABLE || topic !== MESSAGE_TOPIC || !participant) return;
-      if (readParticipantRole(room, participant, localRole) !== 'teacher') return;
 
       const message = readMessage(payload);
       if (!message) return;
+
+      if (message.type === 'chat') {
+        appendChatMessage({
+          ...message,
+          identity: participant.identity,
+          name: readParticipantName(participant),
+          role: readParticipantRole(room, participant, localRole),
+        });
+        return;
+      }
+
+      if (readParticipantRole(room, participant, localRole) !== 'teacher') return;
 
       if (message.type === 'layout') {
         const nextLayout = setLayout(stage, message.layout);
@@ -824,8 +927,10 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
         try {
           if (message.href) {
             presentation.setHref(message.href);
+            syncPresentationSelection(message.href);
           } else {
             presentation.clear();
+            syncPresentationSelection(null);
           }
           writeQueryState();
         } catch (error) {
@@ -893,7 +998,11 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
   presentationButton.addEventListener('click', () => {
     try {
-      const nextHref = presentation.setHref(presentation.readDraft());
+      const nextHref = presentationSelect.value ? presentation.setHref(presentationSelect.value) : null;
+      if (!nextHref) {
+        presentation.clear();
+      }
+      syncPresentationSelection(nextHref);
       writeQueryState();
 
       if (room.state === ConnectionState.Connected && localRole === 'teacher') {
@@ -907,10 +1016,44 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     }
   });
 
-  presentationInput.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter') return;
-    event.preventDefault();
+  presentationSelect.addEventListener('change', () => {
     presentationButton.click();
+  });
+
+  const sendChatMessage = async () => {
+    if (room.state !== ConnectionState.Connected) return;
+
+    const text = normalizeText(chatInput.value);
+    if (!text) return;
+
+    const message: Extract<ConferenceMessage, { type: 'chat' }> = {
+      type: 'chat',
+      id: `chat-${crypto.randomUUID()}`,
+      identity: identityInput.value.trim(),
+      name: nameInput.value.trim() || identityInput.value.trim() || 'Participant',
+      role: localRole,
+      sentAt: new Date().toISOString(),
+      text,
+    };
+
+    appendChatMessage(message);
+    chatInput.value = '';
+
+    try {
+      await publishMessage(message);
+    } catch (error) {
+      setStatus(safeErrorMessage(error));
+    }
+  };
+
+  chatSendButton.addEventListener('click', () => {
+    void sendChatMessage();
+  });
+
+  chatInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.shiftKey) return;
+    event.preventDefault();
+    void sendChatMessage();
   });
 
   roleInput.addEventListener('change', () => {
@@ -925,10 +1068,12 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
   setLayout(stage, layoutInput.value);
   renderParticipantList();
+  renderChat();
 
   try {
-    if (presentationInput.value.trim()) {
-      presentation.setHref(presentationInput.value);
+    if (presentationSelect.value) {
+      presentation.setHref(presentationSelect.value);
+      syncPresentationSelection(presentationSelect.value);
     }
   } catch (error) {
     setStatus(safeErrorMessage(error));
