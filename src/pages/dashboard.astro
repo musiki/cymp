@@ -336,6 +336,26 @@ const canonicalizeCourseId = (value: unknown) => {
   return courseCanonicalByAlias.get(normalizeTextLower(normalized)) || normalized;
 };
 
+const deriveCourseIdFromPageSlug = (value: unknown) => {
+  const normalized = normalizeText(value).replace(/^\/+|\/+$/g, '');
+  if (!normalized) return '';
+  const firstSegment = normalized.split('/').find(Boolean) || '';
+  return canonicalizeCourseId(firstSegment);
+};
+
+const getLiveRecordCourseId = (record: any) =>
+  canonicalizeCourseId(record?.courseId) || deriveCourseIdFromPageSlug(record?.pageSlug);
+
+const isTeacherOwnedLiveSession = (session: any) => {
+  const sessionCourseId = getLiveRecordCourseId(session);
+  if (sessionCourseId && teacherManagedCourseIds.has(normalizeTextLower(sessionCourseId))) {
+    return true;
+  }
+
+  const teacherUserId = String(session?.teacherUserId || '').trim();
+  return Boolean(teacherUserId) && dashboardUserIds.includes(teacherUserId);
+};
+
 const getSubmissionYear = (submission: any) => {
   const directYear = normalizeText(
     asPayloadObject(submission?.payload)?.year
@@ -699,15 +719,14 @@ const allUsersById = new Map<string, any>(
 
 const teacherLiveSessions = isTeacher
   ? (allLiveClassSessions || []).filter((session: any) => {
-      if (teacherManagedCourseIds.size === 0) return false;
-      const sessionCourseId = canonicalizeCourseId(session?.courseId);
-      return Boolean(sessionCourseId) && teacherManagedCourseIds.has(normalizeTextLower(sessionCourseId));
+      if (teacherManagedCourseIds.size === 0 && dashboardUserIds.length === 0) return false;
+      return isTeacherOwnedLiveSession(session);
     })
   : [];
 
 const scopedTeacherLiveSessions = isTeacher
   ? teacherLiveSessions.filter((session: any) => {
-      const sessionCourseId = canonicalizeCourseId(session?.courseId);
+      const sessionCourseId = getLiveRecordCourseId(session);
       if (activeCourseId && sessionCourseId !== activeCourseId) return false;
       if (activeYear && getLiveSessionYear(session) !== activeYear) return false;
       return true;
@@ -723,8 +742,13 @@ const scopedTeacherLiveAttendance = isTeacher
       const sessionId = String(attendance?.sessionId || '');
       if (sessionId && scopedTeacherLiveSessionById.has(sessionId)) return true;
 
-      const attendanceCourseId = canonicalizeCourseId(attendance?.courseId);
-      if (!attendanceCourseId || !teacherManagedCourseIds.has(normalizeTextLower(attendanceCourseId))) {
+      const attendanceCourseId = getLiveRecordCourseId(attendance);
+      const attendanceUserId = String(attendance?.userId || '').trim();
+      const belongsToTeacherCourse = Boolean(
+        attendanceCourseId && teacherManagedCourseIds.has(normalizeTextLower(attendanceCourseId)),
+      );
+      const belongsToTeacherUser = Boolean(attendanceUserId && dashboardUserIds.includes(attendanceUserId));
+      if (!belongsToTeacherCourse && !belongsToTeacherUser) {
         return false;
       }
       if (activeCourseId && attendanceCourseId !== activeCourseId) return false;
@@ -1771,6 +1795,9 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
               const courseEnrollments = scopedTeacherEnrollments.filter(
                 (enrollment: any) => canonicalizeCourseId(enrollment?.courseId) === activeCourseId,
               );
+              const teacherEnrollmentCount = courseEnrollments.filter(
+                (enrollment: any) => normalizeRole(enrollment?.roleInCourse) === 'teacher',
+              ).length;
               const isTeacherEnrolled = allEnrollments.some(
                 (enrollment: any) =>
                   enrollment.userId === dbUser.id &&
@@ -1800,6 +1827,16 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                           const user = allUsers.find((u: any) => u.id === enrollment.userId);
                           const enrollmentRole = normalizeRole(enrollment?.roleInCourse);
                           const enrollmentLabel = String(user?.name || user?.email || enrollment.userId || 'estudiante').trim();
+                          const canRemoveEnrollment =
+                            enrollmentRole === 'student'
+                            || (
+                              enrollmentRole === 'teacher'
+                              && dashboardUserIds.includes(enrollment.userId)
+                              && teacherEnrollmentCount > 1
+                            );
+                          const enrollmentActionLabel = enrollmentRole === 'teacher'
+                            ? `Quitar inscripción docente de ${enrollmentLabel}`
+                            : `Desinscribir a ${enrollmentLabel}`;
                           return (
                             <tr>
                               <td>{user?.name || enrollment.userId}</td>
@@ -1809,14 +1846,15 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                                 </span>
                               </td>
                               <td>
-                                {enrollmentRole === 'student' ? (
+                                {canRemoveEnrollment ? (
                                   <button
                                     type="button"
                                     class="icon-btn icon-btn-danger js-unenroll-student"
                                     data-enrollment-id={enrollment.id}
+                                    data-enrollment-role={enrollmentRole}
                                     data-user-name={enrollmentLabel}
-                                    aria-label={`Desinscribir a ${enrollmentLabel}`}
-                                    title={`Desinscribir a ${enrollmentLabel}`}
+                                    aria-label={enrollmentActionLabel}
+                                    title={enrollmentActionLabel}
                                   >
                                     <svg viewBox="0 0 24 24" aria-hidden="true">
                                       <path fill="currentColor" d="M9 3h6l1 2h5v2H3V5h5l1-2Zm1 6h2v9h-2V9Zm4 0h2v9h-2V9ZM7 9h2v9H7V9Zm-1 12a2 2 0 0 1-2-2V8h16v11a2 2 0 0 1-2 2H6Z" />
@@ -3428,9 +3466,15 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
             async function handleUnenrollStudent(button) {
               const enrollmentId = String(button.getAttribute('data-enrollment-id') || '').trim();
               const userName = String(button.getAttribute('data-user-name') || 'este estudiante').trim();
+              const enrollmentRole = String(button.getAttribute('data-enrollment-role') || 'student').trim().toLowerCase();
+              const isTeacherEnrollment = enrollmentRole === 'teacher';
               if (!enrollmentId) return;
 
-              const confirmed = window.confirm(`¿Desinscribir a "${userName}" de este curso?`);
+              const confirmed = window.confirm(
+                isTeacherEnrollment
+                  ? `¿Quitar tu inscripción docente "${userName}" de este curso?`
+                  : `¿Desinscribir a "${userName}" de este curso?`,
+              );
               if (!confirmed) return;
 
               button.disabled = true;
@@ -3442,12 +3486,22 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                 });
                 if (!response.ok) {
                   const payload = await response.json().catch(() => ({}));
-                  throw new Error(payload?.error || 'No se pudo desinscribir al estudiante');
+                  throw new Error(
+                    payload?.error
+                    || (isTeacherEnrollment
+                      ? 'No se pudo quitar la inscripción docente'
+                      : 'No se pudo desinscribir al estudiante'),
+                  );
                 }
                 window.location.reload();
               } catch (error) {
                 console.error('Error removing enrollment:', error);
-                alert(error?.message || 'No se pudo desinscribir al estudiante');
+                alert(
+                  error?.message
+                  || (isTeacherEnrollment
+                    ? 'No se pudo quitar la inscripción docente'
+                    : 'No se pudo desinscribir al estudiante'),
+                );
                 button.disabled = false;
               }
             }
@@ -4059,9 +4113,15 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
       const handleUnenrollStudent = async (button) => {
         const enrollmentId = String(button.getAttribute('data-enrollment-id') || '').trim();
         const userName = String(button.getAttribute('data-user-name') || 'este estudiante').trim();
+        const enrollmentRole = String(button.getAttribute('data-enrollment-role') || 'student').trim().toLowerCase();
+        const isTeacherEnrollment = enrollmentRole === 'teacher';
         if (!enrollmentId) return;
 
-        const confirmed = window.confirm(`¿Desinscribir a "${userName}" de este curso?`);
+        const confirmed = window.confirm(
+          isTeacherEnrollment
+            ? `¿Quitar tu inscripción docente "${userName}" de este curso?`
+            : `¿Desinscribir a "${userName}" de este curso?`,
+        );
         if (!confirmed) return;
 
         button.disabled = true;
@@ -4074,13 +4134,23 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
 
           if (!response.ok) {
             const payload = await response.json().catch(() => ({}));
-            throw new Error(payload?.error || 'No se pudo desinscribir al estudiante');
+            throw new Error(
+              payload?.error
+              || (isTeacherEnrollment
+                ? 'No se pudo quitar la inscripción docente'
+                : 'No se pudo desinscribir al estudiante'),
+            );
           }
 
           window.location.reload();
         } catch (error) {
           console.error('Error removing enrollment:', error);
-          alert(error?.message || 'No se pudo desinscribir al estudiante');
+          alert(
+            error?.message
+            || (isTeacherEnrollment
+              ? 'No se pudo quitar la inscripción docente'
+              : 'No se pudo desinscribir al estudiante'),
+          );
           button.disabled = false;
         }
       };

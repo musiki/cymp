@@ -95,10 +95,7 @@ export const DELETE: APIRoute = async ({ request, locals }) => {
       return new Response(JSON.stringify({ error: 'Enrollment not found' }), { status: 404 });
     }
 
-    if (normalizeRole(targetEnrollment.roleInCourse) !== 'student') {
-      return new Response(JSON.stringify({ error: 'Only student enrollments can be removed here' }), { status: 403 });
-    }
-
+    const targetRole = normalizeRole(targetEnrollment.roleInCourse);
     const targetCourseId = await canonicalizeCourseId(targetEnrollment.courseId);
     const { data: teacherEnrollments, error: teacherEnrollmentsError } = await supabase
       .from('Enrollment')
@@ -115,7 +112,35 @@ export const DELETE: APIRoute = async ({ request, locals }) => {
     }
 
     if (!targetCourseId || !manageableCourses.has(targetCourseId)) {
-      return new Response(JSON.stringify({ error: 'You can only manage student enrollments in your own courses' }), { status: 403 });
+      return new Response(JSON.stringify({ error: 'You can only manage enrollments in your own courses' }), { status: 403 });
+    }
+
+    if (targetRole === 'teacher') {
+      const isOwnTeacherEnrollment = actingUserIds.includes(normalizeText(targetEnrollment.userId));
+      if (!isOwnTeacherEnrollment) {
+        return new Response(JSON.stringify({ error: 'You can only remove your own teacher enrollment' }), { status: 403 });
+      }
+
+      const { data: courseEnrollments, error: courseEnrollmentsError } = await supabase
+        .from('Enrollment')
+        .select('id, courseId, roleInCourse');
+
+      if (courseEnrollmentsError) throw courseEnrollmentsError;
+
+      let teacherCount = 0;
+      for (const enrollment of courseEnrollments || []) {
+        if (normalizeRole(enrollment?.roleInCourse) !== 'teacher') continue;
+        const enrollmentCourseId = await canonicalizeCourseId(enrollment?.courseId);
+        if (enrollmentCourseId === targetCourseId) {
+          teacherCount += 1;
+        }
+      }
+
+      if (teacherCount <= 1) {
+        return new Response(JSON.stringify({ error: 'Cannot remove the last teacher enrollment in this course' }), { status: 403 });
+      }
+    } else if (targetRole !== 'student') {
+      return new Response(JSON.stringify({ error: 'Unsupported enrollment role' }), { status: 403 });
     }
 
     const { error: deleteError } = await supabase

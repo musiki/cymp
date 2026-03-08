@@ -628,6 +628,18 @@ if (
     height: 100%;
   }
 
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--focus .conference-slot--focus > *,
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--focus .conference-slot--focus > * > .conference-tile-media,
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--focus .conference-slot--focus > * > .conference-tile-media > .conference-media-frame,
+  .conference-stage[data-layout='teacher'] .conference-stage-panel--focus .conference-slot--focus > * > .conference-tile-media > .conference-media-frame > video {
+    position: absolute;
+    inset: 0;
+    width: 100% !important;
+    height: 100% !important;
+    min-width: 0;
+    min-height: 0;
+  }
+
   .conference-stage[data-layout='teacher'] .conference-stage-panel--focus .conference-tile {
     grid-template-rows: 1fr;
     border: 0;
@@ -670,6 +682,18 @@ if (
     inset: 0;
     width: 100%;
     height: 100%;
+  }
+
+  .conference-stage[data-layout='screenshare'] .conference-stage-panel--screen .conference-slot--screen > *,
+  .conference-stage[data-layout='screenshare'] .conference-stage-panel--screen .conference-slot--screen > * > .conference-tile-media,
+  .conference-stage[data-layout='screenshare'] .conference-stage-panel--screen .conference-slot--screen > * > .conference-tile-media > .conference-media-frame,
+  .conference-stage[data-layout='screenshare'] .conference-stage-panel--screen .conference-slot--screen > * > .conference-tile-media > .conference-media-frame > video {
+    position: absolute;
+    inset: 0;
+    width: 100% !important;
+    height: 100% !important;
+    min-width: 0;
+    min-height: 0;
   }
 
   .conference-stage[data-layout='screenshare'] .conference-stage-panel--screen .conference-tile--screen {
@@ -982,8 +1006,9 @@ if (
     max-width: none !important;
     max-height: none !important;
     object-fit: contain !important;
-    object-position: 50% 62% !important;
-    transform: none !important;
+    object-position: 50% 70% !important;
+    transform: scale(0.92) !important;
+    transform-origin: center center;
   }
 
   .conference-statusline {
@@ -1165,7 +1190,7 @@ if (
     max-width: none !important;
     max-height: none !important;
     object-fit: cover !important;
-    object-position: 50% 62% !important;
+    object-position: 50% 68% !important;
     transform: none !important;
   }
 
@@ -1219,9 +1244,10 @@ if (
     max-width: none !important;
     max-height: none !important;
     object-fit: contain !important;
-    object-position: 50% 62% !important;
+    object-position: 50% 70% !important;
     background: #000;
-    transform: none !important;
+    transform: scale(0.92) !important;
+    transform-origin: center center;
   }
 
   .conference-tile-meta {

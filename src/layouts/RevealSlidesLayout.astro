@@ -1503,6 +1503,48 @@ const resolvedSlideTheme =
           });
         };
 
+        const persistSlideWordcloudImage = async (widget, payload) => {
+          if (!widget?.canManage || widget?.data?.type !== 'wordcloud' || !payload?.active) return;
+
+          const sessionId = String(payload?.sessionId || '').trim();
+          const wordCounts = sanitizeWordCounts(payload?.wordCounts || {});
+          if (!sessionId || Object.keys(wordCounts).length === 0) return;
+
+          const saveKey = JSON.stringify([
+            sessionId,
+            Number(payload?.totalResponses || 0),
+            Object.entries(wordCounts).sort((left, right) => left[0].localeCompare(right[0], 'es')),
+          ]);
+
+          if (widget.lastSavedWordcloudKey === saveKey) return;
+          widget.lastSavedWordcloudKey = saveKey;
+
+          try {
+            const response = await fetch('/api/live/wordcloud-image', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                courseId: widget.courseId || inferLiveCourseId(),
+                pageSlug: inferLivePageSlug(),
+                interactionId: widget.data?.id || '',
+                prompt: widget.data?.prompt || '',
+                sessionId,
+                wordCounts,
+              }),
+            });
+
+            const exportPayload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              widget.lastSavedWordcloudKey = '';
+              return;
+            }
+
+            widget.lastSavedWordcloudUrl = String(exportPayload?.publicUrl || '').trim();
+          } catch {
+            widget.lastSavedWordcloudKey = '';
+          }
+        };
+
         const renderSlidePollState = (widget) => {
           if (widget.statusNode) {
             widget.statusNode.textContent = formatPollStatus(widget);
@@ -1521,7 +1563,11 @@ const resolvedSlideTheme =
           if (widget.submitButton) {
             widget.submitButton.hidden = !canRespond;
             widget.submitButton.disabled = !canRespond;
-            widget.submitButton.textContent = submitted ? 'Actualizar respuesta' : 'Enviar respuesta';
+            widget.submitButton.textContent = widget.data.type === 'wordcloud'
+              ? 'Enviar'
+              : submitted
+                ? 'Actualizar respuesta'
+                : 'Enviar respuesta';
           }
 
           if (widget.startButton) {
@@ -1597,10 +1643,41 @@ const resolvedSlideTheme =
               return;
             }
 
+            const nextSessionId = String(payload.sessionId || '');
+            const isNewSession = Boolean(nextSessionId) && nextSessionId !== String(widget.state.sessionId || '');
+            if (isNewSession) {
+              widget.state.hasSubmitted = false;
+              try {
+                window.localStorage.removeItem(`live:submitted:${widget.data.id}`);
+              } catch {
+                // ignore storage restrictions
+              }
+              if (widget.inputNode instanceof HTMLInputElement) {
+                widget.inputNode.value = '';
+              }
+              if (widget.formNode instanceof HTMLElement) {
+                widget.formNode.querySelectorAll('input').forEach((field) => {
+                  if (field instanceof HTMLInputElement) {
+                    if (field.type === 'checkbox' || field.type === 'radio') {
+                      field.checked = false;
+                    } else if (field.type !== 'hidden') {
+                      field.value = '';
+                    }
+                  }
+                });
+              }
+              if (typeof widget.syncOptions === 'function') {
+                widget.syncOptions(Array.isArray(payload.options) ? payload.options : widget.data.options || []);
+              }
+            }
+
             widget.state.active = true;
-            widget.state.sessionId = String(payload.sessionId || '');
+            widget.state.sessionId = nextSessionId;
             widget.state.endsAt = payload.endsAt || null;
             widget.state.totalResponses = Math.max(0, Number(payload.totalResponses || 0));
+            if (widget.data.type === 'wordcloud' && Array.isArray(payload.options) && typeof widget.syncOptions === 'function') {
+              widget.syncOptions(payload.options);
+            }
             widget.state.optionCounts = payload.optionCounts && typeof payload.optionCounts === 'object'
               ? payload.optionCounts
               : {};
@@ -1608,6 +1685,7 @@ const resolvedSlideTheme =
               ? payload.wordCounts
               : {};
             renderSlidePollState(widget);
+            void persistSlideWordcloudImage(widget, payload);
           });
         };
 
@@ -1811,7 +1889,7 @@ const resolvedSlideTheme =
         };
 
         const renderSlidePoll = (wrapper, evalData) => {
-          const options = Array.isArray(evalData.options)
+          let options = Array.isArray(evalData.options)
             ? evalData.options.map((option, index) => normalizePollOption(option, index)).filter(Boolean)
             : [];
           if (options.length < 2) {
@@ -2076,7 +2154,7 @@ const resolvedSlideTheme =
         };
 
         const renderSlideWordcloud = (wrapper, evalData) => {
-          const options = Array.isArray(evalData.options)
+          let options = Array.isArray(evalData.options)
             ? evalData.options.map((option, index) => normalizePollOption(option, index)).filter(Boolean)
             : [];
           const submissionKey = `live:submitted:${evalData.id}`;
@@ -2144,20 +2222,9 @@ const resolvedSlideTheme =
 
           let selectedSuggestionId = '';
           const suggestionButtons = [];
-          if (options.length > 0) {
-            const suggestionsWrap = document.createElement('div');
-            suggestionsWrap.className = 'slide-wordcloud-suggestions';
-            options.forEach((option) => {
-              const chip = document.createElement('button');
-              chip.type = 'button';
-              chip.className = 'slide-wordcloud-chip';
-              chip.dataset.optionId = option.id;
-              chip.textContent = option.text;
-              suggestionButtons.push(chip);
-              suggestionsWrap.appendChild(chip);
-            });
-            form.appendChild(suggestionsWrap);
-          }
+          const suggestionsWrap = document.createElement('div');
+          suggestionsWrap.className = 'slide-wordcloud-suggestions';
+          form.appendChild(suggestionsWrap);
 
           const input = document.createElement('input');
           input.type = 'text';
@@ -2193,16 +2260,43 @@ const resolvedSlideTheme =
             });
           };
 
-          suggestionButtons.forEach((chip) => {
+          const addSuggestionButton = (option) => {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'slide-wordcloud-chip';
+            chip.dataset.optionId = option.id;
+            chip.textContent = option.text;
             chip.addEventListener('click', () => {
               if (chip.disabled) return;
               const optionId = String(chip.dataset.optionId || '').trim();
-              const option = options.find((item) => item.id === optionId);
-              if (!option) return;
-              input.value = option.text;
+              const currentOption = options.find((item) => item.id === optionId);
+              if (!currentOption) return;
+              input.value = currentOption.text;
               setSelectedSuggestion(optionId);
+              if (widget.state.active) {
+                void submitWordcloudResponse(currentOption.text, optionId);
+              }
             });
-          });
+            suggestionButtons.push(chip);
+            suggestionsWrap.appendChild(chip);
+          };
+
+          const syncSuggestionButtons = (nextOptions) => {
+            options = Array.isArray(nextOptions)
+              ? nextOptions.map((option, index) => normalizePollOption(option, index)).filter(Boolean)
+              : [];
+
+            suggestionButtons.length = 0;
+            suggestionsWrap.innerHTML = '';
+            options.forEach((option) => addSuggestionButton(option));
+            suggestionsWrap.hidden = options.length === 0;
+
+            const currentText = String(input.value || '').trim();
+            const match = options.find((option) => option.text === currentText);
+            setSelectedSuggestion(match ? match.id : '');
+          };
+
+          syncSuggestionButtons(options);
 
           input.addEventListener('input', () => {
             const currentText = String(input.value || '').trim();
@@ -2222,6 +2316,7 @@ const resolvedSlideTheme =
             statusNode: status,
             countdownNode: countdown,
             formNode: form,
+            inputNode: input,
             submitButton,
             feedbackNode: feedback,
             startButton,
@@ -2236,6 +2331,11 @@ const resolvedSlideTheme =
               optionCounts: {},
               wordCounts: {},
               hasSubmitted: wasSubmitted,
+            },
+            getSuggestionId: () => selectedSuggestionId,
+            syncOptions: (nextOptions) => {
+              syncSuggestionButtons(nextOptions);
+              widget.data.options = options;
             },
           };
 
@@ -2300,12 +2400,13 @@ const resolvedSlideTheme =
             });
           }
 
-          submitButton.addEventListener('click', async () => {
-            if (!widget.state.active || !widget.state.sessionId) return;
-            const word = String(input.value || '').trim();
+          const submitWordcloudResponse = async (wordOverride = '', suggestionIdOverride = '') => {
+            if (!widget.state.active || !widget.state.sessionId) return false;
+            const word = String(wordOverride || input.value || '').trim();
+            const suggestionId = String(suggestionIdOverride || selectedSuggestionId || '').trim();
             if (!word) {
               setSlidePollFeedback(widget, 'Escribe una palabra para responder.', true);
-              return;
+              return false;
             }
 
             submitButton.disabled = true;
@@ -2318,7 +2419,7 @@ const resolvedSlideTheme =
                   sessionId: widget.state.sessionId,
                   answer: {
                     text: word,
-                    suggestionId: selectedSuggestionId,
+                    suggestionId,
                   },
                   clientId,
                 }),
@@ -2328,7 +2429,7 @@ const resolvedSlideTheme =
               if (!response.ok) {
                 setSlidePollFeedback(widget, payload?.error || 'No se pudo guardar la respuesta.', true);
                 submitButton.disabled = false;
-                return;
+                return false;
               }
 
               widget.state.hasSubmitted = true;
@@ -2340,14 +2441,14 @@ const resolvedSlideTheme =
                 answer: {
                   type: 'wordcloud',
                   text: word,
-                  suggestionId: selectedSuggestionId,
+                  suggestionId,
                   sessionId: widget.state.sessionId,
                   submittedAt: new Date().toISOString(),
                 },
                 meta: {
                   answerText: word,
                   answerWord: word,
-                  suggestionId: selectedSuggestionId,
+                  suggestionId,
                   type: 'wordcloud',
                   mode: widget.data.mode || '',
                 },
@@ -2356,16 +2457,28 @@ const resolvedSlideTheme =
               if (!saved) {
                 setSlidePollFeedback(widget, 'Respuesta en vivo registrada, pero no se pudo persistir en el log.', true);
               } else {
-                setSlidePollFeedback(widget, 'Respuesta registrada. Puedes actualizarla mientras la interacción siga activa.');
+                setSlidePollFeedback(widget, 'Respuesta registrada.');
               }
 
               if (payload?.snapshot) {
                 applyLivePayloadToSlidePolls(payload.snapshot, 'live.updated');
               }
+              return true;
             } catch (error) {
               setSlidePollFeedback(widget, 'Error de red al enviar la respuesta.', true);
               submitButton.disabled = false;
+              return false;
             }
+          };
+
+          submitButton.addEventListener('click', async () => {
+            await submitWordcloudResponse();
+          });
+
+          input.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter' || event.shiftKey) return;
+            event.preventDefault();
+            void submitWordcloudResponse();
           });
 
           pollWidgetsByEvalId.set(widget.data.id, widget);

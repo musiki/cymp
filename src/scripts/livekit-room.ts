@@ -176,6 +176,43 @@ const normalizeCoursePathPart = (value: string) => {
   }
 };
 
+const toPresentationHrefKey = (href: string | null | undefined) => {
+  const normalizedHref = normalizeText(href);
+  if (!normalizedHref) return '';
+
+  try {
+    const url = new URL(normalizedHref, window.location.origin);
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return normalizedHref;
+  }
+};
+
+const readPresentationCoursePathSegment = (href: string | null | undefined) => {
+  const normalizedHref = normalizeText(href);
+  if (!normalizedHref) return '';
+
+  try {
+    const url = new URL(normalizedHref, window.location.origin);
+    const parts = url.pathname
+      .split('/')
+      .filter(Boolean)
+      .map(normalizeCoursePathPart);
+
+    if (parts[0] === 'cursos' && parts[1] === 'slides' && parts[2]) {
+      return parts[2];
+    }
+
+    if (parts[0] === 'cursos' && parts[1]) {
+      return parts[1];
+    }
+
+    return '';
+  } catch {
+    return '';
+  }
+};
+
 const readPresentationPageSlug = (href: string | null | undefined) => {
   const normalizedHref = normalizeText(href);
   if (!normalizedHref) return '';
@@ -193,31 +230,6 @@ const readPresentationPageSlug = (href: string | null | undefined) => {
 
     if (parts[0] === 'cursos' && parts.length >= 3) {
       return parts.slice(1).join('/');
-    }
-
-    return '';
-  } catch {
-    return '';
-  }
-};
-
-const readPresentationCourseId = (href: string | null | undefined) => {
-  const normalizedHref = normalizeText(href);
-  if (!normalizedHref) return '';
-
-  try {
-    const url = new URL(normalizedHref, window.location.origin);
-    const parts = url.pathname
-      .split('/')
-      .filter(Boolean)
-      .map(normalizeCoursePathPart);
-
-    if (parts[0] === 'cursos' && parts[1] === 'slides' && parts[2]) {
-      return parts[2];
-    }
-
-    if (parts[0] === 'cursos' && parts[1]) {
-      return parts[1];
     }
 
     return '';
@@ -675,6 +687,33 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
   root.dataset.mounted = 'true';
 
+  const presentationCourseIdByHrefKey = new Map<string, string>();
+  const presentationPageSlugByHrefKey = new Map<string, string>();
+  const presentationCourseIdByPathSegment = new Map<string, string>();
+
+  Array.from(presentationSelect.options).forEach((option) => {
+    const href = normalizeText(option.value);
+    if (!href) return;
+
+    const hrefKey = toPresentationHrefKey(href);
+    const optionCourseId = normalizeText(option.dataset.courseId);
+    const optionLessonId = normalizeText(option.dataset.lessonId);
+    const coursePathSegment = readPresentationCoursePathSegment(href);
+
+    if (hrefKey) {
+      if (optionCourseId) {
+        presentationCourseIdByHrefKey.set(hrefKey, optionCourseId);
+      }
+      if (optionLessonId) {
+        presentationPageSlugByHrefKey.set(hrefKey, optionLessonId);
+      }
+    }
+
+    if (coursePathSegment && optionCourseId && !presentationCourseIdByPathSegment.has(coursePathSegment)) {
+      presentationCourseIdByPathSegment.set(coursePathSegment, optionCourseId);
+    }
+  });
+
   const room = new Room({
     adaptiveStream: {
       pixelDensity: 'screen',
@@ -740,6 +779,31 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   let micMeterTrackId = '';
   let micMeterGeneration = 0;
   let localHandRaised = false;
+
+  const resolvePresentationCourseId = (href: string | null | undefined) => {
+    const hrefKey = toPresentationHrefKey(href);
+    if (hrefKey) {
+      const mappedByHref = presentationCourseIdByHrefKey.get(hrefKey);
+      if (mappedByHref) return mappedByHref;
+    }
+
+    const coursePathSegment = readPresentationCoursePathSegment(href);
+    if (coursePathSegment) {
+      return presentationCourseIdByPathSegment.get(coursePathSegment) || coursePathSegment;
+    }
+
+    return '';
+  };
+
+  const resolvePresentationPageSlug = (href: string | null | undefined) => {
+    const hrefKey = toPresentationHrefKey(href);
+    if (hrefKey) {
+      const mappedByHref = presentationPageSlugByHrefKey.get(hrefKey);
+      if (mappedByHref) return mappedByHref;
+    }
+
+    return readPresentationPageSlug(href);
+  };
 
   const getCurrentLayout = () => setLayout(stage, layoutInput.value);
 
@@ -981,14 +1045,23 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
   const getSelectedPresentationCourseId = () => {
     const selectedOption = presentationSelect.selectedOptions.item(0);
-    if (!(selectedOption instanceof HTMLOptionElement)) return '';
-    return normalizeText(selectedOption.dataset.courseId);
+    if (selectedOption instanceof HTMLOptionElement) {
+      const selectedCourseId = normalizeText(selectedOption.dataset.courseId);
+      if (selectedCourseId) return selectedCourseId;
+    }
+    return resolvePresentationCourseId(
+      selectedOption instanceof HTMLOptionElement
+        ? normalizeText(selectedOption.value) || presentationSelect.value
+        : presentationSelect.value,
+    );
   };
 
   const getEffectiveCourseId = () =>
-    courseId || getSelectedPresentationCourseId() || readPresentationCourseId(getCurrentPresentationHref());
+    getSelectedPresentationCourseId() ||
+    resolvePresentationCourseId(getCurrentPresentationHref()) ||
+    courseId;
 
-  const getCurrentPresentationPageSlug = () => readPresentationPageSlug(getCurrentPresentationHref());
+  const getCurrentPresentationPageSlug = () => resolvePresentationPageSlug(getCurrentPresentationHref());
 
   const getLiveActivityHref = (snapshot: LiveSnapshot | null) => {
     const sessionId = normalizeText(snapshot?.sessionId);
@@ -1006,13 +1079,23 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
     const snapshot = activeLiveSnapshot;
     const effectiveCourseId = getEffectiveCourseId();
+    const effectivePageSlug = getCurrentPresentationPageSlug();
     const snapshotCourseId = normalizeText(snapshot?.courseId);
+    const snapshotPageSlug = normalizeText(snapshot?.pageSlug);
     const remainingMs = snapshot?.endsAt ? getRemainingMs(snapshot.endsAt, Date.now()) : null;
+    const courseMatches =
+      !effectiveCourseId ||
+      !snapshotCourseId ||
+      snapshotCourseId === effectiveCourseId;
+    const pageMatches =
+      !effectivePageSlug ||
+      !snapshotPageSlug ||
+      snapshotPageSlug === effectivePageSlug;
     const isVisible = Boolean(
       snapshot?.active &&
       normalizeText(snapshot?.sessionId) &&
       (remainingMs === null || remainingMs > 0) &&
-      (!effectiveCourseId || !snapshotCourseId || snapshotCourseId === effectiveCourseId),
+      (courseMatches || pageMatches),
     );
 
     liveActivityButton.hidden = !isVisible;
