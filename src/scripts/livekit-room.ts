@@ -111,13 +111,16 @@ type MountCollection = {
 };
 
 type PersistedRoomSetup = {
+  handTrackEnabled?: boolean;
   identity?: string;
+  instrumentsOpen?: boolean;
   name?: string;
   preferredAudioInputId?: string;
   preferredVideoInputId?: string;
   previewBlur?: boolean;
   previewZoom?: number;
   showCircle?: boolean;
+  synthMasterGain?: number;
   room?: string;
 };
 
@@ -149,12 +152,27 @@ type LocalCameraTrackLike = {
 
 type VisionTasksModule = typeof import('@mediapipe/tasks-vision');
 type VisionMask = import('@mediapipe/tasks-vision').MPMask;
+type VisionHandLandmarker = InstanceType<VisionTasksModule['HandLandmarker']>;
+type HandLandmarkPoint = {
+  x: number;
+  y: number;
+  z: number;
+};
+type HandSynthTelemetry = {
+  carrier: number;
+  cutoff: number;
+  gain: number;
+  modulator: number;
+  resonance: number;
+};
 
 const MESSAGE_TOPIC = 'conference-ui';
 const ROOM_SETUP_STORAGE_KEY = 'musiki:room:setup:v1';
 const BACKGROUND_BLUR_PROCESSOR_NAME = 'musiki-background-blur';
 const BACKGROUND_BLUR_MODEL_ASSET =
   'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite';
+const HAND_LANDMARKER_MODEL_ASSET =
+  'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 const BACKGROUND_BLUR_WASM_BASE =
   'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.32/wasm';
 const textEncoder = new TextEncoder();
@@ -184,6 +202,174 @@ const normalizePreviewZoom = (value: unknown, fallback = 1) => {
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(4, Math.max(0.8, Math.round(parsed * 100) / 100));
 };
+
+const normalizeUnitValue = (value: unknown, fallback = 0) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(1, Math.max(0, Math.round(parsed * 100) / 100));
+};
+
+const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+const lerp = (start: number, end: number, amount: number) => start + (end - start) * amount;
+const roundTo = (value: number, digits = 2) => {
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+};
+
+const normalizeMasterGain = (value: unknown, fallback = 0.35) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(1, Math.max(0, Math.round(parsed * 100) / 100));
+};
+
+class FMSynthVoice {
+  private context: AudioContext | null = null;
+  private carrierOscillator: OscillatorNode | null = null;
+  private dynamicGain: GainNode | null = null;
+  private filterNode: BiquadFilterNode | null = null;
+  private masterGainNode: GainNode | null = null;
+  private modulatorDepth: GainNode | null = null;
+  private modulatorOscillator: OscillatorNode | null = null;
+  private ready = false;
+  private masterGain = 0.35;
+
+  private getAudioContextCtor() {
+    return (
+      window.AudioContext ||
+      (window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext ||
+      null
+    );
+  }
+
+  async ensureReady() {
+    if (this.ready && this.context) {
+      if (this.context.state !== 'running') {
+        await this.context.resume().catch(() => undefined);
+      }
+      return;
+    }
+
+    const AudioContextCtor = this.getAudioContextCtor();
+    if (!AudioContextCtor) {
+      throw new Error('Web Audio is not available in this browser.');
+    }
+
+    const context = new AudioContextCtor({ sampleRate: 48_000 });
+    this.context = context;
+
+    const carrierOscillator = context.createOscillator();
+    carrierOscillator.type = 'sine';
+    carrierOscillator.frequency.value = 220;
+
+    const modulatorOscillator = context.createOscillator();
+    modulatorOscillator.type = 'sine';
+    modulatorOscillator.frequency.value = 220;
+
+    const modulatorDepth = context.createGain();
+    modulatorDepth.gain.value = 45;
+
+    const filterNode = context.createBiquadFilter();
+    filterNode.type = 'lowpass';
+    filterNode.frequency.value = 800;
+    filterNode.Q.value = 1;
+
+    const dynamicGain = context.createGain();
+    dynamicGain.gain.value = 0;
+
+    const masterGainNode = context.createGain();
+    masterGainNode.gain.value = this.masterGain;
+
+    modulatorOscillator.connect(modulatorDepth);
+    modulatorDepth.connect(carrierOscillator.frequency);
+    carrierOscillator.connect(filterNode);
+    filterNode.connect(dynamicGain);
+    dynamicGain.connect(masterGainNode);
+    masterGainNode.connect(context.destination);
+
+    carrierOscillator.start();
+    modulatorOscillator.start();
+
+    this.carrierOscillator = carrierOscillator;
+    this.modulatorOscillator = modulatorOscillator;
+    this.modulatorDepth = modulatorDepth;
+    this.filterNode = filterNode;
+    this.dynamicGain = dynamicGain;
+    this.masterGainNode = masterGainNode;
+    this.ready = true;
+
+    if (context.state !== 'running') {
+      await context.resume().catch(() => undefined);
+    }
+  }
+
+  setMasterGain(value: number) {
+    this.masterGain = normalizeMasterGain(value, this.masterGain);
+    if (this.masterGainNode && this.context) {
+      this.masterGainNode.gain.setTargetAtTime(this.masterGain, this.context.currentTime, 0.03);
+    }
+  }
+
+  clearHand() {
+    if (!this.dynamicGain || !this.context) return;
+    this.dynamicGain.gain.setTargetAtTime(0, this.context.currentTime, 0.04);
+  }
+
+  update(telemetry: HandSynthTelemetry) {
+    if (
+      !this.context ||
+      !this.carrierOscillator ||
+      !this.modulatorOscillator ||
+      !this.modulatorDepth ||
+      !this.filterNode ||
+      !this.dynamicGain
+    ) {
+      return;
+    }
+
+    const now = this.context.currentTime;
+    const carrier = Math.max(60, telemetry.carrier);
+    const modulatorRatio = Math.max(0.25, telemetry.modulator);
+    const filterCutoff = Math.max(80, telemetry.cutoff);
+    const resonance = Math.max(0.5, telemetry.resonance);
+    const gain = clamp01(telemetry.gain);
+    const modulationDepth = carrier * (0.12 + modulatorRatio * 0.38);
+
+    this.carrierOscillator.frequency.setTargetAtTime(carrier, now, 0.03);
+    this.modulatorOscillator.frequency.setTargetAtTime(carrier * modulatorRatio, now, 0.03);
+    this.modulatorDepth.gain.setTargetAtTime(modulationDepth, now, 0.03);
+    this.filterNode.frequency.setTargetAtTime(filterCutoff, now, 0.04);
+    this.filterNode.Q.setTargetAtTime(resonance, now, 0.04);
+    this.dynamicGain.gain.setTargetAtTime(gain * 0.32, now, 0.03);
+  }
+
+  async destroy() {
+    if (this.carrierOscillator) {
+      this.carrierOscillator.stop();
+      this.carrierOscillator.disconnect();
+      this.carrierOscillator = null;
+    }
+    if (this.modulatorOscillator) {
+      this.modulatorOscillator.stop();
+      this.modulatorOscillator.disconnect();
+      this.modulatorOscillator = null;
+    }
+    this.modulatorDepth?.disconnect();
+    this.modulatorDepth = null;
+    this.filterNode?.disconnect();
+    this.filterNode = null;
+    this.dynamicGain?.disconnect();
+    this.dynamicGain = null;
+    this.masterGainNode?.disconnect();
+    this.masterGainNode = null;
+    this.ready = false;
+
+    if (this.context && this.context.state !== 'closed') {
+      await this.context.close().catch(() => undefined);
+    }
+    this.context = null;
+  }
+}
 
 const readPersistedRoomSetup = (): PersistedRoomSetup => {
   try {
@@ -642,6 +828,32 @@ class BackgroundBlurVideoProcessor implements VideoTrackProcessorLike {
   }
 }
 
+const createHandLandmarker = async (): Promise<VisionHandLandmarker> => {
+  const vision = await loadVisionTasksModule();
+  const wasmFileset = await loadVisionTasksFileset();
+  const baseOptions = {
+    modelAssetPath: HAND_LANDMARKER_MODEL_ASSET,
+  };
+
+  let lastError: unknown = null;
+  for (const delegate of ['GPU', 'CPU'] as const) {
+    try {
+      return await vision.HandLandmarker.createFromOptions(wasmFileset as never, {
+        baseOptions: {
+          ...baseOptions,
+          delegate,
+        },
+        numHands: 1,
+        runningMode: 'VIDEO',
+      });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Could not initialize hand tracking.');
+};
+
 const appendBlurBackdrop = ({
   stream,
   track,
@@ -988,11 +1200,25 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   const recordButton = root.querySelector('[data-action="record"]');
   const fullscreenButton = root.querySelector('[data-action="fullscreen"]');
   const sidebarToggleButton = root.querySelector('[data-action="sidebar-toggle"]');
+  const instrumentsToggleButton = root.querySelector('[data-action="instruments-toggle"]');
   const chatList = root.querySelector('[data-chat-list]');
   const chatInput = root.querySelector('[data-chat-input]');
   const chatSendButton = root.querySelector('[data-action="chat-send"]');
   const chatDownloadButton = root.querySelector('[data-action="chat-download"]');
   const raiseHandButton = root.querySelector('[data-action="raise-hand"]');
+  const handTrackInput = root.querySelector('[data-hand-track-input]');
+  const synthMasterInput = root.querySelector('[data-synth-master-input]');
+  const synthMasterOutput = root.querySelector('[data-synth-master-output]');
+  const synthCarrierInput = root.querySelector('[data-synth-carrier-input]');
+  const synthCarrierOutput = root.querySelector('[data-synth-carrier-output]');
+  const synthModulatorInput = root.querySelector('[data-synth-modulator-input]');
+  const synthModulatorOutput = root.querySelector('[data-synth-modulator-output]');
+  const synthGainInput = root.querySelector('[data-synth-gain-input]');
+  const synthGainOutput = root.querySelector('[data-synth-gain-output]');
+  const synthCutoffInput = root.querySelector('[data-synth-cutoff-input]');
+  const synthCutoffOutput = root.querySelector('[data-synth-cutoff-output]');
+  const synthResonanceInput = root.querySelector('[data-synth-resonance-input]');
+  const synthResonanceOutput = root.querySelector('[data-synth-resonance-output]');
 
   if (
     !(roomInput instanceof HTMLInputElement) ||
@@ -1158,6 +1384,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   let recordingAudioContext: AudioContext | null = null;
   let recordingCanvas: HTMLCanvasElement | null = null;
   let recordingCanvasContext: CanvasRenderingContext2D | null = null;
+  let recordingDisplayStream: MediaStream | null = null;
+  let recordingDisplayVideo: HTMLVideoElement | null = null;
   let recordingMediaElementSources: AudioNode[] = [];
   let recordingMicTrackClones: MediaStreamTrack[] = [];
   let recordingStream: MediaStream | null = null;
@@ -1185,7 +1413,20 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   let previewBlur = Boolean(persistedSetup.previewBlur);
   let presentationCircleZoom = previewZoom;
   let showPresentationCircle = persistedSetup.showCircle !== false;
+  let instrumentsOpen = persistedSetup.instrumentsOpen === true;
+  let handTrackEnabled = Boolean(persistedSetup.handTrackEnabled);
+  let synthMasterGain = normalizeMasterGain(
+    synthMasterInput instanceof HTMLInputElement
+      ? synthMasterInput.value
+      : persistedSetup.synthMasterGain,
+    normalizeMasterGain(persistedSetup.synthMasterGain, 0.35),
+  );
   let sidebarCollapsed = root.dataset.sidebarCollapsed === 'true';
+  let handTrackingAnimationId = 0;
+  let handTrackingGeneration = 0;
+  let handTrackingLandmarker: VisionHandLandmarker | null = null;
+  let handTrackingLastDetectionAt = 0;
+  const fmSynth = new FMSynthVoice();
 
   const getLocalCameraTrack = (): LocalCameraTrackLike | null => {
     const publication = Array.from(room.localParticipant.videoTrackPublications.values()).find(
@@ -1353,17 +1594,224 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     }
   };
 
+  const renderSynthTelemetry = (telemetry: HandSynthTelemetry) => {
+    if (synthCarrierInput instanceof HTMLInputElement) {
+      synthCarrierInput.value = String(Math.round(telemetry.carrier));
+    }
+    if (synthCarrierOutput instanceof HTMLOutputElement || synthCarrierOutput instanceof HTMLElement) {
+      synthCarrierOutput.textContent = `${Math.round(telemetry.carrier)} Hz`;
+    }
+
+    if (synthModulatorInput instanceof HTMLInputElement) {
+      synthModulatorInput.value = telemetry.modulator.toFixed(2);
+    }
+    if (synthModulatorOutput instanceof HTMLOutputElement || synthModulatorOutput instanceof HTMLElement) {
+      synthModulatorOutput.textContent = `${telemetry.modulator.toFixed(2)}x`;
+    }
+
+    if (synthGainInput instanceof HTMLInputElement) {
+      synthGainInput.value = telemetry.gain.toFixed(2);
+    }
+    if (synthGainOutput instanceof HTMLOutputElement || synthGainOutput instanceof HTMLElement) {
+      synthGainOutput.textContent = telemetry.gain.toFixed(2);
+    }
+
+    if (synthCutoffInput instanceof HTMLInputElement) {
+      synthCutoffInput.value = String(Math.round(telemetry.cutoff));
+    }
+    if (synthCutoffOutput instanceof HTMLOutputElement || synthCutoffOutput instanceof HTMLElement) {
+      synthCutoffOutput.textContent = `${Math.round(telemetry.cutoff)} Hz`;
+    }
+
+    if (synthResonanceInput instanceof HTMLInputElement) {
+      synthResonanceInput.value = telemetry.resonance.toFixed(1);
+    }
+    if (
+      synthResonanceOutput instanceof HTMLOutputElement ||
+      synthResonanceOutput instanceof HTMLElement
+    ) {
+      synthResonanceOutput.textContent = `${telemetry.resonance.toFixed(1)} Q`;
+    }
+  };
+
+  const applyInstrumentsOpenState = () => {
+    root.dataset.instrumentsOpen = instrumentsOpen ? 'true' : 'false';
+    if (instrumentsToggleButton instanceof HTMLButtonElement) {
+      instrumentsToggleButton.dataset.active = instrumentsOpen ? 'true' : 'false';
+      instrumentsToggleButton.setAttribute('aria-pressed', instrumentsOpen ? 'true' : 'false');
+      instrumentsToggleButton.title = instrumentsOpen ? 'Hide Instruments' : 'Instruments';
+    }
+  };
+
+  const applyHandTrackState = () => {
+    if (handTrackInput instanceof HTMLInputElement) {
+      handTrackInput.checked = handTrackEnabled;
+    }
+  };
+
+  const applySynthMasterGainState = () => {
+    if (synthMasterInput instanceof HTMLInputElement) {
+      synthMasterInput.value = synthMasterGain.toFixed(2);
+    }
+    if (synthMasterOutput instanceof HTMLOutputElement || synthMasterOutput instanceof HTMLElement) {
+      synthMasterOutput.textContent = synthMasterGain.toFixed(2);
+    }
+    fmSynth.setMasterGain(synthMasterGain);
+  };
+
   const persistSetupState = () => {
     writePersistedRoomSetup({
+      handTrackEnabled,
       room: normalizeText(roomInput.value),
       identity: normalizeText(identityInput.value),
+      instrumentsOpen,
       name: normalizeText(nameInput.value),
       preferredAudioInputId,
       preferredVideoInputId,
       previewBlur,
       previewZoom,
       showCircle: showPresentationCircle,
+      synthMasterGain,
     });
+  };
+
+  const getTrackingVideoElement = (): HTMLVideoElement | null => {
+    if (localPreviewStreamMount?.element instanceof HTMLVideoElement) {
+      return localPreviewStreamMount.element;
+    }
+    if (localPreviewMount?.element instanceof HTMLVideoElement) {
+      return localPreviewMount.element;
+    }
+    if (!(identityPreviewSlot instanceof HTMLElement)) return null;
+    const element = identityPreviewSlot.querySelector('video:not(.conference-media-backdrop)');
+    return element instanceof HTMLVideoElement ? element : null;
+  };
+
+  const computeHandTelemetry = (landmarks: HandLandmarkPoint[]): HandSynthTelemetry | null => {
+    const wrist = landmarks[0];
+    const indexMcp = landmarks[5];
+    const middleMcp = landmarks[9];
+    const ringMcp = landmarks[13];
+    const thumbMcp = landmarks[2];
+    const thumbTip = landmarks[4];
+    const indexTip = landmarks[8];
+    const ringTip = landmarks[16];
+
+    if (!wrist || !indexMcp || !middleMcp || !ringMcp || !thumbMcp || !thumbTip || !indexTip || !ringTip) {
+      return null;
+    }
+
+    const palmX = clamp01((wrist.x + middleMcp.x + indexMcp.x) / 3);
+    const palmY = clamp01((wrist.y + middleMcp.y) / 2);
+    const thumbDistance = Math.hypot(thumbTip.x - thumbMcp.x, thumbTip.y - thumbMcp.y);
+    const thumbGain = clamp01((thumbDistance - 0.04) / 0.22);
+    const indexLift = clamp01(((indexMcp.y - indexTip.y) - 0.03) / 0.28);
+    const ringLift = clamp01(((ringMcp.y - ringTip.y) - 0.03) / 0.3);
+
+    return {
+      carrier: roundTo(lerp(120, 1320, 1 - palmY), 0),
+      modulator: roundTo(lerp(0.25, 8, palmX), 2),
+      gain: roundTo(thumbGain, 2),
+      cutoff: roundTo(Math.exp(lerp(Math.log(140), Math.log(7600), indexLift)), 0),
+      resonance: roundTo(lerp(0.8, 18, ringLift), 1),
+    };
+  };
+
+  const clearHandTrackingOutput = () => {
+    fmSynth.clearHand();
+    renderSynthTelemetry({
+      carrier: 220,
+      modulator: 1.2,
+      gain: 0,
+      cutoff: 800,
+      resonance: 1,
+    });
+  };
+
+  const stopHandTracking = () => {
+    handTrackingGeneration += 1;
+    handTrackingLastDetectionAt = 0;
+    if (handTrackingAnimationId) {
+      window.cancelAnimationFrame(handTrackingAnimationId);
+      handTrackingAnimationId = 0;
+    }
+    clearHandTrackingOutput();
+  };
+
+  const ensureHandLandmarker = async () => {
+    if (handTrackingLandmarker) return handTrackingLandmarker;
+    handTrackingLandmarker = await createHandLandmarker();
+    return handTrackingLandmarker;
+  };
+
+  const startHandTracking = async () => {
+    if (!handTrackEnabled || destroyed) {
+      stopHandTracking();
+      return;
+    }
+
+    const generation = handTrackingGeneration + 1;
+    handTrackingGeneration = generation;
+    if (handTrackingAnimationId) {
+      window.cancelAnimationFrame(handTrackingAnimationId);
+      handTrackingAnimationId = 0;
+    }
+
+    try {
+      await fmSynth.ensureReady();
+      fmSynth.setMasterGain(synthMasterGain);
+      const landmarker = await ensureHandLandmarker();
+      if (!handTrackEnabled || destroyed || generation !== handTrackingGeneration) return;
+
+      const tick = () => {
+        if (!handTrackEnabled || destroyed || generation !== handTrackingGeneration) {
+          return;
+        }
+
+        const video = getTrackingVideoElement();
+        if (
+          !video ||
+          video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+          video.videoWidth < 2 ||
+          video.videoHeight < 2
+        ) {
+          clearHandTrackingOutput();
+          handTrackingAnimationId = window.requestAnimationFrame(tick);
+          return;
+        }
+
+        const now = performance.now();
+        if (now - handTrackingLastDetectionAt >= 50) {
+          handTrackingLastDetectionAt = now;
+          try {
+            const result = landmarker.detectForVideo(video, now);
+            const landmarks = Array.isArray(result.landmarks) && result.landmarks[0]
+              ? (result.landmarks[0] as HandLandmarkPoint[])
+              : null;
+            const telemetry = landmarks ? computeHandTelemetry(landmarks) : null;
+
+            if (telemetry) {
+              renderSynthTelemetry(telemetry);
+              fmSynth.update(telemetry);
+            } else {
+              clearHandTrackingOutput();
+            }
+          } catch {
+            clearHandTrackingOutput();
+          }
+        }
+
+        handTrackingAnimationId = window.requestAnimationFrame(tick);
+      };
+
+      handTrackingAnimationId = window.requestAnimationFrame(tick);
+    } catch (error) {
+      handTrackEnabled = false;
+      applyHandTrackState();
+      persistSetupState();
+      clearHandTrackingOutput();
+      setStatus(safeErrorMessage(error));
+    }
   };
 
   const syncSelectGroupValue = (selects: HTMLSelectElement[], nextValue: string) => {
@@ -1442,6 +1890,12 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     applySidebarCollapsedState();
     persistSetupState();
     queuePreferredRemoteVideoDimensionsSync();
+  };
+
+  const toggleInstrumentsOpen = () => {
+    instrumentsOpen = !instrumentsOpen;
+    applyInstrumentsOpenState();
+    persistSetupState();
   };
 
   const shouldIgnoreRoomShortcut = (target: EventTarget | null) => {
@@ -1816,6 +2270,15 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       recordingDataRequestId = 0;
     }
     cleanupRecordingAudio();
+    if (recordingDisplayStream) {
+      recordingDisplayStream.getTracks().forEach((track) => track.stop());
+      recordingDisplayStream = null;
+    }
+    if (recordingDisplayVideo) {
+      recordingDisplayVideo.pause();
+      recordingDisplayVideo.srcObject = null;
+      recordingDisplayVideo = null;
+    }
     if (recordingStream) {
       recordingStream.getTracks().forEach((track) => track.stop());
       recordingStream = null;
@@ -1891,6 +2354,71 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       : stage;
 
   const getRecordingViewportRect = () => stageFrame.getBoundingClientRect();
+
+  const getRecordingViewportSourceRect = (video: HTMLVideoElement) => {
+    const viewportRect = getRecordingViewportRect();
+    const viewportWidth = Math.max(1, window.innerWidth);
+    const viewportHeight = Math.max(1, window.innerHeight);
+    const scaleX = video.videoWidth / viewportWidth;
+    const scaleY = video.videoHeight / viewportHeight;
+
+    return {
+      sx: Math.max(0, Math.round(viewportRect.left * scaleX)),
+      sy: Math.max(0, Math.round(viewportRect.top * scaleY)),
+      sw: Math.max(2, Math.round(viewportRect.width * scaleX)),
+      sh: Math.max(2, Math.round(viewportRect.height * scaleY)),
+    };
+  };
+
+  const createRecordingDisplayConstraints = () => ({
+    video: {
+      displaySurface: 'browser',
+      frameRate: 30,
+    },
+    audio: false,
+    preferCurrentTab: true,
+    selfBrowserSurface: 'include',
+    surfaceSwitching: 'include',
+  });
+
+  const startRecordingDisplayCapture = async () => {
+    if (!navigator.mediaDevices?.getDisplayMedia) return false;
+
+    const stream = await navigator.mediaDevices.getDisplayMedia(
+      createRecordingDisplayConstraints() as MediaStreamConstraints,
+    );
+
+    const [videoTrack] = stream.getVideoTracks();
+    if (!videoTrack) {
+      stream.getTracks().forEach((track) => track.stop());
+      throw new Error('No se pudo obtener video de la captura.');
+    }
+
+    const video = document.createElement('video');
+    video.autoplay = true;
+    video.muted = true;
+    video.playsInline = true;
+    video.srcObject = stream;
+
+    await new Promise<void>((resolve, reject) => {
+      video.onloadedmetadata = () => resolve();
+      video.onerror = () => reject(new Error('No se pudo iniciar la captura de la pestaña.'));
+    });
+
+    await video.play().catch(() => undefined);
+
+    videoTrack.addEventListener('ended', () => {
+      if (mediaRecorder?.state === 'recording') {
+        stopRecording();
+      } else {
+        cleanupRecording();
+      }
+    });
+
+    recordingDisplayStream = stream;
+    recordingDisplayVideo = video;
+    return true;
+  };
 
   const drawVideoIntoRect = ({
     context,
@@ -2216,6 +2744,28 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     recordingCanvasContext.fillStyle = '#000';
     recordingCanvasContext.fillRect(0, 0, width, height);
 
+    if (
+      recordingDisplayVideo &&
+      recordingDisplayVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+      recordingDisplayVideo.videoWidth > 2 &&
+      recordingDisplayVideo.videoHeight > 2
+    ) {
+      const { sx, sy, sw, sh } = getRecordingViewportSourceRect(recordingDisplayVideo);
+      recordingCanvasContext.drawImage(
+        recordingDisplayVideo,
+        sx,
+        sy,
+        Math.min(sw, recordingDisplayVideo.videoWidth - sx),
+        Math.min(sh, recordingDisplayVideo.videoHeight - sy),
+        0,
+        0,
+        width,
+        height,
+      );
+      recordingAnimationId = window.requestAnimationFrame(drawRecordingFrame);
+      return;
+    }
+
     if (stage.dataset.layout === 'presentation' && !presentationFrame.hidden) {
       if (
         !recordingPresentationSnapshotTask &&
@@ -2390,7 +2940,17 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     recordingCanvasContext.imageSmoothingEnabled = true;
     recordingCanvasContext.imageSmoothingQuality = 'high';
 
-    await refreshRecordingPresentationSnapshot(true).catch(() => undefined);
+    let usingDisplayCapture = false;
+    try {
+      setStatus('Selecciona esta pestaña en el dialogo de captura para grabar el stage.');
+      usingDisplayCapture = await startRecordingDisplayCapture();
+    } catch (error) {
+      console.warn('Recording display capture failed, falling back to DOM compositor.', error);
+    }
+
+    if (!usingDisplayCapture) {
+      await refreshRecordingPresentationSnapshot(true).catch(() => undefined);
+    }
     drawRecordingFrame();
 
     const canvasStream = recordingCanvas.captureStream(30);
@@ -2427,9 +2987,13 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     }, 1000);
     setRecordState(true);
     setStatus(
-      mimeType.includes('mp4')
-        ? 'Grabacion MP4 iniciada.'
-        : 'Grabacion iniciada en WebM. MP4 no esta disponible en este navegador.',
+      usingDisplayCapture
+        ? mimeType.includes('mp4')
+          ? 'Grabacion MP4 iniciada con captura de la pestaña.'
+          : 'Grabacion iniciada con captura de la pestaña en WebM.'
+        : mimeType.includes('mp4')
+          ? 'Grabacion MP4 iniciada.'
+          : 'Grabacion iniciada en WebM. MP4 no esta disponible en este navegador.',
     );
   };
 
@@ -3180,6 +3744,10 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     if (raiseHandButton instanceof HTMLButtonElement) {
       raiseHandButton.disabled = !connected;
     }
+    if (instrumentsToggleButton instanceof HTMLButtonElement) {
+      instrumentsToggleButton.dataset.active = instrumentsOpen ? 'true' : 'false';
+      instrumentsToggleButton.setAttribute('aria-pressed', instrumentsOpen ? 'true' : 'false');
+    }
     roomInput.disabled = connected || connecting;
     identityInput.disabled = connected || connecting;
     nameInput.disabled = connected || connecting;
@@ -3472,6 +4040,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
         );
       }
 
+      await syncLocalBackgroundBlurProcessor().catch(() => undefined);
+
       if (preferredAudioInputId) {
         await room.switchActiveDevice('audioinput', preferredAudioInputId).catch(() => undefined);
       }
@@ -3513,6 +4083,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
         connectedAtMs = Date.now();
       }
       void syncLocalParticipantMetadata().catch(() => undefined);
+      void syncLocalBackgroundBlurProcessor().catch(() => undefined);
       syncAllParticipants();
       setStatus(`Conectado a ${roomInput.value.trim()}.`);
       void refreshDeviceOptions(true);
@@ -3561,6 +4132,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       syncAllParticipants();
     })
     .on(RoomEvent.LocalTrackPublished, () => {
+      void syncLocalBackgroundBlurProcessor().catch(() => undefined);
       syncAllParticipants();
       void refreshDeviceOptions(true);
     })
@@ -3722,6 +4294,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
     try {
       await room.localParticipant.setCameraEnabled(!room.localParticipant.isCameraEnabled);
+      await syncLocalBackgroundBlurProcessor().catch(() => undefined);
       syncAllParticipants();
       setControlState();
     } catch (error) {
@@ -3796,6 +4369,12 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     });
   }
 
+  if (instrumentsToggleButton instanceof HTMLButtonElement) {
+    instrumentsToggleButton.addEventListener('click', () => {
+      toggleInstrumentsOpen();
+    });
+  }
+
   audioInputSelects.forEach((select) => {
     select.addEventListener('change', async () => {
       const nextDeviceId = normalizeText(select.value);
@@ -3846,6 +4425,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
       try {
         await room.switchActiveDevice('videoinput', nextDeviceId);
+        await syncLocalBackgroundBlurProcessor().catch(() => undefined);
         await refreshDeviceOptions(false);
       } catch (error) {
         setStatus(
@@ -3908,9 +4488,47 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
         return;
       }
 
+      if (room.state === ConnectionState.Connected) {
+        void syncLocalBackgroundBlurProcessor()
+          .then(() => {
+            syncIdentityPreview();
+            syncAllParticipants();
+          })
+          .catch((error) => {
+            setStatus(safeErrorMessage(error));
+          });
+        return;
+      }
+
       syncIdentityPreview();
       syncAllParticipants();
     });
+  }
+
+  if (handTrackInput instanceof HTMLInputElement) {
+    handTrackInput.addEventListener('change', () => {
+      handTrackEnabled = handTrackInput.checked;
+      applyHandTrackState();
+      persistSetupState();
+
+      if (handTrackEnabled) {
+        void startHandTracking();
+        return;
+      }
+
+      stopHandTracking();
+    });
+  }
+
+  if (synthMasterInput instanceof HTMLInputElement) {
+    const syncMasterGain = () => {
+      synthMasterGain = normalizeMasterGain(synthMasterInput.value, synthMasterGain);
+      applySynthMasterGainState();
+      persistSetupState();
+    };
+
+    synthMasterInput.addEventListener('input', syncMasterGain);
+    synthMasterInput.addEventListener('change', syncMasterGain);
   }
 
   layoutChoiceButtons.forEach((button) => {
@@ -4077,16 +4695,24 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   document.addEventListener('webkitfullscreenchange', syncFullscreenButton as EventListener);
 
   syncRoleUi();
+  applyInstrumentsOpenState();
   applySidebarCollapsedState();
   applyPreviewZoomState();
   applyPreviewBlurState();
   applyShowCircleState();
+  applyHandTrackState();
+  applySynthMasterGainState();
+  clearHandTrackingOutput();
   setLayout(stage, layoutInput.value);
   renderParticipantList();
   renderChat();
   syncPresentationSelection(normalizeText(presentationSelect.value) || null);
   void refreshDeviceOptions(false);
   syncLiveActivityTransport();
+
+  if (handTrackEnabled) {
+    void startHandTracking();
+  }
 
   if (presentationSelect.value) {
     schedulePresentationLoad({
@@ -4140,6 +4766,10 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       window.clearInterval(liveActivityTickId);
       liveActivityTickId = 0;
     }
+    stopHandTracking();
+    handTrackingLandmarker?.close?.();
+    handTrackingLandmarker = null;
+    void fmSynth.destroy();
     stopMicMeter();
     closeMicMeterAudioContext();
     applyImmersiveFullscreenState(false);
