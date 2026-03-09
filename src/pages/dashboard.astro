@@ -343,6 +343,8 @@ const asPayloadObject = (value: unknown): Record<string, any> => {
 };
 
 const COURSE_STUDENT_META_KIND = 'course_student_profile';
+const COURSE_ATTENDANCE_CONFIG_META_KIND = 'course_attendance_config';
+const COURSE_ATTENDANCE_MANUAL_META_KIND = 'course_attendance_manual';
 
 const normalizeCourseId = (value: unknown) => {
   const raw = normalizeText(value);
@@ -516,10 +518,113 @@ const computeAttendanceDurationMs = (attendance: any, session: any) => {
   return endedAt - startedAt;
 };
 
-const isCourseStudentMetaSubmission = (submission: any) => {
-  const payload = asPayloadObject(submission?.payload);
-  return normalizeTextLower(payload?.__metaKind || payload?.metaKind || '') === COURSE_STUDENT_META_KIND;
+const parseDateOnly = (value: unknown) => {
+  const raw = normalizeText(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const parsed = new Date(`${raw}T12:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
 };
+
+const formatDateOnly = (value: Date | null | undefined) => {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return '';
+  const year = value.getUTCFullYear();
+  const month = String(value.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(value.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const addUtcDays = (value: Date, amount: number) => {
+  const next = new Date(value.getTime());
+  next.setUTCDate(next.getUTCDate() + amount);
+  return next;
+};
+
+const getStartOfIsoWeek = (value: Date) => {
+  const day = value.getUTCDay() || 7;
+  return addUtcDays(value, 1 - day);
+};
+
+const formatAttendanceGridDayLabel = (value: string) => {
+  const parsed = parseDateOnly(value);
+  if (!parsed) return value;
+  return parsed.toLocaleDateString('es-ES', {
+    weekday: 'short',
+    day: '2-digit',
+    month: '2-digit',
+    timeZone: 'UTC',
+  });
+};
+
+const buildAttendanceWeekGroups = (startDateValue: string, endDateValue: string) => {
+  const parsedStart = parseDateOnly(startDateValue);
+  const parsedEnd = parseDateOnly(endDateValue);
+  if (!parsedStart || !parsedEnd) {
+    return {
+      startDate: '',
+      endDate: '',
+      weeks: [] as any[],
+    };
+  }
+
+  const normalizedStart = parsedStart.getTime() <= parsedEnd.getTime() ? parsedStart : parsedEnd;
+  const normalizedEnd = parsedStart.getTime() <= parsedEnd.getTime() ? parsedEnd : parsedStart;
+  const weeks: any[] = [];
+  let cursor = getStartOfIsoWeek(normalizedStart);
+  let weekIndex = 0;
+
+  while (cursor.getTime() <= normalizedEnd.getTime()) {
+    const days = Array.from({ length: 5 }, (_, index) => {
+      const date = addUtcDays(cursor, index);
+      const dateKey = formatDateOnly(date);
+      const inRange = date.getTime() >= normalizedStart.getTime() && date.getTime() <= normalizedEnd.getTime();
+      return {
+        dateKey,
+        inRange,
+        label: formatAttendanceGridDayLabel(dateKey),
+      };
+    });
+
+    const visibleDays = days.filter((day) => day.inRange);
+    if (visibleDays.length > 0) {
+      weeks.push({
+        key: formatDateOnly(cursor),
+        label: `Sem ${weekIndex + 1}`,
+        title: `${visibleDays[0]?.label || ''} -> ${visibleDays[visibleDays.length - 1]?.label || ''}`,
+        days,
+      });
+      weekIndex += 1;
+    }
+
+    cursor = addUtcDays(cursor, 7);
+  }
+
+  return {
+    startDate: formatDateOnly(normalizedStart),
+    endDate: formatDateOnly(normalizedEnd),
+    weeks,
+  };
+};
+
+const getSubmissionMetaKind = (submission: any) => {
+  const payload = asPayloadObject(submission?.payload);
+  return normalizeTextLower(payload?.__metaKind || payload?.metaKind || '');
+};
+
+const isCourseStudentMetaSubmission = (submission: any) => {
+  return getSubmissionMetaKind(submission) === COURSE_STUDENT_META_KIND;
+};
+
+const isCourseAttendanceConfigSubmission = (submission: any) =>
+  getSubmissionMetaKind(submission) === COURSE_ATTENDANCE_CONFIG_META_KIND;
+
+const isCourseAttendanceManualSubmission = (submission: any) =>
+  getSubmissionMetaKind(submission) === COURSE_ATTENDANCE_MANUAL_META_KIND;
+
+const isKnownCourseMetaSubmission = (submission: any) =>
+  isCourseStudentMetaSubmission(submission)
+  || isCourseAttendanceConfigSubmission(submission)
+  || isCourseAttendanceManualSubmission(submission);
 
 const asJsonText = (value: unknown) => {
   try {
@@ -595,33 +700,77 @@ if (isTeacher && Array.isArray(allEnrollments)) {
 }
 
 const teacherMetaSubmissions = isTeacher
-  ? (allSubmissions || []).filter((submission: any) => isCourseStudentMetaSubmission(submission))
+  ? (allSubmissions || []).filter((submission: any) => isKnownCourseMetaSubmission(submission))
   : [];
 const teacherDataSubmissions = isTeacher
-  ? (allSubmissions || []).filter((submission: any) => !isCourseStudentMetaSubmission(submission))
+  ? (allSubmissions || []).filter((submission: any) => !isKnownCourseMetaSubmission(submission))
   : [];
 
 if (!isTeacher) {
-  studentSubmissions = (studentSubmissions || []).filter((submission: any) => !isCourseStudentMetaSubmission(submission));
+  studentSubmissions = (studentSubmissions || []).filter((submission: any) => !isKnownCourseMetaSubmission(submission));
 }
 
 const courseStudentMetaByKey = new Map<string, { turno: string; concepto: string; grupo: string }>();
+const courseAttendanceConfigByKey = new Map<string, { startDate: string; endDate: string; updatedAt: string }>();
+const courseAttendanceManualByKey = new Map<string, Record<string, number>>();
 if (isTeacher) {
   teacherMetaSubmissions.forEach((submission: any) => {
+    const metaKind = getSubmissionMetaKind(submission);
     const payload = asPayloadObject(submission?.payload);
     const courseId = canonicalizeCourseId(payload?.courseId || payload?.course || payload?.courseSlug);
-    const studentId = normalizeText(payload?.studentId || submission?.userId);
     const year = normalizeText(payload?.year || getSubmissionYear(submission));
-    if (!courseId || !studentId || !year) return;
+    if (!courseId || !year) return;
 
-    courseStudentMetaByKey.set(
-      `${normalizeTextLower(courseId)}::${year}::${studentId}`,
-      {
-        turno: normalizeText(payload?.turno || '').toUpperCase(),
-        concepto: normalizeText(payload?.concepto || payload?.concept || ''),
-        grupo: normalizeText(payload?.grupo || payload?.group || ''),
-      },
-    );
+    if (metaKind === COURSE_STUDENT_META_KIND) {
+      const studentId = normalizeText(payload?.studentId || submission?.userId);
+      if (!studentId) return;
+
+      courseStudentMetaByKey.set(
+        `${normalizeTextLower(courseId)}::${year}::${studentId}`,
+        {
+          turno: normalizeText(payload?.turno || '').toUpperCase(),
+          concepto: normalizeText(payload?.concepto || payload?.concept || ''),
+          grupo: normalizeText(payload?.grupo || payload?.group || ''),
+        },
+      );
+      return;
+    }
+
+    if (metaKind === COURSE_ATTENDANCE_CONFIG_META_KIND) {
+      const mapKey = `${normalizeTextLower(courseId)}::${year}`;
+      const nextConfig = {
+        startDate: normalizeText(payload?.startDate || ''),
+        endDate: normalizeText(payload?.endDate || ''),
+        updatedAt: normalizeText(payload?.updatedAt || submission?.submittedAt || ''),
+      };
+      const existingConfig = courseAttendanceConfigByKey.get(mapKey);
+      if (!existingConfig || getDateTimestamp(nextConfig.updatedAt) >= getDateTimestamp(existingConfig.updatedAt)) {
+        courseAttendanceConfigByKey.set(mapKey, nextConfig);
+      }
+      return;
+    }
+
+    if (metaKind === COURSE_ATTENDANCE_MANUAL_META_KIND) {
+      const studentId = normalizeText(payload?.studentId || submission?.userId);
+      if (!studentId) return;
+      const manualDaysPayload = asPayloadObject(payload?.manualDays || payload?.dates || {});
+      const normalizedManualDays = Object.fromEntries(
+        Object.entries(manualDaysPayload)
+          .map(([dateKey, countValue]) => {
+            const date = normalizeText(dateKey);
+            const parsedCount = Number(countValue);
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(parsedCount) || parsedCount <= 0) {
+              return [null, null];
+            }
+            return [date, Math.max(0, Math.trunc(parsedCount))];
+          })
+          .filter(([dateKey, countValue]) => Boolean(dateKey) && countValue !== null),
+      );
+      courseAttendanceManualByKey.set(
+        `${normalizeTextLower(courseId)}::${year}::${studentId}`,
+        normalizedManualDays,
+      );
+    }
   });
 }
 
@@ -1419,8 +1568,166 @@ const attendanceDayCountByStudentKey = (() => {
       daysByKey.get(mapKey)?.add(dayKey);
     });
 
+  courseAttendanceManualByKey.forEach((manualDays, mapKey) => {
+    const nextSet = daysByKey.get(mapKey) || new Set<string>();
+    Object.entries(manualDays || {}).forEach(([dayKey, count]) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dayKey || ''))) return;
+      if (Number(count || 0) <= 0) return;
+      nextSet.add(String(dayKey));
+    });
+    if (nextSet.size > 0) {
+      daysByKey.set(mapKey, nextSet);
+    }
+  });
+
   return daysByKey;
 })();
+
+const defaultAttendanceRange = (() => {
+  const dayKeys = Array.from(
+    new Set(
+      attendanceSessionRows
+        .map((session: any) => normalizeText(session?.dayKey || ''))
+        .filter((dayKey) => /^\d{4}-\d{2}-\d{2}$/.test(dayKey)),
+    ),
+  ).sort();
+
+  if (dayKeys.length > 0) {
+    return {
+      startDate: dayKeys[0],
+      endDate: dayKeys[dayKeys.length - 1],
+    };
+  }
+
+  const fallbackStart = `${activeYear || new Date().getFullYear()}-01-01`;
+  const parsedFallbackStart = parseDateOnly(fallbackStart);
+  const fallbackEnd = parsedFallbackStart ? formatDateOnly(addUtcDays(parsedFallbackStart, 27)) : fallbackStart;
+  return {
+    startDate: fallbackStart,
+    endDate: fallbackEnd,
+  };
+})();
+
+const activeAttendanceConfigKey = `${normalizeTextLower(activeCourseId)}::${activeYear}`;
+const savedAttendanceConfig = courseAttendanceConfigByKey.get(activeAttendanceConfigKey);
+const activeAttendanceConfig = {
+  courseId: activeCourseId,
+  year: activeYear,
+  startDate: normalizeText(savedAttendanceConfig?.startDate || defaultAttendanceRange.startDate),
+  endDate: normalizeText(savedAttendanceConfig?.endDate || defaultAttendanceRange.endDate),
+};
+
+const attendanceWeekGrid = buildAttendanceWeekGroups(
+  activeAttendanceConfig.startDate,
+  activeAttendanceConfig.endDate,
+);
+
+const attendanceLiveCountByStudentDayKey = (() => {
+  const counts = new Map<string, number>();
+  if (!isTeacher) return counts;
+
+  scopedTeacherLiveAttendance
+    .filter((attendance: any) => normalizeRole(attendance?.role) === 'student')
+    .forEach((attendance: any) => {
+      const userId = normalizeText(attendance?.userId || '');
+      const session = scopedTeacherLiveSessionById.get(String(attendance?.sessionId || '')) || null;
+      const courseId = canonicalizeCourseId(getLiveRecordCourseId(session || attendance));
+      const year = getLiveSessionYear(session || attendance);
+      const dayKey = getAttendanceDayKey(session, attendance);
+      if (!userId || !courseId || !year || !dayKey) return;
+      if (Number(attendance?.joinCount || 0) <= 0) return;
+
+      const mapKey = `${normalizeTextLower(courseId)}::${year}::${userId}::${dayKey}`;
+      counts.set(mapKey, (counts.get(mapKey) || 0) + 1);
+    });
+
+  return counts;
+})();
+
+const attendanceGridRows = (() => {
+  if (!isTeacher) return [] as any[];
+  const studentEnrollmentsById = new Map<string, any>();
+  scopedTeacherEnrollments
+    .filter((enrollment: any) => normalizeRole(enrollment?.roleInCourse) === 'student')
+    .forEach((enrollment: any) => {
+      const userId = normalizeText(enrollment?.userId || '');
+      if (!userId || studentEnrollmentsById.has(userId)) return;
+      studentEnrollmentsById.set(userId, enrollment);
+    });
+
+  return Array.from(studentEnrollmentsById.values())
+    .map((enrollment: any) => {
+      const userId = normalizeText(enrollment?.userId || '');
+      const user = allUsersById.get(userId);
+      const manualDays = courseAttendanceManualByKey.get(
+        `${normalizeTextLower(activeCourseId)}::${activeYear}::${userId}`,
+      ) || {};
+
+      let totalLiveCount = 0;
+      let totalManualCount = 0;
+      const weeks = attendanceWeekGrid.weeks.map((week: any) => ({
+        ...week,
+        days: week.days.map((day: any) => {
+          if (!day.inRange) {
+            return {
+              ...day,
+              liveCount: 0,
+              manualCount: 0,
+              totalCount: 0,
+            };
+          }
+
+          const liveCount = attendanceLiveCountByStudentDayKey.get(
+            `${normalizeTextLower(activeCourseId)}::${activeYear}::${userId}::${day.dateKey}`,
+          ) || 0;
+          const manualCount = Math.max(0, Number(manualDays?.[day.dateKey] || 0));
+          const totalCount = liveCount + manualCount;
+          totalLiveCount += liveCount;
+          totalManualCount += manualCount;
+
+          return {
+            ...day,
+            liveCount,
+            manualCount,
+            totalCount,
+          };
+        }),
+      }));
+
+      return {
+        userId,
+        name: String(user?.name || user?.email || userId),
+        email: String(user?.email || ''),
+        daysAttended: weeks.reduce(
+          (sum: number, week: any) =>
+            sum + week.days.filter((day: any) => day.inRange && day.totalCount > 0).length,
+          0,
+        ),
+        totalLiveCount,
+        totalManualCount,
+        totalCount: totalLiveCount + totalManualCount,
+        weeks,
+      };
+    })
+    .sort((left: any, right: any) => String(left.name || '').localeCompare(String(right.name || ''), 'es'));
+})();
+
+const attendanceLogSearchRows = attendanceLogRows.map((row: any) => ({
+  ...row,
+  search: [
+    row.dayLabel,
+    row.courseId,
+    row.lessonLabel,
+    row.displayName,
+    row.email,
+    row.identity,
+    row.role,
+    row.lastStatus,
+  ]
+    .map((value) => normalizeTextLower(value))
+    .filter(Boolean)
+    .join(' '),
+}));
 
 const buildSubmissionLogRows = (submissions: any[], options: { includeUser: boolean }) => {
   const includeUser = Boolean(options?.includeUser);
@@ -1680,6 +1987,134 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
       }
       .attendance-stat-chip strong {
         font-size: 0.8rem;
+      }
+      .attendance-config-panel {
+        margin: 0 0 0.8rem;
+      }
+      .attendance-config-bar {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.55rem;
+        flex-wrap: wrap;
+      }
+      .attendance-config-input,
+      .attendance-config-apply,
+      .attendance-manual-input,
+      .attendance-log-search {
+        border: 1px solid var(--c-border);
+        border-radius: 6px;
+        background: var(--c-bg);
+        color: var(--c-fg);
+        font: inherit;
+      }
+      .attendance-config-input,
+      .attendance-log-search {
+        padding: 0.45rem 0.55rem;
+      }
+      .attendance-config-apply {
+        padding: 0.46rem 0.72rem;
+        cursor: pointer;
+      }
+      .attendance-grid-wrap {
+        margin-bottom: 1rem;
+      }
+      .attendance-grid-table {
+        min-width: max-content;
+      }
+      .attendance-grid-table th,
+      .attendance-grid-table td {
+        text-align: center;
+      }
+      .attendance-grid-table th:nth-child(2),
+      .attendance-grid-table td:nth-child(2),
+      .attendance-grid-table th:nth-child(3),
+      .attendance-grid-table td:nth-child(3) {
+        position: sticky;
+        background: var(--c-bg);
+        z-index: 3;
+      }
+      .attendance-grid-table th:nth-child(2),
+      .attendance-grid-table td:nth-child(2) {
+        left: 172px;
+        min-width: 220px;
+        text-align: left;
+      }
+      .attendance-grid-table th:nth-child(3),
+      .attendance-grid-table td:nth-child(3) {
+        left: 392px;
+        min-width: 82px;
+        text-align: left;
+      }
+      .attendance-grid-table thead th:nth-child(2),
+      .attendance-grid-table thead th:nth-child(3) {
+        background: var(--c-bg-mute);
+        z-index: 4;
+      }
+      .attendance-grid-table tbody td:nth-child(2),
+      .attendance-grid-table tbody td:nth-child(3) {
+        box-shadow: 8px 0 14px rgba(0, 0, 0, 0.16);
+      }
+      .attendance-grid-table th.attendance-week-head {
+        min-width: 280px;
+      }
+      .attendance-day-head {
+        min-width: 56px;
+        font-size: 0.72rem;
+        line-height: 1.15;
+      }
+      .attendance-day-head.is-out-of-range {
+        color: var(--c-fg-dim);
+      }
+      .attendance-day-cell {
+        padding: 0.32rem 0.24rem;
+      }
+      .attendance-day-cell.is-present {
+        background: color-mix(in srgb, var(--c-link) 10%, transparent);
+      }
+      .attendance-day-stack {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.22rem;
+      }
+      .attendance-day-total {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 1.45rem;
+        min-height: 1.05rem;
+        font-size: 0.77rem;
+        font-weight: 600;
+        line-height: 1;
+        cursor: help;
+      }
+      .attendance-manual-input {
+        width: 2.8rem;
+        padding: 0.16rem 0.2rem;
+        text-align: center;
+        font-size: 0.72rem;
+      }
+      .attendance-day-empty {
+        color: var(--c-fg-dim);
+        font-size: 0.74rem;
+      }
+      .attendance-log-panel {
+        margin-top: 0.9rem;
+      }
+      .attendance-log-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.55rem;
+        flex-wrap: wrap;
+        margin-bottom: 0.65rem;
+      }
+      .attendance-log-search {
+        min-width: min(360px, 100%);
+      }
+      .attendance-log-subline {
+        font-size: 0.8rem;
+        color: var(--c-fg-dim);
       }
       .role-badge { padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 500; }
       .role-teacher { background: #e3f2fd; color: #1976d2; }
@@ -2070,6 +2505,15 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
         box-shadow:
           inset 0 0 0 999px color-mix(in srgb, var(--c-link) 20%, transparent),
           8px 0 14px rgba(0, 0, 0, 0.2);
+      }
+      @media (max-width: 980px) {
+        .attendance-grid-table th:nth-child(2),
+        .attendance-grid-table td:nth-child(2),
+        .attendance-grid-table th:nth-child(3),
+        .attendance-grid-table td:nth-child(3) {
+          position: static;
+          box-shadow: none;
+        }
       }
       .log-panel {
         border: 1px solid var(--c-border);
@@ -3126,245 +3570,195 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
 
           <div id="attendance-content" style="display: none;">
             <h2>Asistencia</h2>
-            <p class="fold-shortcuts">
-              <strong>Atajos:</strong>
-              <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>↑</kbd> fold all,
-              <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>↓</kbd> unfold all,
-              <kbd>⌘</kbd> + <kbd>↑</kbd> fold un nivel,
-              <kbd>⌘</kbd> + <kbd>↓</kbd> unfold un nivel.
-            </p>
-
             {!activeCourseId ? (
               <p class="student-empty">Selecciona un curso activo para ver la asistencia.</p>
-            ) : attendanceSessionRows.length === 0 && attendanceLogRows.length === 0 ? (
-              <p class="student-empty">Todavía no hay registros de asistencia para este curso y año.</p>
             ) : (
               <>
-                <section
-                  class="fold-node fold-level-1"
-                  data-fold-level="1"
-                  data-fold-node
-                  data-fold-scope="attendance"
-                  style="margin-bottom: 0.75rem;"
-                >
-                  <button type="button" class="fold-header" data-fold-toggle>
-                    <span class="fold-toggle-icon">▾</span>
-                    <span>📘 Resumen</span>
-                    <span class="fold-student-summary">
-                      {activeCourseMeta?.title || decodeUriSafe(activeCourseId)} • {attendanceUserSummaryRows.length} participantes • {attendanceSessionRows.length} sesiones
-                    </span>
-                  </button>
-                  <div class="fold-children">
-                    <div class="attendance-stat-cluster">
-                      <span class="attendance-stat-chip" title="Dias con actividad registrada">
-                        <span aria-hidden="true">📅</span>
-                        <strong>{attendanceDayGroups.length}</strong>
-                      </span>
-                      <span class="attendance-stat-chip" title="Sesiones registradas">
-                        <span aria-hidden="true">🎬</span>
-                        <strong>{attendanceSessionRows.length}</strong>
-                      </span>
-                      <span class="attendance-stat-chip" title="Participantes visibles para tu rol">
-                        <span aria-hidden="true">👥</span>
-                        <strong>{attendanceUserSummaryRows.length}</strong>
-                      </span>
-                      <span class="attendance-stat-chip" title="Tiempo total conectado registrado">
-                        <span aria-hidden="true">⏱</span>
-                        <strong>{formatDurationFromMs(attendanceUserSummaryRows.reduce((sum: number, row: any) => sum + Number(row.totalDurationMs || 0), 0))}</strong>
-                      </span>
-                    </div>
+                <div class="attendance-stat-cluster" style="margin-bottom: 0.8rem;">
+                  <span class="attendance-stat-chip" title="Sesiones registradas en el curso/año activo">
+                    <span aria-hidden="true">🎬</span>
+                    <strong>{attendanceSessionRows.length}</strong>
+                  </span>
+                  <span class="attendance-stat-chip" title="Students visibles en la grilla">
+                    <span aria-hidden="true">🎓</span>
+                    <strong>{attendanceGridRows.length}</strong>
+                  </span>
+                  <span class="attendance-stat-chip" title="Teachers con actividad registrada en el log">
+                    <span aria-hidden="true">🧑‍🏫</span>
+                    <strong>{attendanceUserSummaryRows.filter((row: any) => normalizeRole(row?.role) === 'teacher').length}</strong>
+                  </span>
+                  <span class="attendance-stat-chip" title="Registros totales del log para el curso/año activo">
+                    <span aria-hidden="true">🧾</span>
+                    <strong>{attendanceLogRows.length}</strong>
+                  </span>
+                </div>
+
+                <section class="attendance-config-panel">
+                  <div
+                    class="attendance-config-bar"
+                    data-attendance-config
+                    data-course-id={activeCourseId}
+                    data-year={activeYear}
+                  >
+                    <input
+                      type="date"
+                      class="attendance-config-input"
+                      data-attendance-config-input="startDate"
+                      value={activeAttendanceConfig.startDate}
+                      title="Inicio de cursada"
+                    />
+                    <input
+                      type="date"
+                      class="attendance-config-input"
+                      data-attendance-config-input="endDate"
+                      value={activeAttendanceConfig.endDate}
+                      title="Fin de cursada"
+                    />
+                    <button
+                      type="button"
+                      class="attendance-config-apply"
+                      data-attendance-config-apply
+                      title="Guardar fechas y reconstruir grilla"
+                    >
+                      Aplicar
+                    </button>
                   </div>
                 </section>
 
-                <section
-                  class="fold-node fold-level-1"
-                  data-fold-level="1"
-                  data-fold-node
-                  data-fold-scope="attendance"
-                  style="margin-bottom: 0.7rem;"
-                >
-                  <button type="button" class="fold-header" data-fold-toggle>
-                    <span class="fold-toggle-icon">▾</span>
-                    <span>🗓 Por dia</span>
-                    <span class="fold-student-summary">{attendanceDayGroups.length} dias</span>
-                  </button>
-                  <div class="fold-children">
-                    {attendanceDayGroups.length === 0 ? (
-                      <p class="student-empty" style="margin: 0;">No hay dias con asistencia registrada.</p>
-                    ) : attendanceDayGroups.map((group: any) => (
-                      <section
-                        class="fold-node fold-level-2"
-                        data-fold-level="2"
-                        data-fold-node
-                        data-fold-scope="attendance"
-                        style="margin-bottom: 0.55rem;"
-                      >
-                        <button type="button" class="fold-header" data-fold-toggle>
-                          <span class="fold-toggle-icon">▾</span>
-                          <span>{group.dayLabel}</span>
-                          <span class="fold-summary attendance-stat-cluster">
-                            <span class="attendance-stat-chip" title="Sesiones registradas en este dia">
-                              <span aria-hidden="true">🎬</span>
-                              <strong>{group.sessionCount}</strong>
-                            </span>
-                            <span class="attendance-stat-chip" title="Students con actividad en este dia">
-                              <span aria-hidden="true">🎓</span>
-                              <strong>{group.studentCount}</strong>
-                            </span>
-                            <span class="attendance-stat-chip" title="Teachers con actividad en este dia">
-                              <span aria-hidden="true">🧑‍🏫</span>
-                              <strong>{group.teacherCount}</strong>
-                            </span>
-                            <span class="attendance-stat-chip" title="Duracion agregada de las sesiones del dia">
-                              <span aria-hidden="true">⏱</span>
-                              <strong>{group.totalDurationLabel}</strong>
-                            </span>
-                          </span>
-                        </button>
-                        <div class="fold-children">
-                          <table class="admin-table attendance-table" style="margin-top: 0;">
-                            <thead>
-                              <tr>
-                                <th>Clase</th>
-                                <th>Inicio</th>
-                                <th>Stats</th>
-                                <th>Participantes</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {group.sessions.map((session: any) => (
-                                <tr>
-                                  <td title={session.pageSlug}>{session.lessonLabel}</td>
-                                  <td>{session.startedAtLabel}</td>
-                                  <td>
-                                    <div class="attendance-stat-cluster attendance-stat-cluster-inline">
-                                      <span class="attendance-stat-chip" title="Students en la sesion">
-                                        <span aria-hidden="true">🎓</span>
-                                        <strong>{session.studentCount}</strong>
-                                      </span>
-                                      <span class="attendance-stat-chip" title="Teachers en la sesion">
-                                        <span aria-hidden="true">🧑‍🏫</span>
-                                        <strong>{session.teacherCount}</strong>
-                                      </span>
-                                      <span class="attendance-stat-chip" title="Duracion de la sesion">
-                                        <span aria-hidden="true">⏱</span>
-                                        <strong>{session.durationLabel}</strong>
-                                      </span>
-                                    </div>
-                                  </td>
-                                  <td>{session.participantCount}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </section>
-                    ))}
-                  </div>
-                </section>
-                <section
-                  class="fold-node fold-level-1"
-                  data-fold-level="1"
-                  data-fold-node
-                  data-fold-scope="attendance"
-                  style="margin-bottom: 0.7rem;"
-                >
-                  <button type="button" class="fold-header" data-fold-toggle>
-                    <span class="fold-toggle-icon">▾</span>
-                    <span>👤 Por usuario</span>
-                    <span class="fold-student-summary">{attendanceUserSummaryRows.length} participantes</span>
-                  </button>
-                  <div class="fold-children">
-                    <table class="admin-table attendance-table" style="margin-top: 0;">
+                {attendanceGridRows.length === 0 ? (
+                  <p class="student-empty">No hay estudiantes inscriptos para este curso y año.</p>
+                ) : attendanceWeekGrid.weeks.length === 0 ? (
+                  <p class="student-empty">Define un rango de cursada válido para construir la grilla semanal.</p>
+                ) : (
+                  <div class="grade-board-wrap attendance-grid-wrap">
+                    <table class="student-assignment-table grade-board-table attendance-grid-table">
                       <thead>
                         <tr>
-                          <th>Usuario</th>
-                          <th>Email / Identity</th>
-                          <th>Rol</th>
-                          <th>Stats</th>
-                          <th>Ultima actividad</th>
+                          <th rowspan="2">Nombre</th>
+                          <th rowspan="2">Email</th>
+                          <th rowspan="2">Asistencia</th>
+                          {attendanceWeekGrid.weeks.map((week: any, weekIndex) => (
+                            <th
+                              colspan="5"
+                              class:list={[
+                                'attendance-week-head',
+                                weekIndex % 2 === 0 ? 'lesson-group-even' : 'lesson-group-odd',
+                                'group-start',
+                              ]}
+                              title={week.title}
+                            >
+                              {week.label}
+                            </th>
+                          ))}
+                        </tr>
+                        <tr>
+                          {attendanceWeekGrid.weeks.map((week: any, weekIndex) =>
+                            week.days.map((day: any, dayIndex) => (
+                              <th
+                                class:list={[
+                                  'attendance-day-head',
+                                  weekIndex % 2 === 0 ? 'lesson-group-even' : 'lesson-group-odd',
+                                  dayIndex === 0 ? 'group-start' : '',
+                                  !day.inRange ? 'is-out-of-range' : '',
+                                ]}
+                                title={day.dateKey}
+                              >
+                                {day.inRange ? day.label : '—'}
+                              </th>
+                            ))
+                          )}
                         </tr>
                       </thead>
                       <tbody>
-                        {attendanceUserSummaryRows.length > 0 ? (
-                          attendanceUserSummaryRows.map((row: any) => (
-                            <tr>
-                              <td>{row.name}</td>
-                              <td style="font-size: 0.85rem; color: var(--c-fg-dim);">
-                                {row.email || row.identity || '—'}
-                              </td>
-                              <td>
-                                <span class:list={['role-badge', normalizeRole(row?.role) === 'teacher' ? 'role-teacher' : 'role-student']}>
-                                  {normalizeRole(row?.role) === 'teacher' ? 'teacher' : 'student'}
-                                </span>
-                              </td>
-                              <td>
-                                <div class="attendance-stat-cluster attendance-stat-cluster-inline">
-                                  <span class="attendance-stat-chip" title="Sesiones con ingreso registrado">
-                                    <span aria-hidden="true">🎬</span>
-                                    <strong>{row.sessionsAttended}</strong>
-                                  </span>
-                                  <span class="attendance-stat-chip" title="Dias asistidos">
-                                    <span aria-hidden="true">📅</span>
-                                    <strong>{row.totalDaysAttended}</strong>
-                                  </span>
-                                  <span class="attendance-stat-chip" title="Cantidad total de conexiones">
-                                    <span aria-hidden="true">↻</span>
-                                    <strong>{row.totalJoinCount}</strong>
-                                  </span>
-                                  <span class="attendance-stat-chip" title="Tiempo total conectado">
-                                    <span aria-hidden="true">⏱</span>
-                                    <strong>{row.totalDurationLabel}</strong>
-                                  </span>
-                                </div>
-                              </td>
-                              <td>{row.lastSeenLabel}</td>
-                            </tr>
-                          ))
-                        ) : (
+                        {attendanceGridRows.map((row: any) => (
                           <tr>
-                            <td colspan="5" style="color: var(--c-fg-dim); font-style: italic;">
-                              No hay participantes con asistencia registrada.
-                            </td>
+                            <td>{row.name}</td>
+                            <td class="grade-board-email">{row.email || '—'}</td>
+                            <td data-attendance-row-days={row.userId}>{row.daysAttended}</td>
+                            {row.weeks.map((week: any, weekIndex) =>
+                              week.days.map((day: any, dayIndex) => (
+                                <td
+                                  class:list={[
+                                    'attendance-day-cell',
+                                    weekIndex % 2 === 0 ? 'lesson-group-even' : 'lesson-group-odd',
+                                    dayIndex === 0 ? 'group-start' : '',
+                                    day.totalCount > 0 ? 'is-present' : '',
+                                    !day.inRange ? 'is-out-of-range' : '',
+                                  ]}
+                                >
+                                  {day.inRange ? (
+                                    <div class="attendance-day-stack">
+                                      <span
+                                        class="attendance-day-total"
+                                        data-attendance-day-total
+                                        title={`En vivo: ${day.liveCount} • Manual: ${day.manualCount} • Total: ${day.totalCount}`}
+                                      >
+                                        {day.totalCount > 0 ? day.totalCount : '·'}
+                                      </span>
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="1"
+                                        class="attendance-manual-input"
+                                        data-attendance-manual-input
+                                        data-course-id={activeCourseId}
+                                        data-year={activeYear}
+                                        data-student-id={row.userId}
+                                        data-date={day.dateKey}
+                                        data-live-count={day.liveCount}
+                                        value={day.manualCount > 0 ? String(day.manualCount) : ''}
+                                        placeholder="+"
+                                        title={`Cursada presencial manual para ${day.label}`}
+                                      />
+                                    </div>
+                                  ) : (
+                                    <span class="attendance-day-empty">—</span>
+                                  )}
+                                </td>
+                              ))
+                            )}
                           </tr>
-                        )}
+                        ))}
                       </tbody>
                     </table>
                   </div>
-                </section>
+                )}
 
-                <section
-                  class="fold-node fold-level-1"
-                  data-fold-level="1"
-                  data-fold-node
-                  data-fold-scope="attendance"
-                  style="margin-bottom: 0.7rem;"
-                >
-                  <button type="button" class="fold-header" data-fold-toggle>
-                    <span class="fold-toggle-icon">▾</span>
-                    <span>🧾 Log</span>
-                    <span class="fold-student-summary">{attendanceLogRows.length} registros</span>
-                  </button>
-                  <div class="fold-children">
-                    <table class="admin-table attendance-table" style="margin-top: 0;">
+                <section class="attendance-log-panel">
+                  <div class="attendance-log-toolbar">
+                    <input
+                      type="search"
+                      class="attendance-log-search"
+                      data-attendance-log-query
+                      placeholder="Buscar en el log de asistencias"
+                      aria-label="Buscar en el log de asistencias"
+                    />
+                    <span class="attendance-stat-chip" data-attendance-log-count title="Registros visibles en el log">
+                      <span aria-hidden="true">🧾</span>
+                      <strong>{attendanceLogRows.length}</strong>
+                    </span>
+                  </div>
+                  <div class="log-table-wrap">
+                    <table class="admin-table attendance-table attendance-log-table" style="margin-top: 0;">
                       <thead>
                         <tr>
                           <th>Dia</th>
                           <th>Usuario</th>
                           <th>Clase</th>
                           <th>Rol</th>
-                          <th>Stats</th>
+                          <th>Conex.</th>
+                          <th>Tiempo</th>
                           <th>Ultima actividad</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {attendanceLogRows.length > 0 ? (
-                          attendanceLogRows.map((row: any) => (
-                            <tr>
+                        {attendanceLogSearchRows.length > 0 ? (
+                          attendanceLogSearchRows.map((row: any) => (
+                            <tr data-attendance-log-row data-search={row.search}>
                               <td>{row.dayLabel}</td>
                               <td>
                                 <div>{row.displayName}</div>
-                                <div style="font-size: 0.8rem; color: var(--c-fg-dim);">{row.email || row.identity || '—'}</div>
+                                <div class="attendance-log-subline">{row.email || row.identity || '—'}</div>
                               </td>
                               <td title={row.pageSlug}>{row.lessonLabel}</td>
                               <td>
@@ -3372,32 +3766,14 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                                   {normalizeRole(row?.role) === 'teacher' ? 'teacher' : 'student'}
                                 </span>
                               </td>
-                              <td>
-                                <div class="attendance-stat-cluster attendance-stat-cluster-inline">
-                                  <span class="attendance-stat-chip" title="Cantidad de conexiones">
-                                    <span aria-hidden="true">↻</span>
-                                    <strong>{row.joinCount}</strong>
-                                  </span>
-                                  <span class="attendance-stat-chip" title="Cantidad de salidas">
-                                    <span aria-hidden="true">↩</span>
-                                    <strong>{row.leaveCount}</strong>
-                                  </span>
-                                  <span class="attendance-stat-chip" title="Abortos registrados">
-                                    <span aria-hidden="true">✕</span>
-                                    <strong>{row.abortedCount}</strong>
-                                  </span>
-                                  <span class="attendance-stat-chip" title="Tiempo conectado para este registro">
-                                    <span aria-hidden="true">⏱</span>
-                                    <strong>{row.durationLabel}</strong>
-                                  </span>
-                                </div>
-                              </td>
+                              <td title={`Salidas: ${row.leaveCount} • Abortos: ${row.abortedCount}`}>{row.joinCount}</td>
+                              <td>{row.durationLabel}</td>
                               <td>{row.lastSeenLabel}</td>
                             </tr>
                           ))
                         ) : (
                           <tr>
-                            <td colspan="6" style="color: var(--c-fg-dim); font-style: italic;">
+                            <td colspan="7" style="color: var(--c-fg-dim); font-style: italic;">
                               No hay registros de conexion para este curso y año.
                             </td>
                           </tr>
@@ -3405,6 +3781,7 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                       </tbody>
                     </table>
                   </div>
+                  <p class="log-empty" data-attendance-log-empty hidden>No hay resultados para el filtro actual.</p>
                 </section>
               </>
             )}
@@ -3670,7 +4047,210 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
             }
 
             function initializeAttendanceTab() {
-              initializeCorrectionFolding('attendance');
+              initializeAttendanceConfigEditors();
+              initializeAttendanceManualEditors();
+              initializeAttendanceLogSearch();
+            }
+
+            async function saveAttendanceConfig(panel) {
+              if (!(panel instanceof HTMLElement)) return false;
+
+              const courseId = String(panel.getAttribute('data-course-id') || '').trim();
+              const year = String(panel.getAttribute('data-year') || '').trim();
+              const startInput = panel.querySelector('[data-attendance-config-input="startDate"]');
+              const endInput = panel.querySelector('[data-attendance-config-input="endDate"]');
+              const applyButton = panel.querySelector('[data-attendance-config-apply]');
+
+              if (!(startInput instanceof HTMLInputElement) || !(endInput instanceof HTMLInputElement)) {
+                return false;
+              }
+
+              const startDate = String(startInput.value || '').trim();
+              const endDate = String(endInput.value || '').trim();
+              if (!courseId || !year || !startDate || !endDate) {
+                markQuickState(startInput, 'quick-error');
+                markQuickState(endInput, 'quick-error');
+                return false;
+              }
+
+              if (applyButton instanceof HTMLButtonElement) {
+                applyButton.disabled = true;
+              }
+              markQuickState(startInput, 'quick-saving');
+              markQuickState(endInput, 'quick-saving');
+
+              try {
+                const response = await fetch('/api/grade/course-attendance-config', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    courseId,
+                    year,
+                    startDate,
+                    endDate,
+                  }),
+                });
+
+                if (!response.ok) {
+                  markQuickState(startInput, 'quick-error');
+                  markQuickState(endInput, 'quick-error');
+                  return false;
+                }
+
+                markQuickState(startInput, 'quick-success');
+                markQuickState(endInput, 'quick-success');
+
+                const url = new URL(window.location.href);
+                url.searchParams.set('tab', 'attendance');
+                window.location.href = `${url.pathname}${url.search}${url.hash}`;
+                return true;
+              } catch (error) {
+                console.error('Error saving attendance configuration:', error);
+                markQuickState(startInput, 'quick-error');
+                markQuickState(endInput, 'quick-error');
+                return false;
+              } finally {
+                if (applyButton instanceof HTMLButtonElement) {
+                  applyButton.disabled = false;
+                }
+              }
+            }
+
+            function initializeAttendanceConfigEditors() {
+              document.querySelectorAll('[data-attendance-config]').forEach((panel) => {
+                if (!(panel instanceof HTMLElement)) return;
+                if (panel.dataset.bound === 'true') return;
+                panel.dataset.bound = 'true';
+
+                const applyButton = panel.querySelector('[data-attendance-config-apply]');
+                if (applyButton instanceof HTMLButtonElement) {
+                  applyButton.addEventListener('click', () => {
+                    saveAttendanceConfig(panel);
+                  });
+                }
+              });
+            }
+
+            function updateAttendanceRowDays(input) {
+              if (!(input instanceof HTMLInputElement)) return;
+              const row = input.closest('tr');
+              if (!(row instanceof HTMLElement)) return;
+              const userId = String(input.getAttribute('data-student-id') || '').trim();
+              if (!userId) return;
+
+              const dayCount = Array.from(row.querySelectorAll('[data-attendance-day-total]')).reduce((sum, node) => {
+                const totalValue = Number(node.textContent === '·' ? 0 : node.textContent || 0);
+                return sum + (totalValue > 0 ? 1 : 0);
+              }, 0);
+
+              const daysCell = row.querySelector(`[data-attendance-row-days="${CSS.escape(userId)}"]`);
+              if (daysCell instanceof HTMLElement) {
+                daysCell.textContent = String(dayCount);
+              }
+            }
+
+            async function saveAttendanceManualInput(input) {
+              if (!(input instanceof HTMLInputElement)) return;
+
+              const courseId = String(input.getAttribute('data-course-id') || '').trim();
+              const year = String(input.getAttribute('data-year') || '').trim();
+              const studentId = String(input.getAttribute('data-student-id') || '').trim();
+              const date = String(input.getAttribute('data-date') || '').trim();
+              const liveCount = Number(input.getAttribute('data-live-count') || 0);
+              const manualCount = Math.max(0, Math.trunc(Number(input.value || 0) || 0));
+              const totalNode = input.closest('.attendance-day-stack')?.querySelector('[data-attendance-day-total]');
+
+              markQuickState(input, 'quick-saving');
+
+              try {
+                const response = await fetch('/api/grade/course-attendance-manual', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    courseId,
+                    year,
+                    studentId,
+                    date,
+                    count: manualCount,
+                  }),
+                });
+
+                if (!response.ok) {
+                  markQuickState(input, 'quick-error');
+                  return;
+                }
+
+                input.value = manualCount > 0 ? String(manualCount) : '';
+                if (totalNode instanceof HTMLElement) {
+                  const totalCount = liveCount + manualCount;
+                  totalNode.textContent = totalCount > 0 ? String(totalCount) : '·';
+                  totalNode.setAttribute(
+                    'title',
+                    `En vivo: ${liveCount} • Manual: ${manualCount} • Total: ${totalCount}`,
+                  );
+                  const cell = totalNode.closest('.attendance-day-cell');
+                  if (cell instanceof HTMLElement) {
+                    cell.classList.toggle('is-present', totalCount > 0);
+                  }
+                }
+                updateAttendanceRowDays(input);
+                markQuickState(input, 'quick-success');
+              } catch (error) {
+                console.error('Error saving manual attendance:', error);
+                markQuickState(input, 'quick-error');
+              }
+            }
+
+            function initializeAttendanceManualEditors() {
+              document.querySelectorAll('[data-attendance-manual-input]').forEach((input) => {
+                if (!(input instanceof HTMLInputElement)) return;
+                if (input.dataset.bound === 'true') return;
+                input.dataset.bound = 'true';
+
+                input.addEventListener('change', () => {
+                  saveAttendanceManualInput(input);
+                });
+                input.addEventListener('keydown', (event) => {
+                  if (event.key !== 'Enter') return;
+                  event.preventDefault();
+                  saveAttendanceManualInput(input);
+                });
+              });
+            }
+
+            function applyAttendanceLogSearch(query) {
+              const rows = Array.from(document.querySelectorAll('[data-attendance-log-row]'));
+              let visibleCount = 0;
+              rows.forEach((row) => {
+                const search = row.getAttribute('data-search') || '';
+                const visible = includesQuery(search, query);
+                row.hidden = !visible;
+                if (visible) visibleCount += 1;
+              });
+
+              const countNode = document.querySelector('[data-attendance-log-count] strong');
+              if (countNode instanceof HTMLElement) {
+                countNode.textContent = String(visibleCount);
+              }
+
+              const emptyNode = document.querySelector('[data-attendance-log-empty]');
+              if (emptyNode instanceof HTMLElement) {
+                emptyNode.hidden = visibleCount > 0;
+              }
+            }
+
+            function initializeAttendanceLogSearch() {
+              const input = document.querySelector('[data-attendance-log-query]');
+              if (!(input instanceof HTMLInputElement)) return;
+              if (input.dataset.bound === 'true') {
+                applyAttendanceLogSearch(String(input.value || '').trim().toLowerCase());
+                return;
+              }
+              input.dataset.bound = 'true';
+              input.addEventListener('input', () => {
+                applyAttendanceLogSearch(String(input.value || '').trim().toLowerCase());
+              });
+              applyAttendanceLogSearch(String(input.value || '').trim().toLowerCase());
             }
 
             function debounce(func, wait) {
