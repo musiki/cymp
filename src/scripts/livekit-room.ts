@@ -164,6 +164,7 @@ type HandSynthTelemetry = {
   gain: number;
   modulator: number;
   resonance: number;
+  waveformMorph: number;
 };
 
 const MESSAGE_TOPIC = 'conference-ui';
@@ -224,14 +225,18 @@ const normalizeMasterGain = (value: unknown, fallback = 0.35) => {
 
 class FMSynthVoice {
   private context: AudioContext | null = null;
-  private carrierOscillator: OscillatorNode | null = null;
+  private carrierGains: GainNode[] = [];
+  private carrierOscillators: OscillatorNode[] = [];
+  private convolverNode: ConvolverNode | null = null;
+  private dryGainNode: GainNode | null = null;
   private dynamicGain: GainNode | null = null;
   private filterNode: BiquadFilterNode | null = null;
   private masterGainNode: GainNode | null = null;
-  private modulatorDepth: GainNode | null = null;
-  private modulatorOscillator: OscillatorNode | null = null;
+  private modulatorDepthGains: GainNode[] = [];
+  private modulatorOscillators: OscillatorNode[] = [];
   private ready = false;
   private masterGain = 0.35;
+  private readonly waveformTypes: OscillatorType[] = ['sine', 'triangle', 'sawtooth', 'square'];
 
   private getAudioContextCtor() {
     return (
@@ -258,17 +263,6 @@ class FMSynthVoice {
     const context = new AudioContextCtor({ sampleRate: 48_000 });
     this.context = context;
 
-    const carrierOscillator = context.createOscillator();
-    carrierOscillator.type = 'sine';
-    carrierOscillator.frequency.value = 220;
-
-    const modulatorOscillator = context.createOscillator();
-    modulatorOscillator.type = 'sine';
-    modulatorOscillator.frequency.value = 220;
-
-    const modulatorDepth = context.createGain();
-    modulatorDepth.gain.value = 45;
-
     const filterNode = context.createBiquadFilter();
     filterNode.type = 'lowpass';
     filterNode.frequency.value = 800;
@@ -279,20 +273,52 @@ class FMSynthVoice {
 
     const masterGainNode = context.createGain();
     masterGainNode.gain.value = this.masterGain;
+    const dryGainNode = context.createGain();
+    dryGainNode.gain.value = 0.5;
+    const wetGainNode = context.createGain();
+    wetGainNode.gain.value = 0.5;
+    const convolverNode = context.createConvolver();
+    convolverNode.buffer = this.createImpulseResponse(context, 3, 2.8);
 
-    modulatorOscillator.connect(modulatorDepth);
-    modulatorDepth.connect(carrierOscillator.frequency);
-    carrierOscillator.connect(filterNode);
+    this.waveformTypes.forEach((waveformType) => {
+      const carrierOscillator = context.createOscillator();
+      carrierOscillator.type = waveformType;
+      carrierOscillator.frequency.value = 220;
+
+      const carrierGain = context.createGain();
+      carrierGain.gain.value = waveformType === 'sine' ? 1 : 0;
+
+      const modulatorOscillator = context.createOscillator();
+      modulatorOscillator.type = waveformType;
+      modulatorOscillator.frequency.value = 220;
+
+      const modulatorDepth = context.createGain();
+      modulatorDepth.gain.value = waveformType === 'sine' ? 45 : 0;
+
+      modulatorOscillator.connect(modulatorDepth);
+      modulatorDepth.connect(carrierOscillator.frequency);
+      carrierOscillator.connect(carrierGain);
+      carrierGain.connect(filterNode);
+
+      carrierOscillator.start();
+      modulatorOscillator.start();
+
+      this.carrierOscillators.push(carrierOscillator);
+      this.carrierGains.push(carrierGain);
+      this.modulatorOscillators.push(modulatorOscillator);
+      this.modulatorDepthGains.push(modulatorDepth);
+    });
+
     filterNode.connect(dynamicGain);
-    dynamicGain.connect(masterGainNode);
+    dynamicGain.connect(dryGainNode);
+    dynamicGain.connect(convolverNode);
+    convolverNode.connect(wetGainNode);
+    dryGainNode.connect(masterGainNode);
+    wetGainNode.connect(masterGainNode);
     masterGainNode.connect(context.destination);
 
-    carrierOscillator.start();
-    modulatorOscillator.start();
-
-    this.carrierOscillator = carrierOscillator;
-    this.modulatorOscillator = modulatorOscillator;
-    this.modulatorDepth = modulatorDepth;
+    this.convolverNode = convolverNode;
+    this.dryGainNode = dryGainNode;
     this.filterNode = filterNode;
     this.dynamicGain = dynamicGain;
     this.masterGainNode = masterGainNode;
@@ -301,6 +327,37 @@ class FMSynthVoice {
     if (context.state !== 'running') {
       await context.resume().catch(() => undefined);
     }
+  }
+
+  private createImpulseResponse(context: AudioContext, durationSeconds: number, decay: number) {
+    const sampleRate = context.sampleRate;
+    const frameCount = Math.max(1, Math.round(sampleRate * durationSeconds));
+    const buffer = context.createBuffer(2, frameCount, sampleRate);
+
+    for (let channelIndex = 0; channelIndex < buffer.numberOfChannels; channelIndex += 1) {
+      const channel = buffer.getChannelData(channelIndex);
+      for (let index = 0; index < frameCount; index += 1) {
+        const t = index / frameCount;
+        const envelope = Math.pow(1 - t, decay);
+        channel[index] = (Math.random() * 2 - 1) * envelope;
+      }
+    }
+
+    return buffer;
+  }
+
+  private getWaveformWeights(morph: number) {
+    const normalizedMorph = clamp01(morph);
+    const scaled = normalizedMorph * (this.waveformTypes.length - 1);
+    const baseIndex = Math.floor(scaled);
+    const fraction = scaled - baseIndex;
+    const weights = new Array(this.waveformTypes.length).fill(0);
+    const nextIndex = Math.min(this.waveformTypes.length - 1, baseIndex + 1);
+
+    weights[baseIndex] = 1 - fraction;
+    weights[nextIndex] += fraction;
+
+    return weights;
   }
 
   setMasterGain(value: number) {
@@ -318,11 +375,10 @@ class FMSynthVoice {
   update(telemetry: HandSynthTelemetry) {
     if (
       !this.context ||
-      !this.carrierOscillator ||
-      !this.modulatorOscillator ||
-      !this.modulatorDepth ||
       !this.filterNode ||
-      !this.dynamicGain
+      !this.dynamicGain ||
+      this.carrierOscillators.length === 0 ||
+      this.modulatorOscillators.length === 0
     ) {
       return;
     }
@@ -334,28 +390,44 @@ class FMSynthVoice {
     const resonance = Math.max(0.5, telemetry.resonance);
     const gain = clamp01(telemetry.gain);
     const modulationDepth = carrier * (0.12 + modulatorRatio * 0.38);
+    const weights = this.getWaveformWeights(telemetry.waveformMorph);
 
-    this.carrierOscillator.frequency.setTargetAtTime(carrier, now, 0.03);
-    this.modulatorOscillator.frequency.setTargetAtTime(carrier * modulatorRatio, now, 0.03);
-    this.modulatorDepth.gain.setTargetAtTime(modulationDepth, now, 0.03);
+    this.carrierOscillators.forEach((oscillator, index) => {
+      oscillator.frequency.setTargetAtTime(carrier, now, 0.03);
+      this.carrierGains[index]?.gain.setTargetAtTime(weights[index] ?? 0, now, 0.03);
+    });
+
+    this.modulatorOscillators.forEach((oscillator, index) => {
+      oscillator.frequency.setTargetAtTime(carrier * modulatorRatio, now, 0.03);
+      this.modulatorDepthGains[index]?.gain.setTargetAtTime(modulationDepth * (weights[index] ?? 0), now, 0.03);
+    });
+
     this.filterNode.frequency.setTargetAtTime(filterCutoff, now, 0.04);
     this.filterNode.Q.setTargetAtTime(resonance, now, 0.04);
     this.dynamicGain.gain.setTargetAtTime(gain * 0.32, now, 0.03);
   }
 
   async destroy() {
-    if (this.carrierOscillator) {
-      this.carrierOscillator.stop();
-      this.carrierOscillator.disconnect();
-      this.carrierOscillator = null;
-    }
-    if (this.modulatorOscillator) {
-      this.modulatorOscillator.stop();
-      this.modulatorOscillator.disconnect();
-      this.modulatorOscillator = null;
-    }
-    this.modulatorDepth?.disconnect();
-    this.modulatorDepth = null;
+    this.carrierOscillators.forEach((oscillator) => {
+      oscillator.stop();
+      oscillator.disconnect();
+    });
+    this.carrierOscillators = [];
+    this.carrierGains.forEach((gainNode) => gainNode.disconnect());
+    this.carrierGains = [];
+
+    this.modulatorOscillators.forEach((oscillator) => {
+      oscillator.stop();
+      oscillator.disconnect();
+    });
+    this.modulatorOscillators = [];
+    this.modulatorDepthGains.forEach((gainNode) => gainNode.disconnect());
+    this.modulatorDepthGains = [];
+
+    this.dryGainNode?.disconnect();
+    this.dryGainNode = null;
+    this.convolverNode?.disconnect();
+    this.convolverNode = null;
     this.filterNode?.disconnect();
     this.filterNode = null;
     this.dynamicGain?.disconnect();
@@ -879,6 +951,17 @@ const appendBlurBackdrop = ({
   void backdrop.play().catch(() => undefined);
 };
 
+const ensureHandOverlayElement = (wrapper: HTMLElement) => {
+  let canvas = wrapper.querySelector('.conference-hand-overlay');
+  if (!(canvas instanceof HTMLCanvasElement)) {
+    canvas = document.createElement('canvas');
+    canvas.className = 'conference-hand-overlay';
+    canvas.setAttribute('aria-hidden', 'true');
+    wrapper.appendChild(canvas);
+  }
+  return canvas;
+};
+
 const removeMount = (mount: MediaMount | ParticipantMount | undefined) => {
   if (!mount) return;
   if (mount.attached !== false) {
@@ -969,6 +1052,9 @@ const syncParticipantVideo = (
 
   const element = createMediaElement(publication.track, localParticipant);
   wrapper.appendChild(element);
+  if (localParticipant) {
+    ensureHandOverlayElement(wrapper);
+  }
   card.media.appendChild(wrapper);
   publication.track.attach(element);
 
@@ -1219,6 +1305,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   const synthCutoffOutput = root.querySelector('[data-synth-cutoff-output]');
   const synthResonanceInput = root.querySelector('[data-synth-resonance-input]');
   const synthResonanceOutput = root.querySelector('[data-synth-resonance-output]');
+  const synthWaveformInput = root.querySelector('[data-synth-waveform-input]');
+  const synthWaveformOutput = root.querySelector('[data-synth-waveform-output]');
 
   if (
     !(roomInput instanceof HTMLInputElement) ||
@@ -1426,7 +1514,10 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   let handTrackingGeneration = 0;
   let handTrackingLandmarker: VisionHandLandmarker | null = null;
   let handTrackingLastDetectionAt = 0;
+  let handOverlayPulse = 0;
+  let currentHandLandmarks: HandLandmarkPoint[] | null = null;
   const fmSynth = new FMSynthVoice();
+  const handOverlayCanvases = new Set<HTMLCanvasElement>();
 
   const getLocalCameraTrack = (): LocalCameraTrackLike | null => {
     const publication = Array.from(room.localParticipant.videoTrackPublications.values()).find(
@@ -1594,6 +1685,22 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     }
   };
 
+  const getWaveformMorphLabel = (morph: number) => {
+    const normalized = clamp01(morph);
+    const segments = [
+      ['SIN', 'TRI'],
+      ['TRI', 'SAW'],
+      ['SAW', 'SQUARE'],
+    ] as const;
+    const scaled = normalized * segments.length;
+    const index = Math.min(segments.length - 1, Math.floor(scaled));
+    const fraction = scaled - index;
+    const [left, right] = segments[index];
+    if (fraction <= 0.02) return left;
+    if (fraction >= 0.98) return right;
+    return `${left}/${right}`;
+  };
+
   const renderSynthTelemetry = (telemetry: HandSynthTelemetry) => {
     if (synthCarrierInput instanceof HTMLInputElement) {
       synthCarrierInput.value = String(Math.round(telemetry.carrier));
@@ -1632,6 +1739,13 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     ) {
       synthResonanceOutput.textContent = `${telemetry.resonance.toFixed(1)} Q`;
     }
+
+    if (synthWaveformInput instanceof HTMLInputElement) {
+      synthWaveformInput.value = telemetry.waveformMorph.toFixed(2);
+    }
+    if (synthWaveformOutput instanceof HTMLOutputElement || synthWaveformOutput instanceof HTMLElement) {
+      synthWaveformOutput.textContent = getWaveformMorphLabel(telemetry.waveformMorph);
+    }
   };
 
   const applyInstrumentsOpenState = () => {
@@ -1644,6 +1758,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   };
 
   const applyHandTrackState = () => {
+    root.dataset.handTrack = handTrackEnabled ? 'true' : 'false';
     if (handTrackInput instanceof HTMLInputElement) {
       handTrackInput.checked = handTrackEnabled;
     }
@@ -1657,6 +1772,140 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       synthMasterOutput.textContent = synthMasterGain.toFixed(2);
     }
     fmSynth.setMasterGain(synthMasterGain);
+  };
+
+  const ensureHandOverlayCanvas = (wrapper: HTMLElement) => {
+    const canvas = ensureHandOverlayElement(wrapper);
+    handOverlayCanvases.add(canvas);
+    return canvas;
+  };
+
+  const pruneHandOverlayCanvases = () => {
+    handOverlayCanvases.forEach((canvas) => {
+      if (!canvas.isConnected) {
+        handOverlayCanvases.delete(canvas);
+      }
+    });
+  };
+
+  const clearHandOverlays = () => {
+    pruneHandOverlayCanvases();
+    handOverlayCanvases.forEach((canvas) => {
+      const context = canvas.getContext('2d');
+      if (!context) return;
+      context.clearRect(0, 0, canvas.width, canvas.height);
+    });
+  };
+
+  const resizeOverlayCanvas = (canvas: HTMLCanvasElement) => {
+    const wrapper = canvas.parentElement;
+    if (!(wrapper instanceof HTMLElement)) return null;
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const width = Math.max(2, Math.round(wrapper.clientWidth * dpr));
+    const height = Math.max(2, Math.round(wrapper.clientHeight * dpr));
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    return { dpr, height, width };
+  };
+
+  const renderHandOverlays = (landmarks: HandLandmarkPoint[] | null, now = performance.now()) => {
+    pruneHandOverlayCanvases();
+    if (!landmarks || !handTrackEnabled) {
+      clearHandOverlays();
+      return;
+    }
+
+    handOverlayPulse = now * 0.0024;
+
+    const connections = [
+      [0, 1], [1, 2], [2, 3], [3, 4],
+      [0, 5], [5, 6], [6, 7], [7, 8],
+      [5, 9], [9, 10], [10, 11], [11, 12],
+      [9, 13], [13, 14], [14, 15], [15, 16],
+      [13, 17], [17, 18], [18, 19], [19, 20],
+      [0, 17],
+    ] as const;
+
+    const wrist = landmarks[0];
+    const middleMcp = landmarks[9] || landmarks[0];
+    const palmX = ((wrist?.x ?? 0.5) + (middleMcp?.x ?? 0.5)) * 0.5;
+    const palmY = ((wrist?.y ?? 0.5) + (middleMcp?.y ?? 0.5)) * 0.5;
+
+    handOverlayCanvases.forEach((canvas) => {
+      const size = resizeOverlayCanvas(canvas);
+      const context = canvas.getContext('2d');
+      if (!size || !context) return;
+
+      const { width, height } = size;
+      context.clearRect(0, 0, width, height);
+      context.save();
+      context.scale(width, height);
+      context.globalCompositeOperation = 'screen';
+
+      const glowColor = 'rgba(63, 174, 255, 0.9)';
+      const accentColor = 'rgba(172, 252, 255, 0.92)';
+      const rayCount = 14;
+      const pulse = 0.72 + Math.sin(handOverlayPulse) * 0.14;
+      const rayLength = 0.12 + pulse * 0.08;
+
+      context.save();
+      context.translate(palmX, palmY);
+      context.strokeStyle = 'rgba(60, 166, 255, 0.14)';
+      context.lineWidth = 0.006;
+      context.filter = 'blur(8px)';
+      for (let index = 0; index < rayCount; index += 1) {
+        const angle = ((Math.PI * 2) / rayCount) * index + handOverlayPulse * 0.42;
+        context.beginPath();
+        context.moveTo(0, 0);
+        context.lineTo(Math.cos(angle) * rayLength, Math.sin(angle) * rayLength);
+        context.stroke();
+      }
+      context.restore();
+
+      context.lineCap = 'round';
+      context.lineJoin = 'round';
+      context.filter = 'blur(10px)';
+      context.strokeStyle = glowColor;
+      context.lineWidth = 0.012;
+      connections.forEach(([startIndex, endIndex]) => {
+        const start = landmarks[startIndex];
+        const end = landmarks[endIndex];
+        if (!start || !end) return;
+        context.beginPath();
+        context.moveTo(start.x, start.y);
+        context.lineTo(end.x, end.y);
+        context.stroke();
+      });
+
+      context.filter = 'none';
+      context.strokeStyle = accentColor;
+      context.lineWidth = 0.004;
+      connections.forEach(([startIndex, endIndex]) => {
+        const start = landmarks[startIndex];
+        const end = landmarks[endIndex];
+        if (!start || !end) return;
+        context.beginPath();
+        context.moveTo(start.x, start.y);
+        context.lineTo(end.x, end.y);
+        context.stroke();
+      });
+
+      landmarks.forEach((point, index) => {
+        const radius = index === 0 || index === 9 ? 0.018 : 0.012;
+        const gradient = context.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius);
+        gradient.addColorStop(0, 'rgba(196, 255, 255, 0.95)');
+        gradient.addColorStop(0.45, 'rgba(80, 196, 255, 0.78)');
+        gradient.addColorStop(1, 'rgba(80, 196, 255, 0)');
+        context.fillStyle = gradient;
+        context.beginPath();
+        context.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        context.fill();
+      });
+
+      context.restore();
+    });
   };
 
   const persistSetupState = () => {
@@ -1695,9 +1944,20 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     const thumbMcp = landmarks[2];
     const thumbTip = landmarks[4];
     const indexTip = landmarks[8];
+    const middleTip = landmarks[12];
     const ringTip = landmarks[16];
 
-    if (!wrist || !indexMcp || !middleMcp || !ringMcp || !thumbMcp || !thumbTip || !indexTip || !ringTip) {
+    if (
+      !wrist ||
+      !indexMcp ||
+      !middleMcp ||
+      !ringMcp ||
+      !thumbMcp ||
+      !thumbTip ||
+      !indexTip ||
+      !middleTip ||
+      !ringTip
+    ) {
       return null;
     }
 
@@ -1706,6 +1966,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     const thumbDistance = Math.hypot(thumbTip.x - thumbMcp.x, thumbTip.y - thumbMcp.y);
     const thumbGain = clamp01((thumbDistance - 0.04) / 0.22);
     const indexLift = clamp01(((indexMcp.y - indexTip.y) - 0.03) / 0.28);
+    const middleLift = clamp01(((middleMcp.y - middleTip.y) - 0.03) / 0.3);
     const ringLift = clamp01(((ringMcp.y - ringTip.y) - 0.03) / 0.3);
 
     return {
@@ -1714,10 +1975,12 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       gain: roundTo(thumbGain, 2),
       cutoff: roundTo(Math.exp(lerp(Math.log(140), Math.log(7600), indexLift)), 0),
       resonance: roundTo(lerp(0.8, 18, ringLift), 1),
+      waveformMorph: roundTo(middleLift, 2),
     };
   };
 
   const clearHandTrackingOutput = () => {
+    currentHandLandmarks = null;
     fmSynth.clearHand();
     renderSynthTelemetry({
       carrier: 220,
@@ -1725,7 +1988,9 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       gain: 0,
       cutoff: 800,
       resonance: 1,
+      waveformMorph: 0,
     });
+    clearHandOverlays();
   };
 
   const stopHandTracking = () => {
@@ -1791,6 +2056,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
             const telemetry = landmarks ? computeHandTelemetry(landmarks) : null;
 
             if (telemetry) {
+              currentHandLandmarks = landmarks;
               renderSynthTelemetry(telemetry);
               fmSynth.update(telemetry);
             } else {
@@ -1800,6 +2066,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
             clearHandTrackingOutput();
           }
         }
+
+        renderHandOverlays(currentHandLandmarks, now);
 
         handTrackingAnimationId = window.requestAnimationFrame(tick);
       };
@@ -3120,6 +3388,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     element.playsInline = true;
     element.srcObject = stream;
     wrapper.appendChild(element);
+    ensureHandOverlayCanvas(wrapper);
     identityPreviewSlot.appendChild(wrapper);
     void element.play().catch(() => undefined);
 
@@ -3240,6 +3509,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
     const element = createMediaElement(publication.track, true);
     wrapper.appendChild(element);
+    ensureHandOverlayCanvas(wrapper);
     identityPreviewSlot.appendChild(wrapper);
     publication.track.attach(element);
 

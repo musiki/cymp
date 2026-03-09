@@ -172,6 +172,23 @@ if (
               <output for="conference-synth-resonance-input" data-synth-resonance-output>1.0 Q</output>
             </div>
           </div>
+
+          <div class="conference-synth-meter">
+            <label for="conference-synth-waveform-input">Middle wave</label>
+            <div class="conference-synth-meter-row">
+              <input
+                id="conference-synth-waveform-input"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value="0"
+                data-synth-waveform-input
+                disabled
+              />
+              <output for="conference-synth-waveform-input" data-synth-waveform-output>SIN</output>
+            </div>
+          </div>
         </div>
       </section>
     </div>
@@ -1598,6 +1615,23 @@ if (
     object-fit: cover;
     object-position: center;
     background: #000;
+  }
+
+  .conference-hand-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    width: 100%;
+    height: 100%;
+    background: transparent !important;
+    pointer-events: none;
+    opacity: 0;
+    mix-blend-mode: screen;
+    transition: opacity 160ms ease;
+  }
+
+  .conference-shell[data-hand-track='true'] .conference-hand-overlay {
+    opacity: 1;
   }
 
   .conference-media-frame--screen video {
