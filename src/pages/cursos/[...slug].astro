@@ -141,6 +141,15 @@ const performativeRoomHref = presentationHref
   ? `/room?room=${encodeURIComponent(`${canonicalCourseId || courseSlug}-stage`)}&course=${encodeURIComponent(canonicalCourseId || courseSlug)}&slides=${encodeURIComponent(presentationHref)}`
   : '';
 const hasSessionUser = Boolean(session?.user?.email);
+const sessionDisplayName = String(
+  session?.user?.user_metadata?.full_name ||
+  session?.user?.user_metadata?.name ||
+  session?.user?.user_metadata?.display_name ||
+  session?.user?.user_metadata?.given_name ||
+  session?.user?.email?.split('@')[0] ||
+  '',
+).trim();
+const sessionFirstName = sessionDisplayName.split(/\s+/).filter(Boolean)[0] || '';
 const hasForumSidebar = Boolean(canonicalCourseId || courseSlug);
 const activeCourseCode = String(
   courseData?.id ||
@@ -148,11 +157,17 @@ const activeCourseCode = String(
   '',
 ).trim().toUpperCase();
 const courseForumHref = `${courseHref}/foro`;
+const forumShellHref = Astro.url.pathname;
+const lessonForumHref = isLessonPage
+  ? `${courseHref}/${encodeURIComponent(resolvedLessonRoutePath)}`
+  : '';
+const hasRequestedBoardScope = Astro.url.searchParams.has('board');
 const initialSidebarBoardSlug = (
   String(Astro.url.searchParams.get('board') || 'general')
     .trim()
     .toLowerCase() || 'general'
 );
+const initialSidebarForumMode = isLessonPage && !hasRequestedBoardScope ? 'lesson' : 'board';
 const livePageSlug = isLessonPage ? `${canonicalCourseId || courseSlug}/${lessonSlug}` : '';
 let initialCourseForumBoards: Array<{ slug: string; title: string; description: string }> = [
   {
@@ -220,6 +235,12 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
   if (weightDifference !== 0) return weightDifference;
   return String(left?.title || '').localeCompare(String(right?.title || ''), 'es');
 });
+const forumPanelTitle = isLessonPage
+  ? `Foro de ${String(currentEntry.data.title || '').trim() || 'la lección'}`
+  : 'Foros del curso';
+const forumThreadPrompt = sessionFirstName
+  ? `¿Qué pensás, ${sessionFirstName}?`
+  : '¿Qué pensás?';
 ---
 
 <!doctype html>
@@ -283,7 +304,7 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
 
       .course-sidebar-handle {
         position: fixed;
-        top: clamp(5.3rem, 8vh, 6.7rem);
+        top: calc(var(--musiki-header-height, 4.5rem) + 0.8rem);
         z-index: 46;
         width: 2.3rem;
         height: 2.3rem;
@@ -292,7 +313,7 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
         background: color-mix(in srgb, var(--c-bg) 92%, var(--c-bg-mute) 8%);
         color: var(--c-fg);
         box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
-        display: inline-flex;
+        display: none;
         align-items: center;
         justify-content: center;
         cursor: pointer;
@@ -313,8 +334,8 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
       
       .sidebar {
         position: sticky;
-        top: 0.7rem;
-        height: calc(100dvh - 7.4rem);
+        top: calc(var(--musiki-header-height, 4.5rem) + 0.7rem);
+        height: calc(100dvh - var(--musiki-header-height, 4.5rem) - 1.4rem);
         min-height: 0;
         min-width: 0;
         width: 100%;
@@ -338,6 +359,8 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
 
       .sidebar--right {
         justify-self: stretch;
+        top: calc(var(--musiki-header-height, 4.5rem) + 0.7rem);
+        height: calc(100dvh - var(--musiki-header-height, 4.5rem) - 1.4rem);
       }
 
       .course-container[data-left-open='false'] .sidebar--left {
@@ -382,6 +405,12 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
         margin: 0;
         font-size: 1rem;
         line-height: 1.2;
+      }
+
+      .sidebar-panel-actions {
+        display: flex;
+        justify-content: flex-end;
+        margin-bottom: 0.35rem;
       }
 
       .sidebar-toggle-btn {
@@ -623,29 +652,49 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
       }
 
       .forum-subforum-list {
-        margin-top: 0.35rem;
+        margin-top: 0.1rem;
         margin-left: 0.95rem;
         padding-left: 0.55rem;
         border-left: 1px solid color-mix(in srgb, var(--c-border) 86%, transparent);
+      }
+
+      .forum-subforum-list > .lesson-item {
+        padding-left: 0.72em;
+      }
+
+      .forum-subforum-list > .lesson-item::before {
+        top: 0.08em;
       }
 
       .forum-subforum-link {
         font-size: 0.82rem;
-        padding: 0.38rem 0.62rem;
-        color: var(--c-fg-dim);
+        line-height: 1.16;
+        padding: 0.28rem 0.62rem;
+        color: var(--c-fg) !important;
+        text-decoration: none;
+      }
+
+      .forum-subforum-link:link,
+      .forum-subforum-link:visited,
+      .forum-subforum-link:hover,
+      .forum-subforum-link:active,
+      .forum-subforum-link:focus-visible {
+        color: var(--c-fg) !important;
+        text-decoration: none;
       }
 
       .forum-subforum-link.active {
-        background: color-mix(in srgb, var(--accent) 20%, transparent);
-        color: var(--accent);
+        background: transparent;
+        color: var(--c-fg);
         font-weight: 600;
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 62%, transparent);
       }
 
       .sidebar-forum-fold {
-        margin-top: 0.32rem;
-        margin-left: 0.95rem;
-        padding-left: 0.55rem;
-        border-left: 1px solid color-mix(in srgb, var(--c-border) 86%, transparent);
+        margin-top: 0;
+        margin-left: 0;
+        padding-left: 0;
+        border-left: 0;
       }
 
       .sidebar-forum-fold[hidden] {
@@ -657,16 +706,21 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
         cursor: pointer;
         padding: 0.38rem 0.62rem;
         font-size: 0.82rem;
-        color: var(--c-fg-dim);
+        color: var(--c-fg);
       }
 
       .sidebar-forum-fold .forum-fold-summary::-webkit-details-marker {
         display: none;
       }
 
+      .sidebar-forum-fold .forum-fold-summary::marker {
+        content: "";
+      }
+
       .sidebar-forum-fold .forum-form {
-        margin: 0.32rem 0 0 0;
+        margin: 0.28rem 0 0.1rem 0;
         gap: 0.42rem;
+        padding: 0 0.62rem 0.2rem;
       }
 
       .sidebar-forum-fold .forum-field {
@@ -1058,18 +1112,13 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
       }
 
       .lesson-forum-header {
-        margin-bottom: 1rem;
+        margin-bottom: 0.7rem;
       }
 
       .lesson-forum-title {
-        margin: 0 0 0.35rem 0;
-        font-size: 1.15rem;
-      }
-
-      .lesson-forum-subtitle {
         margin: 0;
-        color: var(--forum-text-secondary);
-        font-size: 0.9rem;
+        font-size: 1rem;
+        line-height: 1.25;
       }
 
       .forum-board-toolbar {
@@ -1467,6 +1516,92 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
         overflow-x: auto;
       }
 
+      .forum-post-body :where(img, video, audio, a[data-forum-media-link='true']) {
+        cursor: zoom-in;
+      }
+
+      .forum-media-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 120;
+        display: grid;
+        place-items: center;
+        background: rgba(0, 0, 0, 0.9);
+        padding: 1.25rem;
+      }
+
+      .forum-media-modal[hidden] {
+        display: none;
+      }
+
+      .forum-media-modal-stage {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: min(96vw, 92rem);
+        max-height: 92vh;
+      }
+
+      .forum-media-modal-close {
+        position: absolute;
+        top: 0.5rem;
+        right: 0.5rem;
+        z-index: 1;
+        border: 0;
+        background: transparent;
+        color: rgba(255, 255, 255, 0.82);
+        font: inherit;
+        font-size: 1.8rem;
+        line-height: 1;
+        padding: 0.35rem 0.45rem;
+        cursor: pointer;
+      }
+
+      .forum-media-modal-content {
+        display: grid;
+        place-items: center;
+        width: 100%;
+        max-height: 92vh;
+      }
+
+      .forum-media-modal-viewport {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 100%;
+        max-width: min(96vw, 92rem);
+        max-height: 88vh;
+        overflow: hidden;
+        cursor: grab;
+        touch-action: none;
+      }
+
+      .forum-media-modal-viewport.is-dragging {
+        cursor: grabbing;
+      }
+
+      .forum-media-modal-content img,
+      .forum-media-modal-content video {
+        display: block;
+        max-width: 100%;
+        max-height: 88vh;
+        width: auto;
+        height: auto;
+        user-select: none;
+        -webkit-user-drag: none;
+        transform-origin: center center;
+        will-change: transform;
+      }
+
+      .forum-media-modal-content img[data-forum-svg='true'] {
+        background: #fff;
+      }
+
+      .forum-media-modal-content audio {
+        width: min(92vw, 44rem);
+        max-width: 100%;
+      }
+
       .forum-post-actions {
         margin-top: 0.58rem;
         display: flex;
@@ -1559,6 +1694,7 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
         }
 
         .course-sidebar-handle {
+          display: inline-flex;
           top: auto;
           bottom: 0.8rem;
         }
@@ -1573,11 +1709,11 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
 
         .sidebar {
           position: fixed;
-          top: 0;
+          top: var(--musiki-header-height, 4.5rem);
           bottom: 0;
           z-index: 44;
           width: min(84vw, 320px);
-          height: auto;
+          height: calc(100dvh - var(--musiki-header-height, 4.5rem));
           max-height: none;
           border-radius: 0;
           padding: 1rem 0.95rem 1.2rem;
@@ -1685,7 +1821,7 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
           padding: 0.9rem 0.9rem 1.1rem;
         }
 
-        .sidebar-panel-heading {
+        .sidebar-panel-actions {
           position: sticky;
           top: 0;
           z-index: 2;
@@ -1899,11 +2035,7 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
       </article>
 
       <aside class="sidebar sidebar--right" data-course-sidebar="right" aria-label="Foros de clase">
-        <div class="sidebar-panel-heading">
-          <div>
-            <p class="sidebar-panel-kicker">Discusión</p>
-            <h2 class="sidebar-panel-title">Foros</h2>
-          </div>
+        <div class="sidebar-panel-actions">
           <button
             type="button"
             class="sidebar-toggle-btn"
@@ -1919,28 +2051,31 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
             id="lesson-forum"
             data-course-id={canonicalCourseId || courseSlug}
             data-lesson-slug={lessonSlug}
-            data-forum-mode={isLessonPage ? 'lesson' : 'board'}
-            data-initial-board-slug={isLessonPage ? '' : initialSidebarBoardSlug}
+            data-is-lesson-page={isLessonPage ? 'true' : 'false'}
+            data-forum-mode={initialSidebarForumMode}
+            data-initial-board-slug={initialSidebarBoardSlug}
             data-has-session={hasSessionUser ? 'true' : 'false'}
           >
             <div class="chapter">
-              <div class="chapter-title">Foros</div>
               <ul
                 id="course-forum-subnav"
                 class="lesson-list forum-subforum-list"
                 data-course-id={canonicalCourseId || courseSlug}
-                data-forum-base-href={courseForumHref}
+                data-forum-base-href={forumShellHref}
+                data-lesson-href={lessonForumHref}
                 data-has-session={hasSessionUser ? 'true' : 'false'}
+                data-is-lesson-page={isLessonPage ? 'true' : 'false'}
                 data-is-course-forum-page={isCourseForumPage ? 'true' : 'false'}
+                data-active-mode={initialSidebarForumMode}
                 data-active-board-slug={initialSidebarBoardSlug}
               >
                 {isLessonPage && (
                   <li class="lesson-item">
                     <a
-                      href={`${courseHref}/${encodeURIComponent(resolvedLessonRoutePath)}#lesson-forum`}
-                      class:list={['lesson-link', 'forum-subforum-link', { active: isLessonPage }]}
+                      href={`${lessonForumHref}#lesson-forum`}
+                      class:list={['lesson-link', 'forum-subforum-link', { active: initialSidebarForumMode === 'lesson' }]}
                       data-board-slug="lesson"
-                      aria-current={isLessonPage ? 'page' : undefined}
+                      aria-current={initialSidebarForumMode === 'lesson' ? 'page' : undefined}
                     >
                       Lección
                     </a>
@@ -1949,10 +2084,8 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
                 {hasSessionUser ? (
                   sidebarForumBoards.map((board) => {
                     const boardSlug = normalizeForumBoardSlug(board.slug);
-                    const isActiveBoard = isCourseForumPage && boardSlug === initialSidebarBoardSlug;
-                    const boardHref = boardSlug === 'general'
-                      ? `${courseForumHref}#lesson-forum`
-                      : `${courseForumHref}?board=${encodeURIComponent(boardSlug)}#lesson-forum`;
+                    const isActiveBoard = initialSidebarForumMode === 'board' && boardSlug === initialSidebarBoardSlug;
+                    const boardHref = `${forumShellHref}?board=${encodeURIComponent(boardSlug)}#lesson-forum`;
 
                     return (
                       <li class="lesson-item">
@@ -1973,30 +2106,29 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
                     <span class="lesson-link forum-subforum-link is-disabled">Inicia sesión para ver subforos</span>
                   </li>
                 )}
+                <li class="lesson-item" id="forum-new-board-item" hidden>
+                  <details id="forum-new-board-details" class="forum-fold sidebar-forum-fold" hidden>
+                    <summary class="lesson-link forum-subforum-link forum-fold-summary">Crear foro</summary>
+                    <form id="forum-new-board-form" class="forum-form">
+                      <input id="forum-board-title" class="forum-field" type="text" maxlength="90" placeholder="Título" required />
+                      <input id="forum-board-description" class="forum-field" type="text" maxlength="260" placeholder="Descripción opcional" />
+                      <div class="forum-form-actions">
+                        <button
+                          type="submit"
+                          class="forum-secondary-btn forum-action-btn forum-action-f"
+                          data-tooltip="Crear foro alternativo"
+                          aria-label="Crear foro alternativo"
+                          title="Crear foro alternativo"
+                        >F</button>
+                      </div>
+                    </form>
+                  </details>
+                </li>
               </ul>
-              <details id="forum-new-board-details" class="forum-fold sidebar-forum-fold" hidden>
-                <summary class="forum-fold-summary">Crear foro</summary>
-                <form id="forum-new-board-form" class="forum-form">
-                  <input id="forum-board-title" class="forum-field" type="text" maxlength="90" placeholder="Título" required />
-                  <input id="forum-board-description" class="forum-field" type="text" maxlength="260" placeholder="Descripción opcional" />
-                  <div class="forum-form-actions">
-                    <button
-                      type="submit"
-                      class="forum-secondary-btn forum-action-btn forum-action-f"
-                      data-tooltip="Crear foro alternativo"
-                      aria-label="Crear foro alternativo"
-                      title="Crear foro alternativo"
-                    >F</button>
-                  </div>
-                </form>
-              </details>
             </div>
 
             <div class="lesson-forum-header">
-              <h3 class="lesson-forum-title">{isLessonPage ? 'Lección' : 'Foros del curso'}</h3>
-              <p class="lesson-forum-subtitle">
-                {isLessonPage ? 'Discusión contextual de esta lección y acceso al resto de foros.' : 'General, proyecto final y foros alternativos.'}
-              </p>
+              <h3 class="lesson-forum-title">{forumPanelTitle}</h3>
             </div>
 
             {hasSessionUser ? (
@@ -2005,7 +2137,7 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
                 <div class="forum-grid">
                   <section class="forum-panel forum-thread-column">
                     <details id="forum-new-thread" class="forum-fold forum-new-thread" hidden>
-                      <summary class="forum-fold-summary">Crear hilo</summary>
+                      <summary class="forum-fold-summary">{forumThreadPrompt}</summary>
                       <form id="forum-new-thread-form" class="forum-form">
                         <input id="forum-thread-title" class="forum-field" type="text" maxlength="140" placeholder="Título del hilo" required />
                         <textarea id="forum-thread-body" class="forum-textarea" maxlength="4000" placeholder="Escribe el primer mensaje..." required></textarea>
@@ -2084,6 +2216,18 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
         >↑</button>
       </div>
     </main>
+    <div id="forum-media-modal" class="forum-media-modal" hidden aria-hidden="true">
+      <div class="forum-media-modal-stage" role="dialog" aria-modal="true" aria-label="Media ampliado">
+        <button
+          id="forum-media-modal-close"
+          class="forum-media-modal-close"
+          type="button"
+          aria-label="Cerrar media ampliado"
+          title="Cerrar"
+        >×</button>
+        <div id="forum-media-modal-content" class="forum-media-modal-content"></div>
+      </div>
+    </div>
     <Footer />
 
     <script>
@@ -2246,6 +2390,7 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
       const wordcloudWidgetsByEvalId = new Map();
       const forumState = {
         courseId: '',
+        isLessonPage: false,
         mode: 'lesson',
         lessonSlug: '',
         boardSlug: '',
@@ -4305,8 +4450,11 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
           node: subnav,
           courseId: subnav.dataset.courseId || '',
           baseHref: subnav.dataset.forumBaseHref || '',
+          lessonHref: subnav.dataset.lessonHref || '',
           hasSession: subnav.dataset.hasSession === 'true',
+          isLessonPage: subnav.dataset.isLessonPage === 'true',
           isCourseForumPage: subnav.dataset.isCourseForumPage === 'true',
+          activeMode: subnav.dataset.activeMode === 'lesson' ? 'lesson' : 'board',
           activeBoardSlug: normalizeForumBoardSlug(subnav.dataset.activeBoardSlug || 'general'),
         };
       }
@@ -4318,13 +4466,17 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
         const {
           node,
           baseHref,
+          lessonHref,
           hasSession,
+          isLessonPage,
           isCourseForumPage,
+          activeMode: initialActiveMode,
         } = context;
 
         if (!hasSession || !baseHref) return;
 
         const resolvedBoards = Array.isArray(boards) ? boards : [];
+        const activeMode = options.activeMode === 'lesson' ? 'lesson' : (initialActiveMode === 'lesson' ? 'lesson' : 'board');
         const preferredBoardSlug = normalizeForumBoardSlug(
           options.preferredBoardSlug || context.activeBoardSlug || 'general',
         );
@@ -4335,8 +4487,28 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
           ? preferredBoardSlug
           : (availableSlugs[0] || 'general');
 
+        node.dataset.activeMode = activeMode;
         node.dataset.activeBoardSlug = activeBoardSlug;
         node.innerHTML = '';
+
+        if (isLessonPage && lessonHref) {
+          const lessonItem = document.createElement('li');
+          lessonItem.className = 'lesson-item';
+
+          const lessonLink = document.createElement('a');
+          lessonLink.className = 'lesson-link forum-subforum-link';
+          lessonLink.dataset.boardSlug = 'lesson';
+          lessonLink.textContent = 'Lección';
+          lessonLink.href = `${lessonHref}#lesson-forum`;
+
+          if (activeMode === 'lesson') {
+            lessonLink.classList.add('active');
+            lessonLink.setAttribute('aria-current', 'page');
+          }
+
+          lessonItem.appendChild(lessonLink);
+          node.appendChild(lessonItem);
+        }
 
         if (resolvedBoards.length === 0) {
           const emptyItem = document.createElement('li');
@@ -4362,11 +4534,9 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
           link.dataset.boardSlug = slug;
           link.textContent = String(board?.title || slug);
           link.title = String(board?.description || board?.title || slug);
-          link.href = slug === 'general'
-            ? `${baseHref}#lesson-forum`
-            : `${baseHref}?board=${encodeURIComponent(slug)}#lesson-forum`;
+          link.href = `${baseHref}?board=${encodeURIComponent(slug)}#lesson-forum`;
 
-          if (isCourseForumPage && slug === activeBoardSlug) {
+          if (activeMode === 'board' && slug === activeBoardSlug) {
             link.classList.add('active');
             link.setAttribute('aria-current', 'page');
           }
@@ -4376,7 +4546,7 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
         });
       }
 
-      async function refreshCourseForumSubnav({ preferredBoardSlug = '', boards = null } = {}) {
+      async function refreshCourseForumSubnav({ preferredBoardSlug = '', boards = null, activeMode = '' } = {}) {
         const context = getCourseForumSubnavContext();
         if (!context) return;
 
@@ -4384,7 +4554,7 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
         if (!hasSession || !courseId) return;
 
         if (Array.isArray(boards)) {
-          renderCourseForumSubnav(boards, { preferredBoardSlug });
+          renderCourseForumSubnav(boards, { preferredBoardSlug, activeMode });
           return;
         }
 
@@ -4399,7 +4569,7 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
           }
 
           const boardList = Array.isArray(payload?.boards) ? payload.boards : [];
-          renderCourseForumSubnav(boardList, { preferredBoardSlug });
+          renderCourseForumSubnav(boardList, { preferredBoardSlug, activeMode });
         } catch (error) {
           console.error('Sidebar forum board load error:', error);
           node.innerHTML = '';
@@ -4771,6 +4941,7 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
         if (!hasSession) return;
 
         forumState.courseId = forumRoot.dataset.courseId || '';
+        forumState.isLessonPage = forumRoot.dataset.isLessonPage === 'true';
         forumState.mode = forumRoot.dataset.forumMode === 'board' ? 'board' : 'lesson';
         forumState.lessonSlug = forumRoot.dataset.lessonSlug || '';
         forumState.boardSlug = forumRoot.dataset.initialBoardSlug || 'general';
@@ -4786,7 +4957,7 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
         }
 
         if (!forumState.courseId) return;
-        if (forumState.mode === 'lesson' && !forumState.lessonSlug) return;
+        if (forumState.isLessonPage && forumState.mode === 'lesson' && !forumState.lessonSlug) return;
 
         const statusEl = document.getElementById('forum-status');
         const threadListEl = document.getElementById('forum-thread-list');
@@ -4801,10 +4972,14 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
         const parentPostInput = document.getElementById('forum-parent-post-id');
         const replyTargetEl = document.getElementById('forum-reply-target');
         const cancelReplyBtn = document.getElementById('forum-cancel-reply');
+        const newBoardItem = document.getElementById('forum-new-board-item');
         const newBoardDetails = document.getElementById('forum-new-board-details');
         const newBoardForm = document.getElementById('forum-new-board-form');
         const boardTitleInput = document.getElementById('forum-board-title');
         const boardDescriptionInput = document.getElementById('forum-board-description');
+        const mediaModalEl = document.getElementById('forum-media-modal');
+        const mediaModalContentEl = document.getElementById('forum-media-modal-content');
+        const mediaModalCloseBtn = document.getElementById('forum-media-modal-close');
 
         if (
           !statusEl ||
@@ -4826,19 +5001,191 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
         let latestPostRequestToken = 0;
         let forumMermaidPromise = null;
         const FORUM_READ_PREFIX = 'forum:read:';
+        let activeForumModalMedia = null;
 
-        function syncBoardQueryParam() {
-          if (forumState.mode !== 'board') return;
+        function getForumShortName(value) {
+          const cleaned = String(value || '').trim();
+          if (!cleaned) return 'Usuario';
+          return cleaned.split(/\s+/).filter(Boolean)[0] || cleaned;
+        }
 
+        const isDirectForumMediaUrl = (value) =>
+          /\.(png|jpe?g|gif|webp|svg|mp4|webm|mov|m4v|mp3|wav|ogg|m4a)(?:$|[?#])/i.test(String(value || '').trim());
+
+        const getForumMediaSource = (element) => {
+          if (element instanceof HTMLImageElement) return element.currentSrc || element.src || '';
+          if (element instanceof HTMLVideoElement || element instanceof HTMLAudioElement) {
+            return element.currentSrc || element.getAttribute('src') || element.querySelector('source')?.src || '';
+          }
+          if (element instanceof HTMLAnchorElement) return element.href || '';
+          return '';
+        };
+
+        const extractForumMediaTarget = (target) => {
+          if (!(target instanceof Element)) return null;
+          const mediaEl = target.closest('.forum-post-body img, .forum-post-body video, .forum-post-body audio, .forum-post-body a[href]');
+          if (!mediaEl) return null;
+          if (mediaEl instanceof HTMLAnchorElement && !isDirectForumMediaUrl(mediaEl.href)) return null;
+
+          const src = getForumMediaSource(mediaEl);
+          if (!src) return null;
+
+          if (mediaEl instanceof HTMLImageElement || /\.(png|jpe?g|gif|webp|svg)(?:$|[?#])/i.test(src)) {
+            return { kind: 'image', src, alt: mediaEl.getAttribute('alt') || '' };
+          }
+          if (mediaEl instanceof HTMLVideoElement || /\.(mp4|webm|mov|m4v)(?:$|[?#])/i.test(src)) {
+            return { kind: 'video', src };
+          }
+          if (mediaEl instanceof HTMLAudioElement || /\.(mp3|wav|ogg|m4a)(?:$|[?#])/i.test(src)) {
+            return { kind: 'audio', src };
+          }
+          return null;
+        };
+
+        const closeForumMediaModal = () => {
+          if (!(mediaModalEl instanceof HTMLElement) || !(mediaModalContentEl instanceof HTMLElement)) return;
+          if (activeForumModalMedia instanceof HTMLMediaElement) {
+            activeForumModalMedia.pause();
+            activeForumModalMedia.removeAttribute('src');
+            activeForumModalMedia.load();
+          }
+          activeForumModalMedia = null;
+          mediaModalContentEl.replaceChildren();
+          mediaModalEl.hidden = true;
+          mediaModalEl.setAttribute('aria-hidden', 'true');
+          document.documentElement.style.overflow = '';
+        };
+
+        const enableForumMediaZoom = (viewport, target) => {
+          if (!(viewport instanceof HTMLElement) || !(target instanceof HTMLElement)) return;
+
+          let scale = 1;
+          let offsetX = 0;
+          let offsetY = 0;
+          let pointerId = null;
+          let dragOriginX = 0;
+          let dragOriginY = 0;
+          let startOffsetX = 0;
+          let startOffsetY = 0;
+
+          const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+          const applyTransform = () => {
+            if (scale <= 1) {
+              offsetX = 0;
+              offsetY = 0;
+            }
+            target.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+          };
+          const setScale = (nextScale) => {
+            scale = clamp(nextScale, 1, 8);
+            applyTransform();
+          };
+
+          viewport.addEventListener('wheel', (event) => {
+            event.preventDefault();
+            setScale(scale + (event.deltaY < 0 ? 0.24 : -0.24));
+          }, { passive: false });
+
+          target.addEventListener('dblclick', (event) => {
+            event.preventDefault();
+            setScale(scale < 2 ? scale + 1 : 1);
+          });
+
+          viewport.addEventListener('pointerdown', (event) => {
+            if (scale <= 1) return;
+            pointerId = event.pointerId;
+            dragOriginX = event.clientX;
+            dragOriginY = event.clientY;
+            startOffsetX = offsetX;
+            startOffsetY = offsetY;
+            viewport.classList.add('is-dragging');
+            viewport.setPointerCapture(pointerId);
+          });
+
+          viewport.addEventListener('pointermove', (event) => {
+            if (pointerId !== event.pointerId) return;
+            offsetX = startOffsetX + (event.clientX - dragOriginX);
+            offsetY = startOffsetY + (event.clientY - dragOriginY);
+            applyTransform();
+          });
+
+          const stopDragging = (event) => {
+            if (pointerId !== event.pointerId) return;
+            try {
+              viewport.releasePointerCapture(pointerId);
+            } catch {}
+            pointerId = null;
+            viewport.classList.remove('is-dragging');
+          };
+
+          viewport.addEventListener('pointerup', stopDragging);
+          viewport.addEventListener('pointercancel', stopDragging);
+
+          applyTransform();
+        };
+
+        const openForumMediaModal = (payload) => {
+          if (!(mediaModalEl instanceof HTMLElement) || !(mediaModalContentEl instanceof HTMLElement)) return;
+          if (!payload?.src) return;
+
+          let node = null;
+          if (payload.kind === 'image') {
+            const image = document.createElement('img');
+            image.src = payload.src;
+            image.alt = payload.alt || '';
+            image.loading = 'eager';
+            image.decoding = 'async';
+            node = image;
+          } else if (payload.kind === 'video') {
+            const video = document.createElement('video');
+            video.src = payload.src;
+            video.controls = true;
+            video.autoplay = true;
+            video.playsInline = true;
+            video.preload = 'metadata';
+            node = video;
+          } else if (payload.kind === 'audio') {
+            const audio = document.createElement('audio');
+            audio.src = payload.src;
+            audio.controls = true;
+            audio.autoplay = true;
+            audio.preload = 'metadata';
+            node = audio;
+          }
+
+          if (!node) return;
+
+          if (payload.kind === 'image' && /\.svg(?:$|[?#])/i.test(payload.src)) {
+            node.dataset.forumSvg = 'true';
+          }
+
+          if (payload.kind === 'image' || payload.kind === 'video') {
+            const viewport = document.createElement('div');
+            viewport.className = 'forum-media-modal-viewport';
+            viewport.appendChild(node);
+            mediaModalContentEl.replaceChildren(viewport);
+            enableForumMediaZoom(viewport, node);
+          } else {
+            mediaModalContentEl.replaceChildren(node);
+          }
+          activeForumModalMedia = node instanceof HTMLMediaElement ? node : null;
+          mediaModalEl.hidden = false;
+          mediaModalEl.setAttribute('aria-hidden', 'false');
+          document.documentElement.style.overflow = 'hidden';
+        };
+
+        function syncBoardQueryParam(historyMode = 'replace') {
           const nextUrl = new URL(window.location.href);
-          const normalizedBoard = normalizeForumBoardSlug(forumState.boardSlug);
-          if (normalizedBoard === 'general') {
+          nextUrl.hash = 'lesson-forum';
+          if (forumState.mode !== 'board') {
             nextUrl.searchParams.delete('board');
           } else {
+            const normalizedBoard = normalizeForumBoardSlug(forumState.boardSlug);
             nextUrl.searchParams.set('board', normalizedBoard);
           }
 
-          window.history.replaceState({}, '', `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+          const method = historyMode === 'push' ? 'pushState' : 'replaceState';
+          window.history[method]({}, '', `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
         }
 
         function setForumStatus(message, tone = 'info') {
@@ -4977,6 +5324,12 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
           }
 
           normalizeForumBodyNode(container);
+
+          container.querySelectorAll('a[href]').forEach((anchor) => {
+            if (!(anchor instanceof HTMLAnchorElement)) return;
+            if (!isDirectForumMediaUrl(anchor.href)) return;
+            anchor.dataset.forumMediaLink = 'true';
+          });
         }
 
         function replaceForumTextareaSelection(textarea, nextText, start, end, cursorStart, cursorEnd = cursorStart) {
@@ -6259,9 +6612,7 @@ a[node] -->|edge| b[hub]
           }
         }
 
-        async function loadBoards({ preferredSlug = '' } = {}) {
-          if (forumState.mode !== 'board') return;
-
+        async function fetchForumBoards() {
           const url = new URL('/api/forum/boards', window.location.origin);
           url.searchParams.set('courseId', forumState.courseId);
 
@@ -6278,9 +6629,18 @@ a[node] -->|edge| b[hub]
           if (newBoardForm) {
             newBoardForm.hidden = !forumState.canManageBoards;
           }
+          if (newBoardItem instanceof HTMLElement) {
+            newBoardItem.hidden = !forumState.canManageBoards;
+          }
           if (newBoardDetails instanceof HTMLElement) {
             newBoardDetails.hidden = !forumState.canManageBoards;
           }
+        }
+
+        async function loadBoards({ preferredSlug = '', syncHistory = true } = {}) {
+          if (forumState.mode !== 'board') return;
+
+          await fetchForumBoards();
 
           const slugs = forumState.boards
             .map((board) => normalizeForumBoardSlug(board?.slug))
@@ -6292,10 +6652,13 @@ a[node] -->|edge| b[hub]
             forumState.boardSlug = slugs[0] || '';
           }
 
-          syncBoardQueryParam();
+          if (syncHistory) {
+            syncBoardQueryParam();
+          }
           await refreshCourseForumSubnav({
             preferredBoardSlug: forumState.boardSlug,
             boards: forumState.boards,
+            activeMode: 'board',
           });
         }
 
@@ -6360,6 +6723,29 @@ a[node] -->|edge| b[hub]
             renderPosts([], false, false);
             setForumStatus(error?.message || 'No se pudieron cargar los hilos del foro.', 'error');
           }
+        }
+
+        async function applyForumScope(nextMode, { boardSlug = '', pushHistory = false } = {}) {
+          const normalizedMode = nextMode === 'lesson' ? 'lesson' : 'board';
+          if (normalizedMode === 'lesson' && (!forumState.isLessonPage || !forumState.lessonSlug)) {
+            return;
+          }
+
+          forumState.mode = normalizedMode;
+          if (normalizedMode === 'board') {
+            forumState.boardSlug = normalizeForumBoardSlug(boardSlug || forumState.boardSlug || 'general');
+            await loadBoards({ preferredSlug: forumState.boardSlug, syncHistory: false });
+          } else {
+            await refreshCourseForumSubnav({
+              preferredBoardSlug: forumState.boardSlug,
+              boards: forumState.boards,
+              activeMode: 'lesson',
+            });
+          }
+
+          forumState.selectedThreadId = '';
+          syncBoardQueryParam(pushHistory ? 'push' : 'replace');
+          await loadThreads({ preserveSelection: false });
         }
 
         if (newBoardForm && boardTitleInput && boardDescriptionInput) {
@@ -6427,6 +6813,79 @@ a[node] -->|edge| b[hub]
 
         bindSubmitShortcut(threadBodyInput, newThreadForm);
         bindSubmitShortcut(replyBodyInput, replyForm);
+
+        const forumSubnavEl = document.getElementById('course-forum-subnav');
+        if (forumSubnavEl instanceof HTMLElement && forumSubnavEl.dataset.bound !== 'true') {
+          forumSubnavEl.dataset.bound = 'true';
+          forumSubnavEl.addEventListener('click', (event) => {
+            const anchor = event.target instanceof Element
+              ? event.target.closest('a.forum-subforum-link')
+              : null;
+            if (!(anchor instanceof HTMLAnchorElement)) return;
+            if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+
+            const targetScope = String(anchor.dataset.boardSlug || '').trim().toLowerCase();
+            if (!targetScope) return;
+
+            event.preventDefault();
+            if (targetScope === 'lesson') {
+              void applyForumScope('lesson', { pushHistory: true });
+              return;
+            }
+
+            void applyForumScope('board', {
+              boardSlug: targetScope,
+              pushHistory: true,
+            });
+          });
+        }
+
+        if (postListEl instanceof HTMLElement && postListEl.dataset.mediaPreviewBound !== 'true') {
+          postListEl.dataset.mediaPreviewBound = 'true';
+          postListEl.addEventListener('dblclick', (event) => {
+            const payload = extractForumMediaTarget(event.target);
+            if (!payload) return;
+            event.preventDefault();
+            openForumMediaModal(payload);
+          });
+        }
+
+        if (mediaModalCloseBtn instanceof HTMLButtonElement && mediaModalCloseBtn.dataset.bound !== 'true') {
+          mediaModalCloseBtn.dataset.bound = 'true';
+          mediaModalCloseBtn.addEventListener('click', closeForumMediaModal);
+        }
+
+        if (mediaModalEl instanceof HTMLElement && mediaModalEl.dataset.bound !== 'true') {
+          mediaModalEl.dataset.bound = 'true';
+          mediaModalEl.addEventListener('click', (event) => {
+            if (event.target === mediaModalEl) {
+              closeForumMediaModal();
+            }
+          });
+        }
+
+        if (document.body.dataset.lessonForumMediaEscapeBound !== 'true') {
+          document.body.dataset.lessonForumMediaEscapeBound = 'true';
+          document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && mediaModalEl instanceof HTMLElement && !mediaModalEl.hidden) {
+              closeForumMediaModal();
+            }
+          });
+        }
+
+        if (window.__musikiForumPopstateBound !== true) {
+          window.__musikiForumPopstateBound = true;
+          window.addEventListener('popstate', () => {
+            const boardParam = String(new URL(window.location.href).searchParams.get('board') || '').trim();
+            if (forumState.isLessonPage && !boardParam) {
+              void applyForumScope('lesson');
+              return;
+            }
+            void applyForumScope('board', {
+              boardSlug: normalizeForumBoardSlug(boardParam || 'general'),
+            });
+          });
+        }
 
         newThreadForm.addEventListener('submit', async (event) => {
           event.preventDefault();
@@ -6529,22 +6988,36 @@ a[node] -->|edge| b[hub]
           }
         });
 
-        if (forumState.mode === 'board') {
-          try {
-            await loadBoards();
-          } catch (error) {
-            setForumStatus(error?.message || 'No se pudo cargar la lista de foros del curso.', 'error');
-            if (newThreadForm) newThreadForm.hidden = true;
-            if (newThreadContainer) newThreadContainer.hidden = true;
-            return;
-          }
+        try {
+          await fetchForumBoards();
+          await refreshCourseForumSubnav({
+            preferredBoardSlug: forumState.boardSlug,
+            boards: forumState.boards,
+            activeMode: forumState.mode,
+          });
+        } catch (error) {
+          setForumStatus(error?.message || 'No se pudo cargar la lista de foros del curso.', 'error');
+          if (newThreadForm) newThreadForm.hidden = true;
+          if (newThreadContainer) newThreadContainer.hidden = true;
+          return;
+        }
 
-          if (!forumState.boardSlug) {
-            setForumStatus('No hay foros configurados para este curso.', 'error');
-            if (newThreadForm) newThreadForm.hidden = true;
-            if (newThreadContainer) newThreadContainer.hidden = true;
-            return;
-          }
+        if (forumState.mode === 'board') {
+          const slugs = forumState.boards
+            .map((board) => normalizeForumBoardSlug(board?.slug))
+            .filter(Boolean);
+          const preferredBoardSlug = normalizeForumBoardSlug(forumState.boardSlug || 'general');
+          forumState.boardSlug = slugs.includes(preferredBoardSlug)
+            ? preferredBoardSlug
+            : (slugs[0] || 'general');
+          syncBoardQueryParam();
+          await refreshCourseForumSubnav({
+            preferredBoardSlug: forumState.boardSlug,
+            boards: forumState.boards,
+            activeMode: 'board',
+          });
+        } else {
+          syncBoardQueryParam();
         }
 
         await loadThreads({ preserveSelection: false });

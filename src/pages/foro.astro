@@ -1107,6 +1107,68 @@ if (activeCourse) {
         overflow-x: auto;
       }
 
+      #forum-reader-root .forum-post-body :where(img, video, audio, a[data-forum-media-link='true']) {
+        cursor: zoom-in;
+      }
+
+      .forum-media-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 120;
+        display: grid;
+        place-items: center;
+        background: rgba(0, 0, 0, 0.9);
+        padding: 1.25rem;
+      }
+
+      .forum-media-modal[hidden] {
+        display: none;
+      }
+
+      .forum-media-modal-stage {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: min(96vw, 92rem);
+        max-height: 92vh;
+      }
+
+      .forum-media-modal-close {
+        position: absolute;
+        top: 0.5rem;
+        right: 0.5rem;
+        z-index: 1;
+        border: 0;
+        background: transparent;
+        color: rgba(255, 255, 255, 0.82);
+        font: inherit;
+        font-size: 1.8rem;
+        line-height: 1;
+        padding: 0.35rem 0.45rem;
+        cursor: pointer;
+      }
+
+      .forum-media-modal-content {
+        display: grid;
+        place-items: center;
+        width: 100%;
+        max-height: 92vh;
+      }
+
+      .forum-media-modal-content img,
+      .forum-media-modal-content video {
+        display: block;
+        max-width: 100%;
+        max-height: 88vh;
+        width: auto;
+        height: auto;
+      }
+
+      .forum-media-modal-content audio {
+        width: min(92vw, 44rem);
+        max-width: 100%;
+      }
+
       #forum-reader-root .forum-post-actions {
         margin-top: 0.58rem;
         display: flex;
@@ -1486,6 +1548,18 @@ if (activeCourse) {
         )}
       </section>
     </main>
+    <div id="forum-media-modal" class="forum-media-modal" hidden aria-hidden="true">
+      <div class="forum-media-modal-stage" role="dialog" aria-modal="true" aria-label="Media ampliado">
+        <button
+          id="forum-media-modal-close"
+          class="forum-media-modal-close"
+          type="button"
+          aria-label="Cerrar media ampliado"
+          title="Cerrar"
+        >×</button>
+        <div id="forum-media-modal-content" class="forum-media-modal-content"></div>
+      </div>
+    </div>
     <Footer />
 
     <script is:inline>
@@ -1768,6 +1842,9 @@ if (activeCourse) {
         const newBoardForm = document.getElementById('forum-new-board-form');
         const boardTitleInput = document.getElementById('forum-board-title');
         const boardDescriptionInput = document.getElementById('forum-board-description');
+        const mediaModalEl = document.getElementById('forum-media-modal');
+        const mediaModalContentEl = document.getElementById('forum-media-modal-content');
+        const mediaModalCloseBtn = document.getElementById('forum-media-modal-close');
 
         if (
           !statusEl ||
@@ -1802,6 +1879,93 @@ if (activeCourse) {
           selectedThreadId: initialThreadId,
           canWrite: false,
           canManageBoards: false,
+        };
+
+        let activeForumModalMedia = null;
+
+        const isDirectForumMediaUrl = (value) =>
+          /\.(png|jpe?g|gif|webp|svg|mp4|webm|mov|m4v|mp3|wav|ogg|m4a)(?:$|[?#])/i.test(String(value || '').trim());
+
+        const getForumMediaSource = (element) => {
+          if (element instanceof HTMLImageElement) return element.currentSrc || element.src || '';
+          if (element instanceof HTMLVideoElement || element instanceof HTMLAudioElement) {
+            return element.currentSrc || element.getAttribute('src') || element.querySelector('source')?.src || '';
+          }
+          if (element instanceof HTMLAnchorElement) return element.href || '';
+          return '';
+        };
+
+        const extractForumMediaTarget = (target) => {
+          if (!(target instanceof Element)) return null;
+          const mediaEl = target.closest('.forum-post-body img, .forum-post-body video, .forum-post-body audio, .forum-post-body a[href]');
+          if (!mediaEl) return null;
+          if (mediaEl instanceof HTMLAnchorElement && !isDirectForumMediaUrl(mediaEl.href)) return null;
+
+          const src = getForumMediaSource(mediaEl);
+          if (!src) return null;
+
+          if (mediaEl instanceof HTMLImageElement || /\.(png|jpe?g|gif|webp|svg)(?:$|[?#])/i.test(src)) {
+            return { kind: 'image', src, alt: mediaEl.getAttribute('alt') || '' };
+          }
+          if (mediaEl instanceof HTMLVideoElement || /\.(mp4|webm|mov|m4v)(?:$|[?#])/i.test(src)) {
+            return { kind: 'video', src };
+          }
+          if (mediaEl instanceof HTMLAudioElement || /\.(mp3|wav|ogg|m4a)(?:$|[?#])/i.test(src)) {
+            return { kind: 'audio', src };
+          }
+          return null;
+        };
+
+        const closeForumMediaModal = () => {
+          if (!(mediaModalEl instanceof HTMLElement) || !(mediaModalContentEl instanceof HTMLElement)) return;
+          if (activeForumModalMedia instanceof HTMLMediaElement) {
+            activeForumModalMedia.pause();
+            activeForumModalMedia.removeAttribute('src');
+            activeForumModalMedia.load();
+          }
+          activeForumModalMedia = null;
+          mediaModalContentEl.replaceChildren();
+          mediaModalEl.hidden = true;
+          mediaModalEl.setAttribute('aria-hidden', 'true');
+          document.documentElement.style.overflow = '';
+        };
+
+        const openForumMediaModal = (payload) => {
+          if (!(mediaModalEl instanceof HTMLElement) || !(mediaModalContentEl instanceof HTMLElement)) return;
+          if (!payload?.src) return;
+
+          let node = null;
+          if (payload.kind === 'image') {
+            const image = document.createElement('img');
+            image.src = payload.src;
+            image.alt = payload.alt || '';
+            image.loading = 'eager';
+            image.decoding = 'async';
+            node = image;
+          } else if (payload.kind === 'video') {
+            const video = document.createElement('video');
+            video.src = payload.src;
+            video.controls = true;
+            video.autoplay = true;
+            video.playsInline = true;
+            video.preload = 'metadata';
+            node = video;
+          } else if (payload.kind === 'audio') {
+            const audio = document.createElement('audio');
+            audio.src = payload.src;
+            audio.controls = true;
+            audio.autoplay = true;
+            audio.preload = 'metadata';
+            node = audio;
+          }
+
+          if (!node) return;
+
+          mediaModalContentEl.replaceChildren(node);
+          activeForumModalMedia = node instanceof HTMLMediaElement ? node : null;
+          mediaModalEl.hidden = false;
+          mediaModalEl.setAttribute('aria-hidden', 'false');
+          document.documentElement.style.overflow = 'hidden';
         };
 
         let latestPostRequestToken = 0;
@@ -1963,6 +2127,12 @@ if (activeCourse) {
           }
 
           normalizeForumBodyNode(container);
+
+          container.querySelectorAll('a[href]').forEach((anchor) => {
+            if (!(anchor instanceof HTMLAnchorElement)) return;
+            if (!isDirectForumMediaUrl(anchor.href)) return;
+            anchor.dataset.forumMediaLink = 'true';
+          });
         };
 
         const replaceForumTextareaSelection = (textarea, nextText, start, end, cursorStart, cursorEnd = cursorStart) => {
@@ -3162,6 +3332,39 @@ a[node] -->|edge| b[hub]
 
         bindSubmitShortcut(threadBodyInput, newThreadForm);
         bindSubmitShortcut(replyBodyInput, replyForm);
+
+        if (postListEl instanceof HTMLElement && postListEl.dataset.mediaPreviewBound !== 'true') {
+          postListEl.dataset.mediaPreviewBound = 'true';
+          postListEl.addEventListener('dblclick', (event) => {
+            const payload = extractForumMediaTarget(event.target);
+            if (!payload) return;
+            event.preventDefault();
+            openForumMediaModal(payload);
+          });
+        }
+
+        if (mediaModalCloseBtn instanceof HTMLButtonElement && mediaModalCloseBtn.dataset.bound !== 'true') {
+          mediaModalCloseBtn.dataset.bound = 'true';
+          mediaModalCloseBtn.addEventListener('click', closeForumMediaModal);
+        }
+
+        if (mediaModalEl instanceof HTMLElement && mediaModalEl.dataset.bound !== 'true') {
+          mediaModalEl.dataset.bound = 'true';
+          mediaModalEl.addEventListener('click', (event) => {
+            if (event.target === mediaModalEl) {
+              closeForumMediaModal();
+            }
+          });
+        }
+
+        if (document.body.dataset.forumMediaEscapeBound !== 'true') {
+          document.body.dataset.forumMediaEscapeBound = 'true';
+          document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && mediaModalEl instanceof HTMLElement && !mediaModalEl.hidden) {
+              closeForumMediaModal();
+            }
+          });
+        }
 
         if (newBoardForm && boardTitleInput && boardDescriptionInput) {
           newBoardForm.addEventListener('submit', async (event) => {

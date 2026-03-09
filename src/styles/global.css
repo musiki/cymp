@@ -1165,6 +1165,7 @@ ol ol ol ol > li::marker {
   font-size: 0.72rem !important;
   line-height: 1.2 !important;
   font-weight: 600 !important;
+  display: block !important;
 }
 
 :is(#lesson-forum, #forum-reader-root) .forum-post-header {
@@ -1177,10 +1178,12 @@ ol ol ol ol > li::marker {
 }
 
 :is(#lesson-forum, #forum-reader-root) .forum-post-date {
+  display: block !important;
   font-size: 0.68rem !important;
   line-height: 1.1 !important;
   opacity: 0.6 !important;
   text-align: left !important;
+  margin-top: 0.1rem !important;
 }
 
 :is(#lesson-forum, #forum-reader-root) .forum-post-badges,
@@ -1374,10 +1377,10 @@ ol ol ol ol > li::marker {
 }
 
 :is(#lesson-forum, #forum-reader-root) .forum-action-btn {
-  width: 1.42rem !important;
-  height: 1.42rem !important;
-  min-width: 1.42rem !important;
-  min-height: 1.42rem !important;
+  width: 1.56rem !important;
+  height: 1.56rem !important;
+  min-width: 1.56rem !important;
+  min-height: 1.56rem !important;
   border: 1px solid color-mix(in srgb, var(--forum-border-soft, #d8dee6) 88%, transparent) !important;
   border-radius: 0 !important;
   display: inline-flex !important;
@@ -1387,8 +1390,8 @@ ol ol ol ol > li::marker {
   margin: 0 !important;
   text-transform: uppercase !important;
   letter-spacing: 0.03em;
-  font-weight: 800 !important;
-  font-size: 0.53rem !important;
+  font-weight: 900 !important;
+  font-size: 0.58rem !important;
   line-height: 1 !important;
   color: var(--forum-text-secondary, var(--c-fg-dim, #6b7480)) !important;
   cursor: pointer;
@@ -1457,13 +1460,14 @@ ol ol ol ol > li::marker {
   border: 1px solid color-mix(in srgb, var(--forum-border-soft, #d8dee6) 86%, transparent) !important;
   background: transparent !important;
   color: var(--forum-text-secondary, #64748b) !important;
-  font-size: 0.7rem !important;
-  opacity: 0.7 !important;
+  font-size: 0.78rem !important;
+  font-weight: 900 !important;
+  opacity: 0.86 !important;
 }
 
 :is(#lesson-forum, #forum-reader-root) .forum-post-reaction-btn:hover,
 :is(#lesson-forum, #forum-reader-root) .forum-post-reaction-btn:focus-visible {
-  opacity: 0.62 !important;
+  opacity: 1 !important;
 }
 
 :is(#lesson-forum, #forum-reader-root) .forum-post-reaction-btn.is-active {
@@ -1507,10 +1511,10 @@ ol ol ol ol > li::marker {
     justify-content: flex-end !important;
   }
   :is(#lesson-forum, #forum-reader-root) .forum-action-btn {
-    width: 1.6rem !important;
-    height: 1.6rem !important;
-    min-width: 1.6rem !important;
-    min-height: 1.6rem !important;
-    font-size: 0.56rem !important;
+    width: 1.72rem !important;
+    height: 1.72rem !important;
+    min-width: 1.72rem !important;
+    min-height: 1.72rem !important;
+    font-size: 0.6rem !important;
   }
 }
