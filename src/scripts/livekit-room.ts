@@ -2643,7 +2643,13 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       displaySurface: 'browser',
       frameRate: 30,
     },
-    audio: false,
+    audio: {
+      autoGainControl: false,
+      echoCancellation: false,
+      noiseSuppression: false,
+      sampleRate: 48_000,
+      suppressLocalAudioPlayback: false,
+    },
     preferCurrentTab: true,
     selfBrowserSurface: 'include',
     surfaceSwitching: 'include',
@@ -3122,6 +3128,9 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     const destination = audioContext.createMediaStreamDestination();
     const seenTrackIds = new Set<string>();
     let hasAudio = false;
+    const hasDisplayCaptureAudio = Boolean(
+      recordingDisplayStream?.getAudioTracks().some((track) => track.readyState === 'live'),
+    );
 
     const connectTrack = (track: MediaStreamTrack) => {
       if (track.kind !== 'audio' || track.readyState !== 'live') return;
@@ -3154,17 +3163,26 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       }
     };
 
-    Array.from(mounts.participantAudioMounts.values()).forEach((mount) => {
-      if (mount.element instanceof HTMLMediaElement) {
-        connectMediaElement(mount.element);
-      }
-    });
+    if (hasDisplayCaptureAudio && recordingDisplayStream) {
+      recordingDisplayStream.getAudioTracks().forEach((track) => {
+        const trackKey = `display:${track.id}`;
+        if (seenTrackIds.has(trackKey)) return;
+        seenTrackIds.add(trackKey);
+        connectTrack(track);
+      });
+    } else {
+      Array.from(mounts.participantAudioMounts.values()).forEach((mount) => {
+        if (mount.element instanceof HTMLMediaElement) {
+          connectMediaElement(mount.element);
+        }
+      });
 
-    Array.from(mounts.screenAudioMounts.values()).forEach((mount) => {
-      if (mount.element instanceof HTMLMediaElement) {
-        connectMediaElement(mount.element);
-      }
-    });
+      Array.from(mounts.screenAudioMounts.values()).forEach((mount) => {
+        if (mount.element instanceof HTMLMediaElement) {
+          connectMediaElement(mount.element);
+        }
+      });
+    }
 
     Array.from(room.localParticipant.audioTrackPublications.values()).forEach((publication) => {
       const mediaStreamTrack = (
@@ -3210,7 +3228,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
     let usingDisplayCapture = false;
     try {
-      setStatus('Selecciona esta pestaña en el dialogo de captura para grabar el stage.');
+      setStatus('Selecciona esta pestaña y activa compartir audio para grabar el stage.');
       usingDisplayCapture = await startRecordingDisplayCapture();
     } catch (error) {
       console.warn('Recording display capture failed, falling back to DOM compositor.', error);

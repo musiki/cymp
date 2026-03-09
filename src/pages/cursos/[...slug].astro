@@ -1896,10 +1896,6 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
           </div>
         )}
 
-        <div class="course-nav">
-          <a href="/cursos" class="nav-button">← Volver a cursos</a>
-          <a href={courseHref} class="nav-button">Inicio del curso</a>
-        </div>
       </article>
 
       <aside class="sidebar sidebar--right" data-course-sidebar="right" aria-label="Foros de clase">
@@ -3092,10 +3088,6 @@ const sidebarForumBoards = [...initialCourseForumBoards].sort((left, right) => {
 
           if (!response.ok) return false;
           await loadUserSubmissions();
-
-          if (hasEvalBlocks && Object.keys(userSubmissions).length > 0 && !document.getElementById('clear-answers-btn')) {
-            addClearAnswersButton();
-          }
 
           return true;
         } catch (error) {
@@ -6894,10 +6886,6 @@ a[node] -->|edge| b[hub]
           });
         }
 
-        if (hasEvalBlocks && Object.keys(userSubmissions).length > 0) {
-          addClearAnswersButton();
-        }
-
         updateScrollShortcutVisibility();
         restoreSavedScrollPosition();
 
@@ -6944,59 +6932,6 @@ a[node] -->|edge| b[hub]
         }
       });
       
-      function addClearAnswersButton() {
-        if (document.getElementById('clear-answers-btn')) return;
-        
-        const contentArea = document.querySelector('.content-area');
-        if (!contentArea) return;
-        
-        const buttonContainer = document.createElement('div');
-        buttonContainer.style.cssText = 'margin: 2rem 0; padding: 1rem; background: var(--c-bg-mute); border-radius: 8px; text-align: center;';
-        
-        const button = document.createElement('button');
-        button.id = 'clear-answers-btn';
-        button.className = 'nav-button';
-        button.style.cssText = 'background: #f44336; margin: 0 auto;';
-        button.textContent = '🗑️ Borrar todas mis respuestas';
-        button.onclick = clearAllAnswers;
-        
-        buttonContainer.appendChild(button);
-        
-        const courseNav = contentArea.querySelector('.course-nav');
-        if (courseNav) {
-          contentArea.insertBefore(buttonContainer, courseNav);
-        } else {
-          contentArea.appendChild(buttonContainer);
-        }
-      }
-
-      async function clearAllAnswers() {
-        if (!confirm('¿Estás seguro de que quieres borrar todas tus respuestas? Esta acción no se puede deshacer.')) {
-          return;
-        }
-        
-        const evalIds = Object.keys(userSubmissions).filter((id) => {
-          return document.querySelector(`[data-eval-id="${id}"]`) !== null;
-        });
-        
-        if (evalIds.length === 0) return;
-        
-        try {
-          for (const evalId of evalIds) {
-            const submission = userSubmissions[evalId];
-            if (submission?.id) {
-              await fetch(`/api/submissions/${submission.id}`, {
-                method: 'DELETE',
-              });
-            }
-          }
-          
-          window.location.reload();
-        } catch (error) {
-          console.error('Error clearing answers:', error);
-          alert('Hubo un error al borrar las respuestas. Por favor, intenta de nuevo.');
-        }
-      }
     </script>
 
     <script>
