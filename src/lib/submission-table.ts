@@ -157,6 +157,18 @@ export function getSubmissionResultState(submission: GenericRecord): 'correct' |
   return score >= 4 ? 'correct' : 'incorrect';
 }
 
+export function isSubmissionReviewed(submission: GenericRecord): boolean {
+  const gradedAt = cleanText(submission?.gradedAt);
+  if (gradedAt) return true;
+
+  if (typeof submission?.score === 'number' && Number.isFinite(submission.score)) {
+    return true;
+  }
+
+  const feedback = cleanText(submission?.feedback);
+  return feedback.length > 0;
+}
+
 export function getResultIcon(state: 'correct' | 'incorrect' | 'pending'): string {
   if (state === 'correct') return '✓';
   if (state === 'incorrect') return '✕';

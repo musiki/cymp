@@ -162,6 +162,7 @@ const resolvedActiveCourseCode = normalizeCourseCode(
 	activeCourseCode || resolvedActiveCourse?.code || '',
 );
 const resolvedActiveCourseLabel = resolvedActiveCourse?.title || '';
+const showHeaderClassControls = Boolean(user && (resolvedActiveCourseId || hasPerformativeRoomLink));
 
 const withActiveCourse = (href: string) => {
 	if (!resolvedActiveCourseId) return href;
@@ -217,8 +218,20 @@ const withActiveCourse = (href: string) => {
 					<HeaderLink href="/cursos">Cursos</HeaderLink>
 				)
 			}
-			<HeaderLink href={withActiveCourse('/foro')}>FORO</HeaderLink>
 			{user && <HeaderLink href={withActiveCourse('/dashboard')}>Dashboard</HeaderLink>}
+			{
+				user && resolvedActiveCourseId ? (
+					<button
+						id="header-right-sidebar-toggle"
+						type="button"
+						class="header-forum-toggle"
+						title="Abrir foros (⌘/Ctrl + Shift + \\)"
+						aria-label="Abrir foros"
+					>
+						Foro
+					</button>
+				) : null
+			}
 		</div>
 		<Search />
 		<div class="social-links">
@@ -251,18 +264,35 @@ const withActiveCourse = (href: string) => {
 						) : null
 					}
 					{
-						hasPerformativeRoomLink && (
-							<button
-								id="performative-room-toggle"
-								type="button"
-								class="performative-room-led-btn"
-								title="Abrir sala performativa (Alt+Shift+L)"
-								aria-label="Abrir sala performativa"
-								data-href={normalizedPerformativeRoomHref}
-							>
-								<span class="performative-room-led-dot" aria-hidden="true"></span>
-								<span class="performative-room-led-label" aria-hidden="true">LIVE</span>
-							</button>
+						showHeaderClassControls && (
+							<>
+								<button
+									id="header-live-interaction-toggle"
+									type="button"
+									class="header-activity-led-btn header-activity-led-btn--interaction"
+									title="Abrir interacción en vivo"
+									aria-label="Abrir interacción en vivo"
+									data-course-id={resolvedActiveCourseId}
+									hidden
+								>
+									<span class="header-activity-led-dot header-activity-led-dot--interaction" aria-hidden="true"></span>
+									<span class="header-activity-led-timer" data-header-live-timer aria-hidden="true"></span>
+								</button>
+								<button
+									id="performative-room-toggle"
+									type="button"
+									class="header-activity-led-btn header-activity-led-btn--room"
+									title="Abrir sala performativa (Alt+Shift+L)"
+									aria-label="Abrir sala performativa"
+									data-course-id={resolvedActiveCourseId}
+									data-fallback-href={normalizedPerformativeRoomHref}
+									data-href={normalizedPerformativeRoomHref}
+									hidden
+								>
+									<span class="header-activity-led-dot header-activity-led-dot--room" aria-hidden="true"></span>
+									<span class="performative-room-led-label" aria-hidden="true">LIVE</span>
+								</button>
+							</>
 						)
 					}
 					</>
@@ -334,10 +364,37 @@ const withActiveCourse = (href: string) => {
 		interface Window {
 			__musikiHeaderKeydownHandler?: (event: KeyboardEvent) => void;
 			__musikiHeaderDocClickHandler?: (event: MouseEvent) => void;
+			__musikiHeaderResizeHandler?: () => void;
 		}
 	}
 
 	const setupHeaderControls = () => {
+		const syncHeaderHeight = () => {
+			const header = document.querySelector('header');
+			if (!(header instanceof HTMLElement)) return;
+			document.documentElement.style.setProperty('--musiki-header-height', `${Math.ceil(header.offsetHeight)}px`);
+		};
+
+		const toggleRightSidebarGlobal = () => {
+			const courseRoot = document.querySelector('[data-course-layout-root]');
+			if (courseRoot instanceof HTMLElement && courseRoot.dataset.hasRightSidebar === 'true') {
+				const open = courseRoot.dataset.rightOpen === 'true';
+				const target = courseRoot.querySelector(open ? '[data-sidebar-toggle="right"]' : '[data-sidebar-handle="right"]');
+				if (target instanceof HTMLElement) {
+					target.click();
+					return true;
+				}
+			}
+
+			const genericTarget = document.querySelector('[data-sidebar-toggle="right"], [data-sidebar-handle="right"]');
+			if (genericTarget instanceof HTMLElement) {
+				genericTarget.click();
+				return true;
+			}
+
+			return false;
+		};
+
 		const handleThemeToggleClick = () => {
 			const element = document.documentElement;
 			element.classList.toggle('dark');
@@ -365,6 +422,14 @@ const withActiveCourse = (href: string) => {
 			graphToggleButton.dataset.bound = 'true';
 			graphToggleButton.addEventListener('click', () => {
 				window.dispatchEvent(new CustomEvent('graph:toggle'));
+			});
+		}
+
+		const rightSidebarButton = document.getElementById('header-right-sidebar-toggle');
+		if (rightSidebarButton && !rightSidebarButton.dataset.bound) {
+			rightSidebarButton.dataset.bound = 'true';
+			rightSidebarButton.addEventListener('click', () => {
+				toggleRightSidebarGlobal();
 			});
 		}
 
@@ -428,6 +493,14 @@ const withActiveCourse = (href: string) => {
 				return;
 			}
 
+			if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey) {
+				if (String(event.code || '').toLowerCase() !== 'backslash' || isEditable) return;
+				if (toggleRightSidebarGlobal()) {
+					event.preventDefault();
+				}
+				return;
+			}
+
 			if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
 			if (!(key === 'e' || code === 'keye')) return;
 			if (isEditable) return;
@@ -485,6 +558,14 @@ const withActiveCourse = (href: string) => {
 
 		document.addEventListener('click', docClickHandler);
 		window.__musikiHeaderDocClickHandler = docClickHandler;
+
+		if (typeof window.__musikiHeaderResizeHandler === 'function') {
+			window.removeEventListener('resize', window.__musikiHeaderResizeHandler);
+		}
+		window.__musikiHeaderResizeHandler = syncHeaderHeight;
+		syncHeaderHeight();
+		window.requestAnimationFrame(syncHeaderHeight);
+		window.addEventListener('resize', syncHeaderHeight, { passive: true });
 	};
 
 	if (document.readyState === 'loading') {
@@ -495,12 +576,123 @@ const withActiveCourse = (href: string) => {
 
 	document.addEventListener('astro:page-load', setupHeaderControls);
 </script>
+<script>
+	import { subscribeToClassActivity } from '../lib/class-activity/client.mjs';
+	import { selectInteractionBeaconState, selectRoomBeaconState } from '../lib/class-activity/model.mjs';
+
+	const setupHeaderActivityIndicators = () => {
+		const globalWindow = window as Window & {
+			__musikiHeaderActivityTeardown?: () => void;
+		};
+
+		if (typeof globalWindow.__musikiHeaderActivityTeardown === 'function') {
+			globalWindow.__musikiHeaderActivityTeardown();
+			globalWindow.__musikiHeaderActivityTeardown = undefined;
+		}
+
+		const roomButton = document.getElementById('performative-room-toggle');
+		const interactionButton = document.getElementById('header-live-interaction-toggle');
+		if (!(roomButton instanceof HTMLButtonElement) && !(interactionButton instanceof HTMLButtonElement)) return;
+
+		const courseId = String(
+			roomButton?.dataset.courseId
+			|| interactionButton?.dataset.courseId
+			|| '',
+		).trim();
+		if (!courseId) return;
+
+		const fallbackRoomHref = String(roomButton?.dataset.fallbackHref || roomButton?.dataset.href || '').trim();
+		const interactionTimerNode = interactionButton?.querySelector('[data-header-live-timer]');
+		let latestSnapshot = null;
+
+		const openHeaderHref = (button: HTMLButtonElement | null) => {
+			if (!(button instanceof HTMLButtonElement)) return;
+			const href = String(button.dataset.href || '').trim();
+			if (!href) return;
+			window.location.href = new URL(href, window.location.origin).toString();
+		};
+
+		if (interactionButton instanceof HTMLButtonElement && interactionButton.dataset.boundHeaderActivity !== 'true') {
+			interactionButton.dataset.boundHeaderActivity = 'true';
+			interactionButton.addEventListener('click', () => openHeaderHref(interactionButton));
+		}
+
+		const render = () => {
+			const roomState = selectRoomBeaconState(latestSnapshot, {
+				courseId,
+				fallbackHref: fallbackRoomHref,
+			});
+			const interactionState = selectInteractionBeaconState(latestSnapshot, {
+				courseId,
+			});
+
+			if (roomButton instanceof HTMLButtonElement) {
+				roomButton.hidden = !roomState.visible;
+				roomButton.dataset.href = roomState.href || fallbackRoomHref;
+				if (roomState.visible) {
+					roomButton.title = roomState.title || 'Clase en vivo';
+					roomButton.setAttribute('aria-label', roomState.title || 'Clase en vivo');
+				}
+			}
+
+			if (interactionButton instanceof HTMLButtonElement) {
+				interactionButton.hidden = !interactionState.visible;
+				interactionButton.dataset.href = interactionState.href || '';
+				if (interactionState.visible) {
+					interactionButton.title = interactionState.title || 'Interacción en vivo';
+					interactionButton.setAttribute('aria-label', interactionState.title || 'Interacción en vivo');
+					if (interactionTimerNode instanceof HTMLElement) {
+						interactionTimerNode.textContent = interactionState.timerLabel || '';
+					}
+				} else if (interactionTimerNode instanceof HTMLElement) {
+					interactionTimerNode.textContent = '';
+				}
+			}
+		};
+
+		const unsubscribe = subscribeToClassActivity({
+			courseId,
+			onEvent: (_eventName, snapshot) => {
+				latestSnapshot = snapshot;
+				render();
+			},
+		});
+
+		const tickId = window.setInterval(() => {
+			if (!latestSnapshot) return;
+			render();
+		}, 1000);
+
+		render();
+
+		globalWindow.__musikiHeaderActivityTeardown = () => {
+			unsubscribe?.();
+			window.clearInterval(tickId);
+		};
+	};
+
+	if (document.readyState === 'loading') {
+		document.addEventListener('DOMContentLoaded', setupHeaderActivityIndicators, { once: true });
+	} else {
+		setupHeaderActivityIndicators();
+	}
+
+	document.addEventListener('astro:page-load', setupHeaderActivityIndicators);
+</script>
 <style>
 	header {
 		margin: 0;
 		padding: 0 1em;
 		background: white;
 		box-shadow: none;
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		z-index: 1200;
+	}
+	:global(body) {
+		padding-top: var(--musiki-header-height, 4.5rem);
 	}
 	h2 {
 		margin: 0;
@@ -539,7 +731,13 @@ const withActiveCourse = (href: string) => {
 	.internal-links {
 		display: flex;
 		align-items: center;
-		flex-wrap: wrap;
+		flex-wrap: nowrap;
+		overflow-x: auto;
+		overflow-y: hidden;
+		scrollbar-width: none;
+	}
+	.internal-links::-webkit-scrollbar {
+		display: none;
 	}
 	.course-menu {
 		position: relative;
@@ -615,7 +813,33 @@ const withActiveCourse = (href: string) => {
 		display: flex;
 		align-items: center;
 		gap: 0.5em;
-		flex-wrap: wrap;
+		flex-wrap: nowrap;
+		white-space: nowrap;
+	}
+	.auth-links {
+		display: inline-flex;
+		align-items: center;
+		white-space: nowrap;
+		flex: 0 0 auto;
+	}
+	.header-forum-toggle {
+		appearance: none;
+		border: none;
+		background: transparent;
+		color: var(--black);
+		cursor: pointer;
+		font: inherit;
+		padding: 1em 0.5em;
+		margin: 0;
+		line-height: 1;
+		display: inline-flex;
+		align-items: center;
+		border-bottom: 4px solid transparent;
+		text-decoration: none;
+		white-space: nowrap;
+	}
+	.header-forum-toggle:hover {
+		color: var(--accent);
 	}
 	.active-course-chip {
 		display: inline-flex;
@@ -632,10 +856,9 @@ const withActiveCourse = (href: string) => {
 		letter-spacing: 0.02em;
 		color: var(--c-fg-dim);
 	}
-	.performative-room-led-btn {
+	.header-activity-led-btn {
 		border: none;
 		background: transparent;
-		color: #1877f2;
 		padding: 0.1rem 0.16rem;
 		border-radius: 999px;
 		display: inline-flex;
@@ -644,24 +867,53 @@ const withActiveCourse = (href: string) => {
 		cursor: pointer;
 		line-height: 1;
 	}
-	.performative-room-led-btn:hover,
-	.performative-room-led-btn:focus-visible {
+	.header-activity-led-btn[hidden] {
+		display: none !important;
+	}
+	.header-activity-led-btn--room {
+		color: #1877f2;
+	}
+	.header-activity-led-btn--interaction {
+		color: #ff4040;
+		gap: 0.22rem;
+	}
+	.header-activity-led-btn--room:hover,
+	.header-activity-led-btn--room:focus-visible {
 		background: color-mix(in srgb, #1877f2 14%, transparent);
 	}
-	.performative-room-led-btn:focus-visible {
+	.header-activity-led-btn--interaction:hover,
+	.header-activity-led-btn--interaction:focus-visible {
+		background: color-mix(in srgb, #ff4040 14%, transparent);
+	}
+	.header-activity-led-btn--room:focus-visible {
 		outline: 2px solid color-mix(in srgb, #1877f2 50%, white 50%);
 		outline-offset: 2px;
 	}
-	.performative-room-led-dot {
+	.header-activity-led-btn--interaction:focus-visible {
+		outline: 2px solid color-mix(in srgb, #ff4040 55%, white 45%);
+		outline-offset: 2px;
+	}
+	.header-activity-led-dot {
 		width: 0.72rem;
 		height: 0.72rem;
 		border-radius: 999px;
+		flex: 0 0 auto;
+	}
+	.header-activity-led-dot--room {
 		background: #2196f3;
 		box-shadow:
 			0 0 0 0 rgba(33, 150, 243, 0.42),
 			0 0 10px rgba(33, 150, 243, 0.55);
 		animation: performative-room-pulse 1.5s ease-in-out infinite;
-		flex: 0 0 auto;
+	}
+	.header-activity-led-dot--interaction {
+		width: 0.62rem;
+		height: 0.62rem;
+		background: #ff4040;
+		box-shadow:
+			0 0 0 0 rgba(255, 64, 64, 0.38),
+			0 0 9px rgba(255, 64, 64, 0.5);
+		animation: header-interaction-pulse 1.15s ease-in-out infinite;
 	}
 	.performative-room-led-label {
 		font-size: 0.68rem;
@@ -673,10 +925,19 @@ const withActiveCourse = (href: string) => {
 		white-space: nowrap;
 		transition: max-width 0.16s ease, opacity 0.16s ease;
 	}
-	.performative-room-led-btn:hover .performative-room-led-label,
-	.performative-room-led-btn:focus-visible .performative-room-led-label {
+	.header-activity-led-btn--room:hover .performative-room-led-label,
+	.header-activity-led-btn--room:focus-visible .performative-room-led-label {
 		max-width: 3rem;
 		opacity: 1;
+	}
+	.header-activity-led-timer {
+		font-size: 0.62rem;
+		line-height: 1;
+		letter-spacing: 0.04em;
+		min-width: 2.2rem;
+		text-align: right;
+		opacity: 0.9;
+		font-variant-numeric: tabular-nums;
 	}
 	@keyframes performative-room-pulse {
 		0% {
@@ -696,6 +957,26 @@ const withActiveCourse = (href: string) => {
 			box-shadow:
 				0 0 0 0 rgba(33, 150, 243, 0),
 				0 0 10px rgba(33, 150, 243, 0.55);
+		}
+	}
+	@keyframes header-interaction-pulse {
+		0% {
+			transform: scale(1);
+			box-shadow:
+				0 0 0 0 rgba(255, 64, 64, 0.38),
+				0 0 9px rgba(255, 64, 64, 0.5);
+		}
+		55% {
+			transform: scale(1.12);
+			box-shadow:
+				0 0 0 6px rgba(255, 64, 64, 0),
+				0 0 12px rgba(255, 64, 64, 0.64);
+		}
+		100% {
+			transform: scale(1);
+			box-shadow:
+				0 0 0 0 rgba(255, 64, 64, 0),
+				0 0 9px rgba(255, 64, 64, 0.5);
 		}
 	}
 	.auth-links a {
@@ -857,45 +1138,79 @@ const withActiveCourse = (href: string) => {
 		border-radius: 0 0 6px 6px;
 	}
 
-	@media (max-width: 960px) {
+	@media (max-width: 1000px) {
 		header {
-			padding: 0 0.75rem;
+			padding: 0 0.65rem;
 		}
 		nav {
 			flex-wrap: wrap;
-			justify-content: center;
-			gap: 0.3rem 0.6rem;
-			padding-top: 0.2rem;
+			justify-content: space-between;
+			gap: 0.08rem 0.35rem;
+			padding-top: 0;
+			align-items: center;
 		}
 		h2 {
-			width: 100%;
+			order: 1;
+			width: auto;
 			display: flex;
-			justify-content: center;
+			justify-content: flex-start;
+			flex: 0 0 auto;
 		}
 		.internal-links {
+			order: 3;
 			width: 100%;
-			justify-content: center;
+			justify-content: flex-start;
+			flex: 1 0 100%;
+			min-width: 0;
+			white-space: nowrap;
+			gap: 0;
+			margin-top: 0;
+			padding-bottom: 0.05rem;
+		}
+		.social-links {
+			order: 2;
+			flex: 0 0 auto;
+			flex-wrap: nowrap;
+			white-space: nowrap;
+			gap: 0.2rem;
+			margin-left: auto;
+			align-items: center;
 		}
 		.course-menu-button {
-			padding: 0.55em 0.45em 0.55em 0.14em;
+			padding: 0.46em 0.34em 0.46em 0.1em;
 		}
 		.course-menu-link {
-			padding: 0.55em 0.2em 0.55em 0.45em;
+			padding: 0.46em 0.14em 0.46em 0.34em;
 		}
 		nav a {
-			padding: 0.55em 0.45em;
+			padding: 0.46em 0.34em;
+			font-size: 0.92rem;
+		}
+		.header-forum-toggle {
+			padding: 0.46em 0.34em;
+			font-size: 0.92rem;
+		}
+		.user-button {
+			font-size: 0.82rem;
+			padding: 0.22rem 0.42rem;
+			gap: 0.28rem;
+		}
+		.user-button span {
+			max-width: 5.8rem;
 		}
 	}
 
 	@media (max-width: 720px) {
 		.social-links {
 			display: flex;
-			width: 100%;
-			justify-content: center;
+			width: auto;
+			justify-content: flex-end;
 			gap: 0.25rem;
+			flex-wrap: nowrap;
 		}
 		.internal-links {
-			gap: 0 0.15rem;
+			gap: 0 0.08rem;
+			margin-top: 0;
 		}
 		.course-menu-button {
 			padding: 0.45em 0.35em 0.45em 0.12em;
@@ -909,6 +1224,18 @@ const withActiveCourse = (href: string) => {
 			padding: 0.45em 0.35em;
 			font-size: 0.95rem;
 		}
+		.header-forum-toggle {
+			padding: 0.45em 0.35em;
+			font-size: 0.95rem;
+		}
+		.user-button {
+			font-size: 0.82rem;
+			padding: 0.24rem 0.45rem;
+			gap: 0.32rem;
+		}
+		.user-button span {
+			max-width: 6.1rem;
+		}
 	}
 
 	@media (max-width: 500px) {
@@ -916,15 +1243,19 @@ const withActiveCourse = (href: string) => {
 			padding: 0 0.4rem;
 		}
 		nav {
-			gap: 0.2rem 0.35rem;
+			gap: 0.06rem 0.18rem;
 		}
 		.brand-logo {
 			height: 34px;
 		}
 		.internal-links {
 			width: 100%;
-			justify-content: center;
+			justify-content: flex-start;
 			gap: 0 0.08rem;
+			flex: 1 0 100%;
+			min-width: 0;
+			margin-top: 0;
+			padding-bottom: 0;
 		}
 		.course-menu-button {
 			padding: 0.35em 0.28em 0.35em 0.08em;
@@ -938,10 +1269,15 @@ const withActiveCourse = (href: string) => {
 			padding: 0.35em 0.28em;
 			font-size: 0.82rem;
 		}
+		.header-forum-toggle {
+			padding: 0.35em 0.28em;
+			font-size: 0.82rem;
+		}
 		.social-links {
-			width: 100%;
-			justify-content: center;
+			width: auto;
+			justify-content: flex-end;
 			gap: 0.15rem;
+			flex-wrap: nowrap;
 		}
 		.active-course-chip {
 			height: 1.38rem;
@@ -967,24 +1303,34 @@ const withActiveCourse = (href: string) => {
 		.page-info-toggle-btn {
 			padding: 0.34rem;
 		}
-		.performative-room-led-btn {
+		.header-activity-led-btn {
 			padding: 0.08rem 0.12rem;
 		}
-		.performative-room-led-dot {
+		.header-activity-led-dot--room {
 			width: 0.66rem;
 			height: 0.66rem;
 		}
+		.header-activity-led-dot--interaction {
+			width: 0.56rem;
+			height: 0.56rem;
+		}
+		.header-activity-led-timer {
+			min-width: 1.9rem;
+			font-size: 0.58rem;
+		}
 		.auth-links {
-			width: 100%;
 			display: flex;
-			justify-content: center;
+			justify-content: flex-end;
+			width: auto;
+			flex: 0 0 auto;
 		}
 		.user-button {
-			font-size: 0.8rem;
-			padding: 0.24rem 0.5rem;
+			font-size: 0.72rem;
+			padding: 0.18rem 0.38rem;
+			gap: 0.24rem;
 		}
 		.user-button span {
-			max-width: 8.2rem;
+			max-width: 4.8rem;
 		}
 	}
 
@@ -1011,8 +1357,11 @@ const withActiveCourse = (href: string) => {
 	:global(.dark) .page-info-toggle-btn {
 		color: rgb(var(--black));
 	}
-	:global(.dark) .performative-room-led-btn {
+	:global(.dark) .header-activity-led-btn--room {
 		color: #7ec8ff;
+	}
+	:global(.dark) .header-activity-led-btn--interaction {
+		color: #ff7d7d;
 	}
 	:global(.dark) .sun {
 		display: none;
@@ -1021,7 +1370,8 @@ const withActiveCourse = (href: string) => {
 		display: block;
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.performative-room-led-dot {
+		.header-activity-led-dot--room,
+		.header-activity-led-dot--interaction {
 			animation: none;
 		}
 	}

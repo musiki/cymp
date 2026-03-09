@@ -13,6 +13,7 @@ import slugMathRemark from '../plugins/slug-math-remark.js';
 import rehypeObsidianCallouts from '../plugins/remark-obsidian-callouts.mjs';
 import rehypeObsidianImageSize from '../plugins/rehype-obsidian-image-size.mjs';
 import remarkMermaid from '../plugins/remark-mermaid.mjs';
+import remarkMediaEmbed from '../plugins/remark-media-embed.mjs';
 import remarkWikiLink from '../plugins/remark-wiki-link.mjs';
 import remarkLily from '../plugins/remark-lily.mjs';
 
@@ -33,6 +34,7 @@ const processor = unified()
   .use(remarkMath)
   .use(remarkMermaid)
   .use(remarkWikiLink)
+  .use(remarkMediaEmbed)
   .use(remarkLily)
   .use(remarkRehype, { allowDangerousHtml: true })
   .use(rehypeObsidianCallouts)

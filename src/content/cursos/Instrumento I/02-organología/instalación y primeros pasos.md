@@ -3,7 +3,7 @@
 title: Instalación y primeros pasos
 description: Tutoriales de instalación de herramientas de software.
 order: 1
-chapter: organología
+chapter: "Organología I"
 ---
 
 ## obsidian

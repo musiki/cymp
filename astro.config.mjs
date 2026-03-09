@@ -49,6 +49,20 @@ export default defineConfig({
   site,
   output: 'server',
   adapter: vercel(),
+  vite: {
+    optimizeDeps: {
+      include: [
+        '@mediapipe/tasks-vision',
+        'reveal.js',
+        'reveal.js/plugin/notes/notes.esm.js',
+        'reveal.js/plugin/highlight/highlight.esm.js',
+        'reveal.js/plugin/math/math.esm.js',
+        'reveal.js/plugin/markdown/markdown.esm.js',
+        'marked',
+        'mermaid',
+      ],
+    },
+  },
   // Auth.js already validates CSRF tokens for auth endpoints.
   // Astro's origin guard can false-positive behind Vercel/proxies.
   security: {

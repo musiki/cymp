@@ -216,6 +216,8 @@ export const GET: APIRoute = async ({ request, locals }) => {
         postCount: 0,
         lastActivityAt: null,
       };
+      const isAuthor = thread.createdByUserId === dbUser.id;
+      const canModerate = access.isTeacher || (isAuthor && !Boolean(thread.isLocked));
 
       return {
         id: thread.id,
@@ -227,6 +229,8 @@ export const GET: APIRoute = async ({ request, locals }) => {
         createdByImage: author?.image ?? null,
         isPinned: Boolean(thread.isPinned),
         isLocked: Boolean(thread.isLocked),
+        canEdit: canModerate,
+        canDelete: canModerate,
         messageCount: activity.messageCount,
         replyCount: activity.replyCount,
         postCount: activity.postCount,
@@ -355,6 +359,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
           createdByImage: null,
           isPinned: false,
           isLocked: false,
+          canEdit: true,
+          canDelete: true,
           postCount: 1,
           lastActivityAt: firstPost?.createdAt ?? now,
         },

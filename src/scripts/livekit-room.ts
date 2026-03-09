@@ -21,12 +21,18 @@ type SlideState = {
   indexf: number;
   indexh: number;
   indexv: number;
+  zoom: number;
 };
 
 type ConferenceMessage =
   | {
       type: 'layout';
       layout: LayoutMode;
+    }
+  | {
+      type: 'session-setup';
+      previewZoom: number;
+      showCircle: boolean;
     }
   | {
       id: string;
@@ -104,12 +110,99 @@ type MountCollection = {
   screenVideoMounts: Map<string, ParticipantMount>;
 };
 
+type PersistedRoomSetup = {
+  identity?: string;
+  name?: string;
+  preferredAudioInputId?: string;
+  preferredVideoInputId?: string;
+  previewBlur?: boolean;
+  previewZoom?: number;
+  showCircle?: boolean;
+  room?: string;
+};
+
+type VideoTrackProcessorLike = {
+  destroy: () => Promise<void>;
+  init: (opts: {
+    element?: HTMLMediaElement;
+    kind: Track.Kind.Video;
+    track: MediaStreamTrack;
+  }) => Promise<void>;
+  name: string;
+  processedTrack?: MediaStreamTrack;
+  restart: (opts: {
+    element?: HTMLMediaElement;
+    kind: Track.Kind.Video;
+    track: MediaStreamTrack;
+  }) => Promise<void>;
+};
+
+type LocalCameraTrackLike = {
+  getProcessor?: () => { name?: string } | undefined;
+  kind: Track.Kind.Video;
+  setProcessor?: (
+    processor: VideoTrackProcessorLike,
+    showProcessedStreamLocally?: boolean,
+  ) => Promise<void>;
+  stopProcessor?: (keepElement?: boolean) => Promise<void>;
+};
+
+type VisionTasksModule = typeof import('@mediapipe/tasks-vision');
+type VisionMask = import('@mediapipe/tasks-vision').MPMask;
+
 const MESSAGE_TOPIC = 'conference-ui';
+const ROOM_SETUP_STORAGE_KEY = 'musiki:room:setup:v1';
+const BACKGROUND_BLUR_PROCESSOR_NAME = 'musiki-background-blur';
+const BACKGROUND_BLUR_MODEL_ASSET =
+  'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite';
+const BACKGROUND_BLUR_WASM_BASE =
+  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.32/wasm';
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+let visionTasksModulePromise: Promise<VisionTasksModule> | null = null;
+let visionTasksFilesetPromise: Promise<unknown> | null = null;
+
+const loadVisionTasksModule = () => {
+  if (!visionTasksModulePromise) {
+    visionTasksModulePromise = import('@mediapipe/tasks-vision');
+  }
+  return visionTasksModulePromise;
+};
+
+const loadVisionTasksFileset = async () => {
+  if (!visionTasksFilesetPromise) {
+    const vision = await loadVisionTasksModule();
+    visionTasksFilesetPromise = vision.FilesetResolver.forVisionTasks(BACKGROUND_BLUR_WASM_BASE);
+  }
+  return visionTasksFilesetPromise;
+};
 
 const normalizeText = (value: unknown) => String(value ?? '').trim();
 const formatRoleLabel = (role: ParticipantRole) => (role === 'teacher' ? 'Teacher' : 'Student');
+const normalizePreviewZoom = (value: unknown, fallback = 1) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(4, Math.max(0.8, Math.round(parsed * 100) / 100));
+};
+
+const readPersistedRoomSetup = (): PersistedRoomSetup => {
+  try {
+    const raw = window.localStorage.getItem(ROOM_SETUP_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as PersistedRoomSetup) : {};
+  } catch {
+    return {};
+  }
+};
+
+const writePersistedRoomSetup = (nextSetup: PersistedRoomSetup) => {
+  try {
+    window.localStorage.setItem(ROOM_SETUP_STORAGE_KEY, JSON.stringify(nextSetup));
+  } catch {
+    // ignore storage failures
+  }
+};
 
 const readParticipantMetadata = (participant: Participant) => {
   try {
@@ -149,6 +242,14 @@ const readParticipantName = (participant: Participant) =>
 
 const readParticipantHandRaisedFromMetadata = (participant: Participant) =>
   Boolean(readParticipantMetadata(participant).handRaised);
+
+const readParticipantPreviewZoom = (participant: Participant) =>
+  normalizePreviewZoom(readParticipantMetadata(participant).previewZoom, 1);
+
+const readParticipantShowCircle = (participant: Participant) => {
+  const value = readParticipantMetadata(participant).showCircle;
+  return typeof value === 'boolean' ? value : true;
+};
 
 const connectionStateLabel = (state: ConnectionState) => {
   switch (state) {
@@ -243,6 +344,7 @@ const normalizeSlideState = (value: Partial<SlideState> | null | undefined): Sli
   const indexh = Number(value.indexh);
   const indexv = Number(value.indexv);
   const indexf = Number(value.indexf);
+  const zoom = Number(value.zoom);
   if (!Number.isFinite(indexh) || !Number.isFinite(indexv) || !Number.isFinite(indexf)) {
     return null;
   }
@@ -250,6 +352,7 @@ const normalizeSlideState = (value: Partial<SlideState> | null | undefined): Sli
     indexf: Math.max(0, Math.round(indexf)),
     indexh: Math.max(0, Math.round(indexh)),
     indexv: Math.max(0, Math.round(indexv)),
+    zoom: Math.min(1.4, Math.max(0.45, Number.isFinite(zoom) ? zoom : 1)),
   };
 };
 
@@ -318,6 +421,252 @@ const createMediaElement = (track: Track, muted = false) => {
   return element;
 };
 
+const isLocalCameraTrackLike = (value: unknown): value is LocalCameraTrackLike =>
+  Boolean(
+    value &&
+      typeof value === 'object' &&
+      (value as { kind?: Track.Kind }).kind === Track.Kind.Video &&
+      typeof (value as { setProcessor?: unknown }).setProcessor === 'function',
+  );
+
+const isBackgroundBlurProcessorActive = (track: LocalCameraTrackLike | null | undefined) =>
+  normalizeText(track?.getProcessor?.()?.name) === BACKGROUND_BLUR_PROCESSOR_NAME;
+
+class BackgroundBlurVideoProcessor implements VideoTrackProcessorLike {
+  name = BACKGROUND_BLUR_PROCESSOR_NAME;
+  processedTrack?: MediaStreamTrack;
+
+  private animationId = 0;
+  private blurCanvas: HTMLCanvasElement | null = null;
+  private blurContext: CanvasRenderingContext2D | null = null;
+  private destroyed = false;
+  private drawingUtils: InstanceType<VisionTasksModule['DrawingUtils']> | null = null;
+  private element: HTMLVideoElement | null = null;
+  private lastMask: VisionMask | null = null;
+  private lastSegmentationAt = 0;
+  private outputCanvas: HTMLCanvasElement | null = null;
+  private outputContext: CanvasRenderingContext2D | null = null;
+  private outputStream: MediaStream | null = null;
+  private personMaskIndex = 0;
+  private segmenter: InstanceType<VisionTasksModule['ImageSegmenter']> | null = null;
+
+  private closeMask(mask: VisionMask | null | undefined) {
+    try {
+      mask?.close();
+    } catch {
+      // ignore mask close failures
+    }
+  }
+
+  private async createSegmenter() {
+    const vision = await loadVisionTasksModule();
+    const wasmFileset = await loadVisionTasksFileset();
+    const baseOptions = {
+      modelAssetPath: BACKGROUND_BLUR_MODEL_ASSET,
+    };
+
+    let lastError: unknown = null;
+    for (const delegate of ['GPU', 'CPU'] as const) {
+      try {
+        return await vision.ImageSegmenter.createFromOptions(wasmFileset as never, {
+          baseOptions: {
+            ...baseOptions,
+            delegate,
+          },
+          outputCategoryMask: false,
+          outputConfidenceMasks: true,
+          runningMode: 'VIDEO',
+        });
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error('Could not initialize background blur.');
+  }
+
+  private ensureCanvasSize(width: number, height: number) {
+    if (!this.outputCanvas || !this.blurCanvas) return;
+    if (this.outputCanvas.width === width && this.outputCanvas.height === height) return;
+
+    this.outputCanvas.width = width;
+    this.outputCanvas.height = height;
+    this.blurCanvas.width = width;
+    this.blurCanvas.height = height;
+  }
+
+  private readPersonMask(result: Awaited<ReturnType<InstanceType<VisionTasksModule['ImageSegmenter']>['segmentForVideo']>>) {
+    const masks = result?.confidenceMasks;
+    if (!masks || masks.length === 0) {
+      this.closeMask(result?.categoryMask);
+      return null;
+    }
+
+    const selectedMask = masks[this.personMaskIndex] || masks[masks.length - 1] || null;
+    const clonedMask = selectedMask?.clone() || null;
+
+    masks.forEach((mask) => this.closeMask(mask));
+    this.closeMask(result.categoryMask);
+
+    return clonedMask;
+  }
+
+  private renderFrame = () => {
+    if (
+      this.destroyed ||
+      !this.element ||
+      !this.outputCanvas ||
+      !this.outputContext ||
+      !this.blurCanvas ||
+      !this.blurContext
+    ) {
+      return;
+    }
+
+    const width = Math.max(2, Math.round(this.element.videoWidth || 0));
+    const height = Math.max(2, Math.round(this.element.videoHeight || 0));
+
+    if (this.element.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || width < 2 || height < 2) {
+      this.animationId = window.requestAnimationFrame(this.renderFrame);
+      return;
+    }
+
+    this.ensureCanvasSize(width, height);
+
+    const overscanX = Math.round(width * 0.03);
+    const overscanY = Math.round(height * 0.03);
+    this.blurContext.clearRect(0, 0, width, height);
+    this.blurContext.save();
+    this.blurContext.filter = 'blur(20px) saturate(0.92)';
+    this.blurContext.drawImage(
+      this.element,
+      -overscanX,
+      -overscanY,
+      width + overscanX * 2,
+      height + overscanY * 2,
+    );
+    this.blurContext.restore();
+
+    const now = performance.now();
+    if (this.segmenter && now - this.lastSegmentationAt >= 80) {
+      this.lastSegmentationAt = now;
+      try {
+        const nextResult = this.segmenter.segmentForVideo(this.element, now);
+        const nextMask = this.readPersonMask(nextResult);
+        if (nextMask) {
+          this.closeMask(this.lastMask);
+          this.lastMask = nextMask;
+        }
+      } catch {
+        // Keep the last valid mask if a frame fails.
+      }
+    }
+
+    this.outputContext.clearRect(0, 0, width, height);
+    if (this.lastMask && this.drawingUtils) {
+      this.drawingUtils.drawConfidenceMask(this.lastMask, this.blurCanvas, this.element);
+    } else {
+      this.outputContext.drawImage(this.element, 0, 0, width, height);
+    }
+
+    this.animationId = window.requestAnimationFrame(this.renderFrame);
+  };
+
+  async init(opts: {
+    element?: HTMLMediaElement;
+    kind: Track.Kind.Video;
+    track: MediaStreamTrack;
+  }) {
+    this.destroyed = false;
+    this.element =
+      opts.element instanceof HTMLVideoElement
+        ? opts.element
+        : document.createElement('video');
+    this.outputCanvas = document.createElement('canvas');
+    this.blurCanvas = document.createElement('canvas');
+    this.outputContext = this.outputCanvas.getContext('2d', { alpha: false });
+    this.blurContext = this.blurCanvas.getContext('2d', { alpha: false });
+
+    if (!this.outputContext || !this.blurContext) {
+      throw new Error('Could not initialize background blur compositor.');
+    }
+
+    this.outputContext.imageSmoothingEnabled = true;
+    this.outputContext.imageSmoothingQuality = 'high';
+    this.blurContext.imageSmoothingEnabled = true;
+    this.blurContext.imageSmoothingQuality = 'high';
+
+    const vision = await loadVisionTasksModule();
+    this.segmenter = await this.createSegmenter();
+    this.drawingUtils = new vision.DrawingUtils(this.outputContext);
+
+    const labels = this.segmenter.getLabels?.() || [];
+    const maskIndex = labels.findIndex((label) => /person|selfie|foreground/i.test(String(label)));
+    this.personMaskIndex = maskIndex >= 0 ? maskIndex : Math.max(0, labels.length - 1);
+
+    this.outputStream = this.outputCanvas.captureStream(30);
+    this.processedTrack = this.outputStream.getVideoTracks()[0];
+    this.renderFrame();
+  }
+
+  async restart(opts: {
+    element?: HTMLMediaElement;
+    kind: Track.Kind.Video;
+    track: MediaStreamTrack;
+  }) {
+    await this.destroy();
+    await this.init(opts);
+  }
+
+  async destroy() {
+    this.destroyed = true;
+    if (this.animationId) {
+      window.cancelAnimationFrame(this.animationId);
+      this.animationId = 0;
+    }
+
+    this.closeMask(this.lastMask);
+    this.lastMask = null;
+    this.drawingUtils?.close?.();
+    this.drawingUtils = null;
+    this.segmenter?.close?.();
+    this.segmenter = null;
+    this.outputStream?.getTracks().forEach((track) => track.stop());
+    this.outputStream = null;
+    this.processedTrack = undefined;
+    this.outputCanvas = null;
+    this.outputContext = null;
+    this.blurCanvas = null;
+    this.blurContext = null;
+    this.element = null;
+  }
+}
+
+const appendBlurBackdrop = ({
+  stream,
+  track,
+  wrapper,
+}: {
+  stream?: MediaStream | null;
+  track?: MediaStreamTrack | null;
+  wrapper: HTMLElement;
+}) => {
+  const sourceStream = stream || (track ? new MediaStream([track]) : null);
+  if (!sourceStream) return;
+
+  const backdrop = document.createElement('video');
+  backdrop.autoplay = true;
+  backdrop.muted = true;
+  backdrop.playsInline = true;
+  backdrop.className = 'conference-media-backdrop';
+  backdrop.setAttribute('aria-hidden', 'true');
+  backdrop.srcObject = sourceStream;
+
+  wrapper.classList.add('conference-media-frame--with-backdrop');
+  wrapper.appendChild(backdrop);
+  void backdrop.play().catch(() => undefined);
+};
+
 const removeMount = (mount: MediaMount | ParticipantMount | undefined) => {
   if (!mount) return;
   if (mount.attached !== false) {
@@ -352,12 +701,16 @@ const syncParticipantVideo = (
   participant: Participant,
   card: ParticipantCardRefs,
   mounts: MountCollection,
+  options: {
+    blurLocalVideo?: boolean;
+  } = {},
 ) => {
   const publication = Array.from(participant.videoTrackPublications.values()).find(
     (entry) => entry.track && entry.source !== Track.Source.ScreenShare,
   );
   const identity = participant.identity;
   const existingMount = mounts.participantVideoMounts.get(identity);
+  const localParticipant = isLocalParticipant(room, participant);
 
   if (!publication?.track) {
     removeMount(existingMount);
@@ -368,7 +721,18 @@ const syncParticipantVideo = (
   }
 
   const trackSid = getTrackSid(publication);
-  if (existingMount && existingMount.trackSid === trackSid && existingMount.track === publication.track) {
+  const shouldRenderBackdrop = Boolean(
+    options.blurLocalVideo &&
+      localParticipant &&
+      !isBackgroundBlurProcessorActive(isLocalCameraTrackLike(publication.track) ? publication.track : null),
+  );
+  const hasRenderedBackdrop = Boolean(existingMount?.wrapper.querySelector('.conference-media-backdrop'));
+  if (
+    existingMount &&
+    existingMount.trackSid === trackSid &&
+    existingMount.track === publication.track &&
+    shouldRenderBackdrop === hasRenderedBackdrop
+  ) {
     card.placeholder.hidden = true;
     return;
   }
@@ -377,11 +741,21 @@ const syncParticipantVideo = (
   card.media.innerHTML = '';
 
   const wrapper = document.createElement('div');
-  wrapper.className = isLocalParticipant(room, participant)
+  wrapper.className = localParticipant
     ? 'conference-media-frame conference-media-frame--local-camera'
     : 'conference-media-frame';
 
-  const element = createMediaElement(publication.track, isLocalParticipant(room, participant));
+  if (shouldRenderBackdrop) {
+    const backdropTrack = (
+      publication.track as { mediaStreamTrack?: MediaStreamTrack | null } | undefined
+    )?.mediaStreamTrack;
+    appendBlurBackdrop({
+      track: backdropTrack,
+      wrapper,
+    });
+  }
+
+  const element = createMediaElement(publication.track, localParticipant);
   wrapper.appendChild(element);
   card.media.appendChild(wrapper);
   publication.track.attach(element);
@@ -568,9 +942,19 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   const roleInput = root.querySelector('[data-role-input]');
   const roleLabel = root.querySelector('[data-role-label]');
   const layoutInput = root.querySelector('[data-layout-input]');
-  const audioInputSelect = root.querySelector('[data-audio-input-select]');
-  const videoInputSelect = root.querySelector('[data-video-input-select]');
+  const audioInputSelects = Array.from(root.querySelectorAll('[data-audio-input-select]')).filter(
+    (node): node is HTMLSelectElement => node instanceof HTMLSelectElement,
+  );
+  const videoInputSelects = Array.from(root.querySelectorAll('[data-video-input-select]')).filter(
+    (node): node is HTMLSelectElement => node instanceof HTMLSelectElement,
+  );
+  const audioInputSelect = audioInputSelects[0] || null;
+  const videoInputSelect = videoInputSelects[0] || null;
   const presentationSelect = root.querySelector('[data-presentation-select]');
+  const previewZoomInput = root.querySelector('[data-preview-zoom-input]');
+  const previewZoomOutput = root.querySelector('[data-preview-zoom-output]');
+  const previewBlurInput = root.querySelector('[data-preview-blur-input]');
+  const showCircleInput = root.querySelector('[data-show-circle-input]');
   const statusNode = root.querySelector('[data-room-status]');
   const stateNode = root.querySelector('[data-room-state]');
   const countNode = root.querySelector('[data-participant-count]');
@@ -593,6 +977,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   const identityPreviewSlot = root.querySelector('[data-slot="identity-preview"]');
   const participantList = root.querySelector('[data-participant-list]');
   const stage = root.querySelector('[data-stage]');
+  const stageFrameNode = root.querySelector('.conference-stage-frame');
   const participantTemplate = root.querySelector('[data-template="participant-card"]');
   const screenTemplate = root.querySelector('[data-template="screen-card"]');
   const presentationFrame = root.querySelector('[data-presentation-frame]');
@@ -687,6 +1072,19 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
   root.dataset.mounted = 'true';
 
+  const query = new URLSearchParams(window.location.search);
+  const persistedSetup = readPersistedRoomSetup();
+
+  if (!query.has('room') && normalizeText(persistedSetup.room)) {
+    roomInput.value = normalizeText(persistedSetup.room);
+  }
+  if (!query.has('identity') && normalizeText(persistedSetup.identity)) {
+    identityInput.value = normalizeText(persistedSetup.identity);
+  }
+  if (!query.has('name') && normalizeText(persistedSetup.name)) {
+    nameInput.value = normalizeText(persistedSetup.name);
+  }
+
   const presentationCourseIdByHrefKey = new Map<string, string>();
   const presentationPageSlugByHrefKey = new Map<string, string>();
   const presentationCourseIdByPathSegment = new Map<string, string>();
@@ -740,8 +1138,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   let localRole = normalizeRole(roleInput.value);
   let pendingPresentationTask = 0;
   let activeDevicePanel: 'audio' | 'video' | null = null;
-  let preferredAudioInputId = normalizeText(audioInputSelect instanceof HTMLSelectElement ? audioInputSelect.value : '');
-  let preferredVideoInputId = normalizeText(videoInputSelect instanceof HTMLSelectElement ? videoInputSelect.value : '');
+  let preferredAudioInputId = normalizeText(persistedSetup.preferredAudioInputId) || normalizeText(audioInputSelect?.value);
+  let preferredVideoInputId = normalizeText(persistedSetup.preferredVideoInputId) || normalizeText(videoInputSelect?.value);
   let focusedParticipantIdentity = '';
   let localPreviewMount: ParticipantMount | null = null;
   let localPreviewStreamMount: LocalPreviewStreamMount | null = null;
@@ -755,7 +1153,6 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   let activeLiveSnapshot: LiveSnapshot | null = null;
   let liveActivityTickId = 0;
   let immersiveFullscreenActive = false;
-  let sidebarCollapsed = root.dataset.sidebarCollapsed === 'true';
   let connectedAtMs = 0;
   let recordingAnimationId = 0;
   let recordingAudioContext: AudioContext | null = null;
@@ -779,6 +1176,42 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   let micMeterTrackId = '';
   let micMeterGeneration = 0;
   let localHandRaised = false;
+  let previewZoom = normalizePreviewZoom(
+    previewZoomInput instanceof HTMLInputElement
+      ? previewZoomInput.value
+      : persistedSetup.previewZoom,
+    normalizePreviewZoom(persistedSetup.previewZoom, 1),
+  );
+  let previewBlur = Boolean(persistedSetup.previewBlur);
+  let presentationCircleZoom = previewZoom;
+  let showPresentationCircle = persistedSetup.showCircle !== false;
+  let sidebarCollapsed = root.dataset.sidebarCollapsed === 'true';
+
+  const getLocalCameraTrack = (): LocalCameraTrackLike | null => {
+    const publication = Array.from(room.localParticipant.videoTrackPublications.values()).find(
+      (entry) => entry.track && entry.source !== Track.Source.ScreenShare,
+    );
+
+    return isLocalCameraTrackLike(publication?.track) ? publication.track : null;
+  };
+
+  const syncLocalBackgroundBlurProcessor = async () => {
+    const localCameraTrack = getLocalCameraTrack();
+    if (!localCameraTrack) return;
+
+    if (!previewBlur) {
+      if (isBackgroundBlurProcessorActive(localCameraTrack)) {
+        await localCameraTrack.stopProcessor?.().catch(() => undefined);
+      }
+      return;
+    }
+
+    if (isBackgroundBlurProcessorActive(localCameraTrack)) {
+      return;
+    }
+
+    await localCameraTrack.setProcessor?.(new BackgroundBlurVideoProcessor(), true);
+  };
 
   const resolvePresentationCourseId = (href: string | null | undefined) => {
     const hrefKey = toPresentationHrefKey(href);
@@ -895,6 +1328,51 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     }
   };
 
+  const applyPreviewZoomState = () => {
+    root.style.setProperty('--conference-self-preview-zoom', previewZoom.toFixed(2));
+    root.style.setProperty('--conference-circle-preview-zoom', presentationCircleZoom.toFixed(2));
+    if (previewZoomInput instanceof HTMLInputElement) {
+      previewZoomInput.value = previewZoom.toFixed(2);
+    }
+    if (previewZoomOutput instanceof HTMLOutputElement || previewZoomOutput instanceof HTMLElement) {
+      previewZoomOutput.textContent = `${previewZoom.toFixed(2)}x`;
+    }
+  };
+
+  const applyShowCircleState = () => {
+    root.dataset.showCircle = showPresentationCircle ? 'true' : 'false';
+    if (showCircleInput instanceof HTMLInputElement) {
+      showCircleInput.checked = showPresentationCircle;
+    }
+  };
+
+  const applyPreviewBlurState = () => {
+    root.dataset.previewBlur = previewBlur ? 'true' : 'false';
+    if (previewBlurInput instanceof HTMLInputElement) {
+      previewBlurInput.checked = previewBlur;
+    }
+  };
+
+  const persistSetupState = () => {
+    writePersistedRoomSetup({
+      room: normalizeText(roomInput.value),
+      identity: normalizeText(identityInput.value),
+      name: normalizeText(nameInput.value),
+      preferredAudioInputId,
+      preferredVideoInputId,
+      previewBlur,
+      previewZoom,
+      showCircle: showPresentationCircle,
+    });
+  };
+
+  const syncSelectGroupValue = (selects: HTMLSelectElement[], nextValue: string) => {
+    selects.forEach((select) => {
+      if (normalizeText(select.value) === nextValue) return;
+      select.value = nextValue;
+    });
+  };
+
   const syncRoleUi = () => {
     roleInput.value = localRole;
     if (roleLabel instanceof HTMLElement) {
@@ -936,6 +1414,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
         pageSlug: getCurrentPresentationPageSlug() || normalizeText(currentMetadata.pageSlug),
         role: localRole,
         handRaised: localHandRaised,
+        previewZoom,
+        showCircle: showPresentationCircle,
       }),
     );
   };
@@ -960,6 +1440,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   const toggleSidebarCollapsed = () => {
     sidebarCollapsed = !sidebarCollapsed;
     applySidebarCollapsedState();
+    persistSetupState();
     queuePreferredRemoteVideoDimensionsSync();
   };
 
@@ -1389,7 +1870,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   };
 
   const getVisibleVideoElements = () =>
-    Array.from(root.querySelectorAll('video')).filter((element): element is HTMLVideoElement => {
+    Array.from(stageFrame.querySelectorAll('video')).filter((element): element is HTMLVideoElement => {
       if (!(element instanceof HTMLVideoElement)) return false;
       if (element.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return false;
 
@@ -1403,6 +1884,13 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
       return true;
     });
+
+  const stageFrame =
+    stageFrameNode instanceof HTMLElement
+      ? stageFrameNode
+      : stage;
+
+  const getRecordingViewportRect = () => stageFrame.getBoundingClientRect();
 
   const drawVideoIntoRect = ({
     context,
@@ -1687,10 +2175,14 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       }
 
       try {
-        const recorderOptions: MediaRecorderOptions = {
-          audioBitsPerSecond: 192_000,
-          videoBitsPerSecond: 8_000_000,
+        const recorderOptions: MediaRecorderOptions & {
+          audioBitrateMode?: 'constant' | 'variable';
+        } = {
+          audioBitsPerSecond: 320_000,
+          videoBitsPerSecond: 12_000_000,
         };
+
+        recorderOptions.audioBitrateMode = 'constant';
 
         if (mimeType) {
           recorderOptions.mimeType = mimeType;
@@ -1711,9 +2203,9 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   const drawRecordingFrame = () => {
     if (!recordingCanvas || !recordingCanvasContext) return;
 
-    const rootRect = root.getBoundingClientRect();
-    const width = Math.max(2, Math.round(rootRect.width));
-    const height = Math.max(2, Math.round(rootRect.height));
+    const viewportRect = getRecordingViewportRect();
+    const width = Math.max(2, Math.round(viewportRect.width));
+    const height = Math.max(2, Math.round(viewportRect.height));
 
     if (recordingCanvas.width !== width || recordingCanvas.height !== height) {
       recordingCanvas.width = width;
@@ -1739,8 +2231,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
         presentationRect.height > 2
       ) {
         const localRect = new DOMRect(
-          presentationRect.left - rootRect.left,
-          presentationRect.top - rootRect.top,
+          presentationRect.left - viewportRect.left,
+          presentationRect.top - viewportRect.top,
           presentationRect.width,
           presentationRect.height,
         );
@@ -1758,8 +2250,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     getVisibleVideoElements().forEach((video) => {
       const rect = video.getBoundingClientRect();
       const localRect = new DOMRect(
-        rect.left - rootRect.left,
-        rect.top - rootRect.top,
+        rect.left - viewportRect.left,
+        rect.top - viewportRect.top,
         rect.width,
         rect.height,
       );
@@ -1895,6 +2387,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     if (!recordingCanvasContext) {
       throw new Error('Could not initialize the recording canvas.');
     }
+    recordingCanvasContext.imageSmoothingEnabled = true;
+    recordingCanvasContext.imageSmoothingQuality = 'high';
 
     await refreshRecordingPresentationSnapshot(true).catch(() => undefined);
     drawRecordingFrame();
@@ -1995,23 +2489,30 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
   const canChangeLayoutLocally = () => !hasActiveScreenShare();
 
-  const resolveParticipantTargetSlot = (participant: Participant) => {
+  const resolveParticipantTargetSlot = (participant: Participant): HTMLElement | null => {
     const layout = getCurrentLayout();
     const role = readParticipantRole(room, participant, localRole);
+    const isLocal = isLocalParticipant(room, participant);
 
     if (layout === 'grid') {
       return gridSlot;
     }
 
     if (layout === 'teacher') {
-      return participant.identity === focusedParticipantIdentity ? teacherSlot : studentsSlot;
+      if (participant.identity === focusedParticipantIdentity) {
+        return teacherSlot;
+      }
+      return isLocal ? null : studentsSlot;
     }
 
     if (layout === 'presentation') {
-      return role === 'teacher' ? teacherSlot : studentsSlot;
+      if (role === 'teacher') {
+        return teacherSlot;
+      }
+      return isLocal ? null : studentsSlot;
     }
 
-    return studentsSlot;
+    return isLocal ? null : studentsSlot;
   };
 
   const clearIdentityPreviewSlot = () => {
@@ -2041,6 +2542,13 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
     const wrapper = document.createElement('div');
     wrapper.className = 'conference-media-frame conference-media-frame--local-preview';
+
+    if (previewBlur) {
+      appendBlurBackdrop({
+        stream,
+        wrapper,
+      });
+    }
 
     const element = document.createElement('video');
     element.autoplay = true;
@@ -2138,10 +2646,15 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     }
 
     const trackSid = getTrackSid(publication);
+    const shouldRenderBackdrop = Boolean(
+      previewBlur &&
+        !isBackgroundBlurProcessorActive(isLocalCameraTrackLike(publication.track) ? publication.track : null),
+    );
     if (
       localPreviewMount &&
       localPreviewMount.trackSid === trackSid &&
-      localPreviewMount.track === publication.track
+      localPreviewMount.track === publication.track &&
+      shouldRenderBackdrop === Boolean(localPreviewMount.wrapper.querySelector('.conference-media-backdrop'))
     ) {
       return;
     }
@@ -2151,6 +2664,15 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
     const wrapper = document.createElement('div');
     wrapper.className = 'conference-media-frame conference-media-frame--local-preview';
+
+    if (shouldRenderBackdrop) {
+      appendBlurBackdrop({
+        track: (
+          publication.track as { mediaStreamTrack?: MediaStreamTrack | null } | undefined
+        )?.mediaStreamTrack,
+        wrapper,
+      });
+    }
 
     const element = createMediaElement(publication.track, true);
     wrapper.appendChild(element);
@@ -2174,6 +2696,10 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     postToPresentation({ type: 'musiki:reveal-request-state' });
   };
 
+  const resetPresentationZoom = () => {
+    postToPresentation({ type: 'musiki:reveal-reset-zoom' });
+  };
+
   const applyRemoteSlideState = (slideState: SlideState) => {
     pendingRemoteSlideState = slideState;
     postToPresentation({
@@ -2184,7 +2710,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
   const publishSlideState = async (slideState: SlideState) => {
     if (localRole !== 'teacher' || room.state !== ConnectionState.Connected) return;
-    const slideKey = `${slideState.indexh}:${slideState.indexv}:${slideState.indexf}`;
+    const slideKey = `${slideState.indexh}:${slideState.indexv}:${slideState.indexf}:${slideState.zoom.toFixed(3)}`;
     if (slideKey === lastPublishedSlideKey) return;
     lastPublishedSlideKey = slideKey;
     await publishMessage({
@@ -2275,6 +2801,14 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
         };
       }
 
+      if (parsed.type === 'session-setup') {
+        return {
+          type: 'session-setup',
+          previewZoom: normalizePreviewZoom((parsed as { previewZoom?: number }).previewZoom, 1),
+          showCircle: Boolean((parsed as { showCircle?: boolean }).showCircle),
+        };
+      }
+
       if (parsed.type === 'slide-state') {
         const slideState = normalizeSlideState(parsed as Partial<SlideState>);
         if (!slideState) return null;
@@ -2358,6 +2892,12 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       href: presentation.getHref(),
     });
 
+    await publishMessage({
+      type: 'session-setup',
+      previewZoom,
+      showCircle: showPresentationCircle,
+    });
+
     if (currentSlideState) {
       await publishSlideState(currentSlideState);
     }
@@ -2374,47 +2914,55 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   const refreshDeviceOptions = async (requestPermissions = false) => {
     const deviceTasks: Promise<void>[] = [];
 
-    if (audioInputSelect instanceof HTMLSelectElement) {
+    if (audioInputSelects.length > 0) {
       deviceTasks.push(
         Room.getLocalDevices('audioinput', requestPermissions)
           .then((devices) => {
-            populateDeviceSelect({
-              activeDeviceId: room.getActiveDevice('audioinput') || preferredAudioInputId,
-              devices,
-              emptyLabel: 'No se detectaron microfonos',
-              kind: 'audioinput',
-              select: audioInputSelect,
+            audioInputSelects.forEach((select) => {
+              populateDeviceSelect({
+                activeDeviceId: room.getActiveDevice('audioinput') || preferredAudioInputId,
+                devices,
+                emptyLabel: 'No se detectaron microfonos',
+                kind: 'audioinput',
+                select,
+              });
             });
           })
           .catch(() => {
-            populateDeviceSelect({
-              devices: [],
-              emptyLabel: 'No se detectaron microfonos',
-              kind: 'audioinput',
-              select: audioInputSelect,
+            audioInputSelects.forEach((select) => {
+              populateDeviceSelect({
+                devices: [],
+                emptyLabel: 'No se detectaron microfonos',
+                kind: 'audioinput',
+                select,
+              });
             });
           }),
       );
     }
 
-    if (videoInputSelect instanceof HTMLSelectElement) {
+    if (videoInputSelects.length > 0) {
       deviceTasks.push(
         Room.getLocalDevices('videoinput', requestPermissions)
           .then((devices) => {
-            populateDeviceSelect({
-              activeDeviceId: room.getActiveDevice('videoinput') || preferredVideoInputId,
-              devices,
-              emptyLabel: 'No se detectaron camaras',
-              kind: 'videoinput',
-              select: videoInputSelect,
+            videoInputSelects.forEach((select) => {
+              populateDeviceSelect({
+                activeDeviceId: room.getActiveDevice('videoinput') || preferredVideoInputId,
+                devices,
+                emptyLabel: 'No se detectaron camaras',
+                kind: 'videoinput',
+                select,
+              });
             });
           })
           .catch(() => {
-            populateDeviceSelect({
-              devices: [],
-              emptyLabel: 'No se detectaron camaras',
-              kind: 'videoinput',
-              select: videoInputSelect,
+            videoInputSelects.forEach((select) => {
+              populateDeviceSelect({
+                devices: [],
+                emptyLabel: 'No se detectaron camaras',
+                kind: 'videoinput',
+                select,
+              });
             });
           }),
       );
@@ -2609,14 +3157,18 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     if (presentationButton instanceof HTMLButtonElement) {
       presentationButton.disabled = connected && localRole !== 'teacher';
     }
-    if (audioInputSelect instanceof HTMLSelectElement) {
-      const hasAudioChoices = Array.from(audioInputSelect.options).some((option) => option.value);
-      audioInputSelect.disabled = !hasAudioChoices;
-    }
-    if (videoInputSelect instanceof HTMLSelectElement) {
-      const hasVideoChoices = Array.from(videoInputSelect.options).some((option) => option.value);
-      videoInputSelect.disabled = !hasVideoChoices;
-    }
+    const hasAudioChoices = audioInputSelects.some((select) =>
+      Array.from(select.options).some((option) => option.value),
+    );
+    audioInputSelects.forEach((select) => {
+      select.disabled = !hasAudioChoices;
+    });
+    const hasVideoChoices = videoInputSelects.some((select) =>
+      Array.from(select.options).some((option) => option.value),
+    );
+    videoInputSelects.forEach((select) => {
+      select.disabled = !hasVideoChoices;
+    });
     if (presentationClearButton instanceof HTMLButtonElement) {
       presentationClearButton.disabled =
         (connected && localRole !== 'teacher') ||
@@ -2681,6 +3233,11 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     const role = readParticipantRole(room, participant, localRole);
     const targetSlot = resolveParticipantTargetSlot(participant);
 
+    if (!(targetSlot instanceof HTMLElement)) {
+      removeParticipant(identity);
+      return null;
+    }
+
     let card = participantCards.get(identity);
     if (!card) {
       const node = cloneTemplate(participantTemplate);
@@ -2713,6 +3270,11 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     }
 
     card.card.dataset.role = role;
+    card.card.dataset.showCircle = readParticipantShowCircle(participant) ? 'true' : 'false';
+    card.card.style.setProperty(
+      '--conference-participant-preview-zoom',
+      readParticipantPreviewZoom(participant).toFixed(2),
+    );
     card.name.textContent = readParticipantName(participant);
     card.hand.hidden = !readParticipantHandRaised(participant);
     card.card.dataset.handRaised = readParticipantHandRaised(participant) ? 'true' : 'false';
@@ -2745,7 +3307,10 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
   const syncParticipant = (participant: Participant) => {
     const card = ensureParticipantCard(participant);
-    syncParticipantVideo(room, participant, card, mounts);
+    if (!card) return;
+    syncParticipantVideo(room, participant, card, mounts, {
+      blurLocalVideo: previewBlur,
+    });
     syncParticipantAudio(room, participant, card, mounts);
     syncScreenVideo(participant, screenSlot, screenTemplate, screenCards, mounts);
     syncScreenAudio(room, participant, screenCards, mounts);
@@ -2887,6 +3452,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       nameInput.value = normalizeText(tokenPayload.name) || displayName;
       localRole = normalizeRole(tokenPayload.role);
       syncRoleUi();
+      persistSetupState();
 
       await room.connect(livekitUrl, tokenPayload.token);
       await room.startAudio().catch(() => undefined);
@@ -3003,14 +3569,17 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       void refreshDeviceOptions(true);
     })
     .on(RoomEvent.ActiveDeviceChanged, (kind, deviceId) => {
-      if (kind === 'audioinput' && audioInputSelect instanceof HTMLSelectElement) {
-        audioInputSelect.value = deviceId;
+      if (kind === 'audioinput') {
+        syncSelectGroupValue(audioInputSelects, deviceId);
+        preferredAudioInputId = normalizeText(deviceId);
       }
 
-      if (kind === 'videoinput' && videoInputSelect instanceof HTMLSelectElement) {
-        videoInputSelect.value = deviceId;
+      if (kind === 'videoinput') {
+        syncSelectGroupValue(videoInputSelects, deviceId);
+        preferredVideoInputId = normalizeText(deviceId);
       }
 
+      persistSetupState();
       setControlState();
     })
     .on(RoomEvent.ParticipantMetadataChanged, (_, participant) => {
@@ -3065,11 +3634,20 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
         return;
       }
 
+      if (message.type === 'session-setup') {
+        presentationCircleZoom = normalizePreviewZoom(message.previewZoom, presentationCircleZoom);
+        showPresentationCircle = Boolean(message.showCircle);
+        applyPreviewZoomState();
+        applyShowCircleState();
+        return;
+      }
+
       if (message.type === 'slide-state') {
         currentSlideState = {
           indexf: message.indexf,
           indexh: message.indexh,
           indexv: message.indexv,
+          zoom: message.zoom,
         };
         applyRemoteSlideState(currentSlideState);
       }
@@ -3218,11 +3796,13 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     });
   }
 
-  if (audioInputSelect instanceof HTMLSelectElement) {
-    audioInputSelect.addEventListener('change', async () => {
-      const nextDeviceId = normalizeText(audioInputSelect.value);
+  audioInputSelects.forEach((select) => {
+    select.addEventListener('change', async () => {
+      const nextDeviceId = normalizeText(select.value);
       if (!nextDeviceId) return;
       preferredAudioInputId = nextDeviceId;
+      syncSelectGroupValue(audioInputSelects, nextDeviceId);
+      persistSetupState();
 
       try {
         await room.switchActiveDevice('audioinput', nextDeviceId);
@@ -3235,13 +3815,15 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
         );
       }
     });
-  }
+  });
 
-  if (videoInputSelect instanceof HTMLSelectElement) {
-    videoInputSelect.addEventListener('change', async () => {
-      const nextDeviceId = normalizeText(videoInputSelect.value);
+  videoInputSelects.forEach((select) => {
+    select.addEventListener('change', async () => {
+      const nextDeviceId = normalizeText(select.value);
       if (!nextDeviceId) return;
       preferredVideoInputId = nextDeviceId;
+      syncSelectGroupValue(videoInputSelects, nextDeviceId);
+      persistSetupState();
 
       if (room.state === ConnectionState.Disconnected) {
         if (!disconnectedCameraPreviewEnabled) {
@@ -3273,12 +3855,72 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
         );
       }
     });
+  });
+
+  if (previewZoomInput instanceof HTMLInputElement) {
+    previewZoomInput.addEventListener('input', () => {
+      previewZoom = normalizePreviewZoom(previewZoomInput.value, previewZoom);
+      presentationCircleZoom = previewZoom;
+      applyPreviewZoomState();
+      persistSetupState();
+      if (room.state === ConnectionState.Connected) {
+        void syncLocalParticipantMetadata().catch(() => undefined);
+      }
+      if (room.state === ConnectionState.Connected && localRole === 'teacher') {
+        void publishMessage({
+          type: 'session-setup',
+          previewZoom,
+          showCircle: showPresentationCircle,
+        });
+      }
+    });
+  }
+
+  if (showCircleInput instanceof HTMLInputElement) {
+    showCircleInput.addEventListener('change', () => {
+      showPresentationCircle = showCircleInput.checked;
+      applyShowCircleState();
+      persistSetupState();
+      if (room.state === ConnectionState.Connected) {
+        void syncLocalParticipantMetadata().catch(() => undefined);
+      }
+      if (room.state === ConnectionState.Connected && localRole === 'teacher') {
+        void publishMessage({
+          type: 'session-setup',
+          previewZoom,
+          showCircle: showPresentationCircle,
+        });
+      }
+    });
+  }
+
+  if (previewBlurInput instanceof HTMLInputElement) {
+    previewBlurInput.addEventListener('change', () => {
+      previewBlur = previewBlurInput.checked;
+      applyPreviewBlurState();
+      persistSetupState();
+
+      if (room.state === ConnectionState.Disconnected && disconnectedCameraPreviewEnabled) {
+        disableDisconnectedCameraPreview();
+        void enableDisconnectedCameraPreview().catch((error) => {
+          setStatus(safeErrorMessage(error));
+        });
+        return;
+      }
+
+      syncIdentityPreview();
+      syncAllParticipants();
+    });
   }
 
   layoutChoiceButtons.forEach((button) => {
     if (!(button instanceof HTMLButtonElement)) return;
     button.addEventListener('click', () => {
       const requestedLayout = normalizeLayoutMode(button.dataset.layoutChoice || '');
+      if (requestedLayout === 'presentation' && getCurrentLayout() === 'presentation') {
+        resetPresentationZoom();
+        return;
+      }
       if (layoutInput.disabled) return;
       layoutInput.value = requestedLayout;
       layoutInput.dispatchEvent(new Event('change', { bubbles: true }));
@@ -3410,7 +4052,11 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   document.addEventListener('keydown', handleRoomShortcutKeydown);
 
   [roomInput, identityInput, nameInput].forEach((input) => {
-    input.addEventListener('change', writeQueryState);
+    input.addEventListener('change', () => {
+      writeQueryState();
+      persistSetupState();
+    });
+    input.addEventListener('input', persistSetupState);
   });
 
   const handlePresentationLoad = () => {
@@ -3432,6 +4078,9 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
   syncRoleUi();
   applySidebarCollapsedState();
+  applyPreviewZoomState();
+  applyPreviewBlurState();
+  applyShowCircleState();
   setLayout(stage, layoutInput.value);
   renderParticipantList();
   renderChat();

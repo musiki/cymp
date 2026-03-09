@@ -1,7 +1,7 @@
 ---
 title: "Segundo Cerebro"
 chapter: "Organología I"
-order: 1
+order: 2
 assignment: false
 summary: como primer instrumento estudiaremos nuestro cerebro. Toda producción creativa se basa en la reconfiguración y recombinación de elementos previos. En lugar de depender únicamente de la memoria, el uso de un **segundo cerebro** permite capturar y reutilizar ideas en nuevas combinaciones.
 theme: zztt

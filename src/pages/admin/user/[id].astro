@@ -3,6 +3,7 @@ import BaseHead from '../../../components/BaseHead.astro';
 import Header from '../../../components/Header.astro';
 import Footer from '../../../components/Footer.astro';
 import { createClient } from '@supabase/supabase-js';
+import { createSupabaseServerClient } from '../../../lib/forum-server';
 import { getResultIcon, getSubmissionAnswerText, getSubmissionResultState } from '../../../lib/submission-table';
 import { getEvalOptionMap } from '../../../lib/eval-option-map';
 import '../../../styles/theme.css';
@@ -54,6 +55,12 @@ const getAssignmentInfo = (aid: string) => {
   return a ? { slug: a.slug, courseId: a.courseId } : { slug: aid, courseId: 'Unknown' };
 };
 
+const getDateTimestamp = (value: unknown) => {
+  const parsed = new Date(String(value || ''));
+  if (Number.isNaN(parsed.getTime())) return 0;
+  return parsed.getTime();
+};
+
 const formatSubmissionDate = (value: string | null | undefined) => {
   if (!value) return '—';
   const date = new Date(value);
@@ -75,6 +82,162 @@ const decodeUriSafe = (value: string | null | undefined) => {
     return value;
   }
 };
+
+const formatDurationFromMs = (value: unknown) => {
+  const ms = Number(value || 0);
+  if (!Number.isFinite(ms) || ms <= 0) return '—';
+
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+};
+
+const getAttendanceDayKey = (session: any, attendance: any) => {
+  const value =
+    session?.startedAt
+    || attendance?.firstJoinedAt
+    || attendance?.lastEventAt
+    || attendance?.lastLeftAt
+    || attendance?.createdAt
+    || '';
+  const parsed = new Date(String(value || ''));
+  if (Number.isNaN(parsed.getTime())) return '';
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, '0');
+  const day = String(parsed.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const formatAttendanceDayLabel = (value: string) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return 'Sin fecha';
+  const [year, month, day] = String(value).split('-').map(Number);
+  const parsed = new Date(year, (month || 1) - 1, day || 1);
+  if (Number.isNaN(parsed.getTime())) return 'Sin fecha';
+  return parsed.toLocaleDateString('es-ES', {
+    weekday: 'short',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+};
+
+const computeAttendanceDurationMs = (attendance: any, session: any) => {
+  const startedAt = getDateTimestamp(attendance?.firstJoinedAt);
+  const endedAt =
+    getDateTimestamp(attendance?.lastLeftAt)
+    || getDateTimestamp(attendance?.lastEventAt)
+    || getDateTimestamp(session?.finishedAt)
+    || getDateTimestamp(session?.lastEventAt);
+
+  if (!startedAt || !endedAt || endedAt <= startedAt) return 0;
+  return endedAt - startedAt;
+};
+
+let userAttendance: any[] = [];
+let userLiveSessions: any[] = [];
+
+try {
+  const attendanceSupabase = createSupabaseServerClient({ requireServiceRole: true });
+  const { data: attendanceRows, error: attendanceError } = await attendanceSupabase
+    .from('LiveClassAttendance')
+    .select('*')
+    .eq('userId', id)
+    .order('lastEventAt', { ascending: false });
+
+  if (attendanceError) {
+    console.error('Error loading user attendance rows:', attendanceError);
+  } else {
+    userAttendance = attendanceRows || [];
+  }
+
+  const sessionIds = Array.from(new Set(userAttendance.map((row: any) => String(row?.sessionId || '').trim()).filter(Boolean)));
+  if (sessionIds.length > 0) {
+    const { data: sessionRows, error: sessionError } = await attendanceSupabase
+      .from('LiveClassSession')
+      .select('*')
+      .in('id', sessionIds)
+      .order('startedAt', { ascending: false });
+
+    if (sessionError) {
+      console.error('Error loading user live sessions:', sessionError);
+    } else {
+      userLiveSessions = sessionRows || [];
+    }
+  }
+} catch (error) {
+  console.error('Error initializing admin user attendance queries:', error);
+}
+
+const userSessionById = new Map<string, any>(
+  (userLiveSessions || []).map((session: any) => [String(session?.id || ''), session]),
+);
+
+const attendanceLogRows = (userAttendance || []).map((attendance: any) => {
+  const session = userSessionById.get(String(attendance?.sessionId || '')) || null;
+  const durationMs = computeAttendanceDurationMs(attendance, session);
+  const lessonPath = String(session?.pageSlug || attendance?.pageSlug || session?.roomName || 'Clase');
+  const dayKey = getAttendanceDayKey(session, attendance);
+  return {
+    ...attendance,
+    dayKey,
+    dayLabel: formatAttendanceDayLabel(dayKey),
+    pageSlug: String(session?.pageSlug || attendance?.pageSlug || ''),
+    lessonLabel: decodeUriSafe(lessonPath.split('/').pop() || lessonPath || 'Clase'),
+    courseId: String(session?.courseId || attendance?.courseId || '—'),
+    durationMs,
+    durationLabel: formatDurationFromMs(durationMs),
+    startedAtLabel: formatSubmissionDate(session?.startedAt),
+    firstJoinedLabel: formatSubmissionDate(attendance?.firstJoinedAt),
+    lastLeftLabel: formatSubmissionDate(attendance?.lastLeftAt),
+    lastSeenLabel: formatSubmissionDate(attendance?.lastEventAt),
+  };
+});
+
+const uniqueAttendanceSessionIds = new Set(
+  attendanceLogRows
+    .filter((row: any) => Number(row?.joinCount || 0) > 0)
+    .map((row: any) => String(row?.sessionId || '').trim())
+    .filter(Boolean),
+);
+
+const totalConnectedMs = attendanceLogRows.reduce((sum: number, row: any) => sum + Number(row?.durationMs || 0), 0);
+const totalJoinCount = attendanceLogRows.reduce((sum: number, row: any) => sum + Math.max(0, Number(row?.joinCount || 0)), 0);
+const averageConnectedMs = uniqueAttendanceSessionIds.size > 0 ? totalConnectedMs / uniqueAttendanceSessionIds.size : 0;
+
+const attendanceDayGroups = (() => {
+  const groups = new Map<string, any>();
+  attendanceLogRows.forEach((row: any) => {
+    const dayKey = String(row?.dayKey || '').trim();
+    const group = groups.get(dayKey) || {
+      dayKey,
+      dayLabel: row?.dayLabel || 'Sin fecha',
+      latestSeenAt: '',
+      rows: [],
+    };
+    group.rows.push(row);
+    if (getDateTimestamp(row?.lastEventAt || row?.lastLeftAt || row?.firstJoinedAt) >= getDateTimestamp(group.latestSeenAt)) {
+      group.latestSeenAt = String(row?.lastEventAt || row?.lastLeftAt || row?.firstJoinedAt || '');
+    }
+    groups.set(dayKey, group);
+  });
+
+  return Array.from(groups.values())
+    .map((group: any) => ({
+      ...group,
+      rows: [...group.rows].sort((left: any, right: any) =>
+        getDateTimestamp(right?.lastEventAt || right?.lastLeftAt || right?.firstJoinedAt)
+          - getDateTimestamp(left?.lastEventAt || left?.lastLeftAt || left?.firstJoinedAt),
+      ),
+    }))
+    .sort((left: any, right: any) => getDateTimestamp(right.latestSeenAt) - getDateTimestamp(left.latestSeenAt));
+})();
 ---
 
 <html lang="es">
@@ -96,6 +259,19 @@ const decodeUriSafe = (value: string | null | undefined) => {
       .data-table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
       .data-table th { text-align: left; padding: 0.75rem; background: var(--c-bg-mute); border-bottom: 2px solid var(--c-border); }
       .data-table td { padding: 0.75rem; border-bottom: 1px solid var(--c-border); }
+      .attendance-stat-cluster { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+      .attendance-stat-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.28rem;
+        padding: 0.22rem 0.42rem;
+        border: 1px solid var(--c-border);
+        border-radius: 999px;
+        background: var(--c-bg);
+        font-size: 0.78rem;
+        cursor: help;
+        white-space: nowrap;
+      }
       .status-graded { color: #2e7d32; font-weight: 500; }
       .status-pending { color: #f57c00; font-weight: 500; }
       .result-icon { font-size: 1rem; font-weight: 700; line-height: 1; display: inline-flex; align-items: center; justify-content: center; min-width: 1rem; }
@@ -196,6 +372,10 @@ const decodeUriSafe = (value: string | null | undefined) => {
       }
       .fold-level-4 {
         margin-left: 0.4rem;
+      }
+      .fold-day-note {
+        font-size: 0.8rem;
+        color: var(--c-fg-dim);
       }
       
       .back-link { display: inline-block; margin-bottom: 1rem; color: var(--c-link); text-decoration: none; }
@@ -451,6 +631,81 @@ const decodeUriSafe = (value: string | null | undefined) => {
           </>
         ) : (
           <p>No hay entregas registradas.</p>
+        )}
+      </div>
+
+      <div class="section">
+        <h2>🛰️ Asistencias en Vivo</h2>
+        {attendanceLogRows.length > 0 ? (
+          <>
+            <div class="attendance-stat-cluster" style="margin-bottom: 1rem;">
+              <span class="attendance-stat-chip" title="Sesiones con ingreso registrado">
+                <span aria-hidden="true">🎬</span>
+                <strong>{uniqueAttendanceSessionIds.size}</strong>
+              </span>
+              <span class="attendance-stat-chip" title="Cantidad total de conexiones">
+                <span aria-hidden="true">↻</span>
+                <strong>{totalJoinCount}</strong>
+              </span>
+              <span class="attendance-stat-chip" title="Promedio de tiempo por sesión">
+                <span aria-hidden="true">∅</span>
+                <strong>{formatDurationFromMs(averageConnectedMs)}</strong>
+              </span>
+              <span class="attendance-stat-chip" title="Tiempo total conectado">
+                <span aria-hidden="true">⏱</span>
+                <strong>{formatDurationFromMs(totalConnectedMs)}</strong>
+              </span>
+            </div>
+
+            {attendanceDayGroups.map((group: any) => (
+              <section
+                class="fold-node fold-level-1"
+                data-fold-level="1"
+                data-fold-node
+                data-fold-scope="admin-user-attendance"
+                style="margin-bottom: 0.65rem;"
+              >
+                <button type="button" class="fold-header" data-fold-toggle>
+                  <span class="fold-toggle-icon">▾</span>
+                  <span>{group.dayLabel}</span>
+                  <span class="fold-summary">{group.rows.length} conexiones</span>
+                </button>
+                <div class="fold-children">
+                  <p class="fold-day-note">Log de conexiones del usuario para este día.</p>
+                  <table class="data-table" style="margin-top: 0.35rem;">
+                    <thead>
+                      <tr>
+                        <th>Curso</th>
+                        <th>Clase</th>
+                        <th>Inicio</th>
+                        <th>Ingresos</th>
+                        <th>Salidas</th>
+                        <th>Abortos</th>
+                        <th>Tiempo</th>
+                        <th>Última actividad</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {group.rows.map((row: any) => (
+                        <tr>
+                          <td>{row.courseId || '—'}</td>
+                          <td title={row.pageSlug || ''}>{row.lessonLabel}</td>
+                          <td>{row.startedAtLabel}</td>
+                          <td>{row.joinCount || 0}</td>
+                          <td>{row.leaveCount || 0}</td>
+                          <td>{row.abortedCount || 0}</td>
+                          <td>{row.durationLabel}</td>
+                          <td>{row.lastSeenLabel}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ))}
+          </>
+        ) : (
+          <p>Este usuario no registra conexiones en vivo.</p>
         )}
       </div>
     </main>

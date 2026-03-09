@@ -63,6 +63,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
     if (hasFeedback) {
       const normalizedFeedback = String(feedback).trim();
       updatePayload.feedback = normalizedFeedback || null;
+      if (!('gradedAt' in updatePayload) && normalizedFeedback) {
+        updatePayload.gradedAt = new Date();
+      }
     }
 
     // Update submission fields in one call

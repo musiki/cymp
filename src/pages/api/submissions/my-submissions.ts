@@ -24,7 +24,7 @@ export const GET: APIRoute = async ({ locals }) => {
 
     const { data: submissions, error: submissionsError } = await supabase
       .from('Submission')
-      .select('id, assignmentId, payload, score, attempts, submittedAt, gradedAt')
+      .select('id, assignmentId, payload, score, feedback, attempts, submittedAt, gradedAt')
       .eq('userId', user.id)
       .order('submittedAt', { ascending: false });
 
@@ -38,6 +38,7 @@ export const GET: APIRoute = async ({ locals }) => {
         assignmentId: submission.assignmentId,
         answer: submission.payload,
         score: submission.score,
+        feedback: submission.feedback,
         attempts: submission.attempts,
         submittedAt: submission.submittedAt,
         gradedAt: submission.gradedAt,

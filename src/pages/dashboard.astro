@@ -5,7 +5,12 @@ import Footer from '../components/Footer.astro';
 import Header from '../components/Header.astro';
 import { createClient } from '@supabase/supabase-js';
 import { createSupabaseServerClient } from '../lib/forum-server';
-import { getResultIcon, getSubmissionAnswerText, getSubmissionResultState } from '../lib/submission-table';
+import {
+  getResultIcon,
+  getSubmissionAnswerText,
+  getSubmissionResultState,
+  isSubmissionReviewed,
+} from '../lib/submission-table';
 import { getEvalOptionMap } from '../lib/eval-option-map';
 import {
   buildEvalCatalog,
@@ -15,6 +20,7 @@ import {
   resolveEvalCatalogEntry,
   type EvalNoteType,
 } from '../lib/eval-catalog';
+import { normalizeActivityPageSlug } from '../lib/class-activity/model.mjs';
 import '../styles/theme.css';
 
 // --- AUTHENTICATION ---
@@ -214,6 +220,51 @@ if (!isTeacher) {
 
   const { data: s } = await studentSubmissionQuery;
   studentSubmissions = s || [];
+
+  try {
+    const attendanceSupabase = createSupabaseServerClient({ requireServiceRole: true });
+    let liveAttendanceQuery = attendanceSupabase
+      .from('LiveClassAttendance')
+      .select('*')
+      .order('lastEventAt', { ascending: false });
+
+    if (dashboardUserIds.length > 1) {
+      liveAttendanceQuery = liveAttendanceQuery.in('userId', dashboardUserIds);
+    } else {
+      liveAttendanceQuery = liveAttendanceQuery.eq('userId', dbUser.id);
+    }
+
+    const { data: liveAttendance, error: liveAttendanceError } = await liveAttendanceQuery;
+    if (liveAttendanceError) {
+      console.error('Error loading student LiveClassAttendance rows:', liveAttendanceError);
+    } else {
+      allLiveClassAttendance = liveAttendance || [];
+    }
+
+    const sessionIds = Array.from(
+      new Set(
+        (allLiveClassAttendance || [])
+          .map((attendance: any) => String(attendance?.sessionId || '').trim())
+          .filter(Boolean),
+      ),
+    );
+
+    if (sessionIds.length > 0) {
+      const { data: liveSessions, error: liveSessionsError } = await attendanceSupabase
+        .from('LiveClassSession')
+        .select('*')
+        .in('id', sessionIds)
+        .order('startedAt', { ascending: false });
+
+      if (liveSessionsError) {
+        console.error('Error loading student LiveClassSession rows:', liveSessionsError);
+      } else {
+        allLiveClassSessions = liveSessions || [];
+      }
+    }
+  } catch (error) {
+    console.error('Error initializing student attendance dashboard queries:', error);
+  }
 }
 
 const studentAssignmentById = new Map<string, any>(
@@ -337,7 +388,7 @@ const canonicalizeCourseId = (value: unknown) => {
 };
 
 const deriveCourseIdFromPageSlug = (value: unknown) => {
-  const normalized = normalizeText(value).replace(/^\/+|\/+$/g, '');
+  const normalized = normalizeActivityPageSlug(normalizeText(value));
   if (!normalized) return '';
   const firstSegment = normalized.split('/').find(Boolean) || '';
   return canonicalizeCourseId(firstSegment);
@@ -422,6 +473,35 @@ const formatDurationFromMs = (value: unknown) => {
   }
 
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
+};
+
+const getAttendanceDayKey = (session: any, attendance: any) => {
+  const value =
+    session?.startedAt
+    || attendance?.firstJoinedAt
+    || attendance?.lastEventAt
+    || attendance?.lastLeftAt
+    || attendance?.createdAt
+    || '';
+  const parsed = new Date(String(value || ''));
+  if (Number.isNaN(parsed.getTime())) return '';
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, '0');
+  const day = String(parsed.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const formatAttendanceDayLabel = (value: string) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return 'Sin fecha';
+  const [year, month, day] = String(value).split('-').map(Number);
+  const parsed = new Date(year, (month || 1) - 1, day || 1);
+  if (Number.isNaN(parsed.getTime())) return 'Sin fecha';
+  return parsed.toLocaleDateString('es-ES', {
+    weekday: 'short',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
 };
 
 const computeAttendanceDurationMs = (attendance: any, session: any) => {
@@ -609,7 +689,13 @@ const teacherScopedSubmissions = isTeacher
 const availableCourseIds = (() => {
   if (isTeacher) {
     if (teacherManagedCourseIdsRaw.size > 0) {
-      return Array.from(teacherManagedCourseIdsRaw);
+      return Array.from(
+        new Set(
+          Array.from(teacherManagedCourseIdsRaw)
+            .map((courseId) => canonicalizeCourseId(courseId))
+            .filter(Boolean),
+        ),
+      );
     }
     return [];
   }
@@ -672,8 +758,8 @@ const availableYears = (() => {
 
   if (isTeacher) {
     (allLiveClassSessions || []).forEach((session: any) => {
-      if (!isTeacherOwnedLiveSession(session)) return;
-      const sessionCourseId = getLiveRecordCourseId(session);
+      const sessionCourseId = canonicalizeCourseId(getLiveRecordCourseId(session));
+      if (!sessionCourseId || !teacherManagedCourseIds.has(normalizeTextLower(sessionCourseId))) return;
       if (activeCourseId && sessionCourseId !== activeCourseId) return;
       yearSet.add(getLiveSessionYear(session));
     });
@@ -728,8 +814,10 @@ const allUsersById = new Map<string, any>(
 
 const teacherLiveSessions = isTeacher
   ? (allLiveClassSessions || []).filter((session: any) => {
-      if (teacherManagedCourseIds.size === 0 && dashboardUserIds.length === 0) return false;
-      return isTeacherOwnedLiveSession(session);
+      if (teacherManagedCourseIds.size === 0) return false;
+      const sessionCourseId = canonicalizeCourseId(getLiveRecordCourseId(session));
+      if (!sessionCourseId) return false;
+      return teacherManagedCourseIds.has(normalizeTextLower(sessionCourseId));
     })
   : [];
 
@@ -950,6 +1038,390 @@ const attendanceLessonGroups = isTeacher
     })()
   : [];
 
+const dashboardUsersById = new Map<string, any>(
+  Array.from(
+    new Map(
+      [...(matchedUsers || []), dbUser]
+        .filter(Boolean)
+        .map((user: any) => [String(user?.id || ''), user]),
+    ).entries(),
+  ),
+);
+
+const resolveAttendanceUser = (userId: unknown) => {
+  const key = String(userId || '').trim();
+  if (!key) return null;
+  return allUsersById.get(key) || dashboardUsersById.get(key) || null;
+};
+
+const scopedStudentLiveSessions = !isTeacher
+  ? (allLiveClassSessions || []).filter((session: any) => {
+      const sessionCourseId = getLiveRecordCourseId(session);
+      if (activeCourseId && sessionCourseId !== activeCourseId) return false;
+      if (activeYear && getLiveSessionYear(session) !== activeYear) return false;
+      return true;
+    })
+  : [];
+
+const scopedStudentLiveSessionById = new Map<string, any>(
+  scopedStudentLiveSessions.map((session: any) => [String(session?.id || ''), session]),
+);
+
+const scopedStudentLiveAttendance = !isTeacher
+  ? (allLiveClassAttendance || []).filter((attendance: any) => {
+      const attendanceUserId = String(attendance?.userId || '').trim();
+      const attendanceEmail = normalizeTextLower(attendance?.email || '');
+      const attendanceIdentity = normalizeTextLower(attendance?.identity || '');
+      const matchesDashboardUser =
+        (attendanceUserId && dashboardUserIds.includes(attendanceUserId))
+        || (attendanceEmail && attendanceEmail === normalizedSessionEmail)
+        || (attendanceIdentity && attendanceIdentity === normalizedSessionEmail);
+
+      if (!matchesDashboardUser) return false;
+
+      const sessionId = String(attendance?.sessionId || '');
+      if (sessionId && scopedStudentLiveSessionById.has(sessionId)) return true;
+
+      const attendanceCourseId = getLiveRecordCourseId(attendance);
+      if (activeCourseId && attendanceCourseId !== activeCourseId) return false;
+      if (activeYear && getLiveSessionYear(attendance) !== activeYear) return false;
+      return true;
+    })
+  : [];
+
+const scopedLiveSessions = isTeacher ? scopedTeacherLiveSessions : scopedStudentLiveSessions;
+const scopedLiveSessionById = isTeacher ? scopedTeacherLiveSessionById : scopedStudentLiveSessionById;
+const scopedLiveAttendance = isTeacher ? scopedTeacherLiveAttendance : scopedStudentLiveAttendance;
+
+const scopedAttendanceRowsBySessionId = (() => {
+  const grouped = new Map<string, any[]>();
+  scopedLiveAttendance.forEach((attendance: any) => {
+    const sessionId = String(attendance?.sessionId || '');
+    if (!sessionId) return;
+    if (!grouped.has(sessionId)) grouped.set(sessionId, []);
+    grouped.get(sessionId)?.push(attendance);
+  });
+  return grouped;
+})();
+
+const attendanceSessionRows = (() => {
+  const sessionIds = new Set<string>();
+  scopedLiveSessions.forEach((session: any) => {
+    const sessionId = String(session?.id || '').trim();
+    if (sessionId) sessionIds.add(sessionId);
+  });
+  scopedLiveAttendance.forEach((attendance: any) => {
+    const sessionId = String(attendance?.sessionId || '').trim();
+    if (sessionId) sessionIds.add(sessionId);
+  });
+
+  return Array.from(sessionIds)
+    .map((sessionId) => {
+      const session = scopedLiveSessionById.get(sessionId) || null;
+      const sessionAttendance = [...(scopedAttendanceRowsBySessionId.get(sessionId) || [])].sort((left: any, right: any) => {
+        const leftRole = normalizeRole(left?.role) === 'teacher' ? 0 : 1;
+        const rightRole = normalizeRole(right?.role) === 'teacher' ? 0 : 1;
+        if (leftRole !== rightRole) return leftRole - rightRole;
+
+        const leftUser = resolveAttendanceUser(left?.userId);
+        const rightUser = resolveAttendanceUser(right?.userId);
+        const leftName = String(leftUser?.name || left?.name || left?.identity || '');
+        const rightName = String(rightUser?.name || right?.name || right?.identity || '');
+        return leftName.localeCompare(rightName, 'es');
+      });
+      const fallbackAttendance = sessionAttendance[0] || {};
+      const pageSlug = normalizeText(session?.pageSlug || fallbackAttendance?.pageSlug || '') || 'sin-clase';
+      const lessonLabel = decodeUriSafe(pageSlug.split('/').pop() || pageSlug || session?.roomName || 'Clase');
+      const startedAt = String(
+        session?.startedAt
+          || fallbackAttendance?.firstJoinedAt
+          || fallbackAttendance?.lastEventAt
+          || '',
+      );
+      const finishedAt = String(session?.finishedAt || session?.lastEventAt || fallbackAttendance?.lastEventAt || '');
+      const courseId = getLiveRecordCourseId(session || fallbackAttendance) || activeCourseId || 'sin-curso';
+      const participants = sessionAttendance.map((attendance: any) => {
+        const user = resolveAttendanceUser(attendance?.userId);
+        const role = normalizeRole(attendance?.role || user?.role || 'student') || 'student';
+        const durationMs = computeAttendanceDurationMs(attendance, session);
+        return {
+          ...attendance,
+          role,
+          displayName: String(user?.name || attendance?.name || attendance?.identity || 'Participante'),
+          email: String(user?.email || attendance?.email || ''),
+          durationMs,
+          durationLabel: formatDurationFromMs(durationMs),
+          firstJoinedLabel: formatSubmissionDate(attendance?.firstJoinedAt),
+          lastLeftLabel: formatSubmissionDate(attendance?.lastLeftAt),
+          lastEventLabel: formatSubmissionDate(attendance?.lastEventAt),
+        };
+      });
+
+      const dayKey = getAttendanceDayKey(session, fallbackAttendance);
+      const sessionDurationMs = Math.max(
+        0,
+        getDateTimestamp(finishedAt) - getDateTimestamp(startedAt),
+      );
+      const participantStudentKeys = new Set<string>();
+      const participantTeacherKeys = new Set<string>();
+      participants.forEach((participant: any) => {
+        const identityKey =
+          String(participant?.userId || '').trim()
+            ? `user:${String(participant.userId).trim()}`
+            : String(participant?.identity || '').trim()
+              ? `identity:${String(participant.identity).trim()}`
+              : '';
+        if (!identityKey) return;
+        if (normalizeRole(participant?.role) === 'teacher') {
+          participantTeacherKeys.add(identityKey);
+        } else {
+          participantStudentKeys.add(identityKey);
+        }
+      });
+
+      return {
+        id: sessionId,
+        courseId,
+        pageSlug,
+        lessonLabel,
+        startedAt,
+        startedAtLabel: formatSubmissionDate(startedAt),
+        finishedAtLabel: formatSubmissionDate(finishedAt),
+        durationMs: sessionDurationMs,
+        durationLabel: formatDurationFromMs(sessionDurationMs),
+        dayKey,
+        dayLabel: formatAttendanceDayLabel(dayKey),
+        participants,
+        participantCount: participants.length,
+        studentCount: participantStudentKeys.size,
+        teacherCount: participantTeacherKeys.size,
+      };
+    })
+    .sort((left: any, right: any) => getDateTimestamp(right.startedAt) - getDateTimestamp(left.startedAt));
+})();
+
+const attendanceUserSummaryRows = (() => {
+  const summaryByKey = new Map<string, any>();
+
+  if (isTeacher) {
+    scopedTeacherEnrollments.forEach((enrollment: any) => {
+      const userId = String(enrollment?.userId || '').trim();
+      if (!userId) return;
+      const user = resolveAttendanceUser(userId);
+      const role = normalizeRole(enrollment?.roleInCourse || user?.role || 'student') || 'student';
+      const key = `user:${userId}`;
+      if (summaryByKey.has(key)) return;
+
+      summaryByKey.set(key, {
+        key,
+        userId,
+        identity: '',
+        role,
+        name: String(user?.name || user?.email || userId),
+        email: String(user?.email || ''),
+        sessionIds: new Set<string>(),
+        dayKeys: new Set<string>(),
+        totalJoinCount: 0,
+        totalLeaveCount: 0,
+        totalAbortedCount: 0,
+        totalDurationMs: 0,
+        lastSeenAt: '',
+        lastStatus: '',
+      });
+    });
+  }
+
+  scopedLiveAttendance.forEach((attendance: any) => {
+    const userId = String(attendance?.userId || '').trim();
+    const identity = String(attendance?.identity || '').trim();
+    const key = userId ? `user:${userId}` : identity ? `identity:${identity}` : '';
+    if (!key) return;
+
+    const user = resolveAttendanceUser(userId);
+    const role = normalizeRole(attendance?.role || user?.role || 'student') || 'student';
+    const session = scopedLiveSessionById.get(String(attendance?.sessionId || '')) || null;
+    const existing = summaryByKey.get(key) || {
+      key,
+      userId,
+      identity,
+      role,
+      name: String(user?.name || attendance?.name || identity || 'Participante'),
+      email: String(user?.email || attendance?.email || ''),
+      sessionIds: new Set<string>(),
+      dayKeys: new Set<string>(),
+      totalJoinCount: 0,
+      totalLeaveCount: 0,
+      totalAbortedCount: 0,
+      totalDurationMs: 0,
+      lastSeenAt: '',
+      lastStatus: '',
+    };
+
+    existing.role = existing.role || role;
+    existing.name = String(existing.name || user?.name || attendance?.name || identity || 'Participante');
+    existing.email = String(existing.email || user?.email || attendance?.email || '');
+    existing.totalJoinCount += Math.max(0, Number(attendance?.joinCount || 0));
+    existing.totalLeaveCount += Math.max(0, Number(attendance?.leaveCount || 0));
+    existing.totalAbortedCount += Math.max(0, Number(attendance?.abortedCount || 0));
+    existing.totalDurationMs += computeAttendanceDurationMs(attendance, session);
+
+    const sessionId = String(attendance?.sessionId || '').trim();
+    if (sessionId && Number(attendance?.joinCount || 0) > 0) {
+      existing.sessionIds.add(sessionId);
+    }
+
+    const dayKey = getAttendanceDayKey(session, attendance);
+    if (dayKey && Number(attendance?.joinCount || 0) > 0) {
+      existing.dayKeys.add(dayKey);
+    }
+
+    const nextLastSeenAt = String(attendance?.lastEventAt || attendance?.lastLeftAt || attendance?.lastJoinedAt || '');
+    if (getDateTimestamp(nextLastSeenAt) >= getDateTimestamp(existing.lastSeenAt)) {
+      existing.lastSeenAt = nextLastSeenAt;
+      existing.lastStatus = String(attendance?.lastStatus || existing.lastStatus || '');
+    }
+
+    summaryByKey.set(key, existing);
+  });
+
+  return Array.from(summaryByKey.values())
+    .map((row: any) => {
+      const sessionsAttended = row.sessionIds.size;
+      return {
+        ...row,
+        sessionsAttended,
+        totalDaysAttended: row.dayKeys.size,
+        totalDurationLabel: formatDurationFromMs(row.totalDurationMs),
+        averageDurationLabel: formatDurationFromMs(
+          sessionsAttended > 0 ? row.totalDurationMs / sessionsAttended : 0,
+        ),
+        lastSeenLabel: formatSubmissionDate(row.lastSeenAt),
+      };
+    })
+    .sort((left: any, right: any) =>
+      String(left.name || '').localeCompare(String(right.name || ''), 'es'),
+    );
+})();
+
+const attendanceDayGroups = (() => {
+  const groups = new Map<string, any>();
+
+  attendanceSessionRows.forEach((session: any) => {
+    const dayKey = String(session?.dayKey || '').trim();
+    const group = groups.get(dayKey) || {
+      dayKey,
+      dayLabel: session?.dayLabel || 'Sin fecha',
+      latestStartedAt: '',
+      sessionIds: new Set<string>(),
+      studentKeys: new Set<string>(),
+      teacherKeys: new Set<string>(),
+      totalDurationMs: 0,
+      sessions: [],
+    };
+
+    if (!group.sessionIds.has(session.id)) {
+      group.sessionIds.add(session.id);
+      group.sessions.push(session);
+      group.totalDurationMs += Math.max(0, Number(session?.durationMs || 0));
+    }
+
+    (session.participants || []).forEach((participant: any) => {
+      const identityKey =
+        String(participant?.userId || '').trim()
+          ? `user:${String(participant.userId).trim()}`
+          : String(participant?.identity || '').trim()
+            ? `identity:${String(participant.identity).trim()}`
+            : '';
+      if (!identityKey) return;
+      if (normalizeRole(participant?.role) === 'teacher') {
+        group.teacherKeys.add(identityKey);
+      } else {
+        group.studentKeys.add(identityKey);
+      }
+    });
+
+    if (getDateTimestamp(session?.startedAt) >= getDateTimestamp(group.latestStartedAt)) {
+      group.latestStartedAt = String(session?.startedAt || '');
+    }
+
+    groups.set(dayKey, group);
+  });
+
+  return Array.from(groups.values())
+    .map((group: any) => ({
+      ...group,
+      sessionCount: group.sessionIds.size,
+      studentCount: group.studentKeys.size,
+      teacherCount: group.teacherKeys.size,
+      totalDurationLabel: formatDurationFromMs(group.totalDurationMs),
+      sessions: [...group.sessions].sort(
+        (left: any, right: any) => getDateTimestamp(right.startedAt) - getDateTimestamp(left.startedAt),
+      ),
+    }))
+    .sort(
+      (left: any, right: any) => getDateTimestamp(right.latestStartedAt) - getDateTimestamp(left.latestStartedAt),
+    );
+})();
+
+const attendanceLogRows = scopedLiveAttendance
+  .map((attendance: any) => {
+    const session = scopedLiveSessionById.get(String(attendance?.sessionId || '')) || null;
+    const user = resolveAttendanceUser(attendance?.userId);
+    const courseId = getLiveRecordCourseId(session || attendance) || activeCourseId || 'sin-curso';
+    const durationMs = computeAttendanceDurationMs(attendance, session);
+    const dayKey = getAttendanceDayKey(session, attendance);
+    const role = normalizeRole(attendance?.role || user?.role || 'student') || 'student';
+    return {
+      id: String(attendance?.id || `${attendance?.sessionId || 'session'}::${attendance?.userId || attendance?.identity || 'user'}`),
+      sessionId: String(attendance?.sessionId || ''),
+      dayKey,
+      dayLabel: formatAttendanceDayLabel(dayKey),
+      courseId,
+      pageSlug: String(session?.pageSlug || attendance?.pageSlug || ''),
+      lessonLabel: decodeUriSafe(
+        String(session?.pageSlug || attendance?.pageSlug || session?.roomName || 'Clase').split('/').pop() || 'Clase',
+      ),
+      role,
+      displayName: String(user?.name || attendance?.name || attendance?.identity || 'Participante'),
+      email: String(user?.email || attendance?.email || ''),
+      identity: String(attendance?.identity || ''),
+      joinCount: Math.max(0, Number(attendance?.joinCount || 0)),
+      leaveCount: Math.max(0, Number(attendance?.leaveCount || 0)),
+      abortedCount: Math.max(0, Number(attendance?.abortedCount || 0)),
+      durationMs,
+      durationLabel: formatDurationFromMs(durationMs),
+      firstJoinedLabel: formatSubmissionDate(attendance?.firstJoinedAt),
+      lastLeftLabel: formatSubmissionDate(attendance?.lastLeftAt),
+      lastSeenLabel: formatSubmissionDate(attendance?.lastEventAt),
+      lastStatus: String(attendance?.lastStatus || ''),
+      sortTs: getDateTimestamp(attendance?.lastEventAt || attendance?.lastLeftAt || attendance?.firstJoinedAt),
+    };
+  })
+  .sort((left: any, right: any) => right.sortTs - left.sortTs);
+
+const attendanceDayCountByStudentKey = (() => {
+  const daysByKey = new Map<string, Set<string>>();
+  if (!isTeacher) return daysByKey;
+
+  scopedLiveAttendance
+    .filter((attendance: any) => normalizeRole(attendance?.role) === 'student')
+    .forEach((attendance: any) => {
+      const userId = String(attendance?.userId || '').trim();
+      if (!userId || Number(attendance?.joinCount || 0) <= 0) return;
+      const session = scopedLiveSessionById.get(String(attendance?.sessionId || '')) || null;
+      const courseId = canonicalizeCourseId(getLiveRecordCourseId(session || attendance));
+      const year = getLiveSessionYear(session || attendance);
+      const dayKey = getAttendanceDayKey(session, attendance);
+      if (!courseId || !year || !dayKey) return;
+
+      const mapKey = `${normalizeTextLower(courseId)}::${year}::${userId}`;
+      if (!daysByKey.has(mapKey)) daysByKey.set(mapKey, new Set<string>());
+      daysByKey.get(mapKey)?.add(dayKey);
+    });
+
+  return daysByKey;
+})();
+
 const buildSubmissionLogRows = (submissions: any[], options: { includeUser: boolean }) => {
   const includeUser = Boolean(options?.includeUser);
   return submissions
@@ -970,7 +1442,9 @@ const buildSubmissionLogRows = (submissions: any[], options: { includeUser: bool
       const userEmail = normalizeText(userRecord?.email || '');
       const payloadText = asJsonText(submission?.payload || null);
       const submittedAtTs = submittedAt ? new Date(submittedAt).getTime() : 0;
-      const gradedAtTs = gradedAt ? new Date(gradedAt).getTime() : 0;
+      const reviewed = isSubmissionReviewed(submission);
+      const reviewDate = gradedAt || (reviewed ? submittedAt : '');
+      const gradedAtTs = reviewDate ? new Date(reviewDate).getTime() : 0;
 
       const search = [
         submission?.id,
@@ -1015,12 +1489,12 @@ const buildSubmissionLogRows = (submissions: any[], options: { includeUser: bool
         evalPreviewAttr: toEvalPreviewAttr(meta.evalPreview),
         submittedAt,
         submittedAtTs,
-        gradedAt,
+        gradedAt: reviewDate,
         gradedAtTs,
         resultState,
         answerText,
         payloadText,
-        reviewState: gradedAt ? 'reviewed' : 'pending',
+        reviewState: reviewed ? 'reviewed' : 'pending',
         submissionState: submittedAt ? 'submitted' : 'missing',
         catalogSource: normalizeText(meta.catalogEntry?.sourcePath || ''),
         search,
@@ -1059,7 +1533,52 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
     <meta charset="utf-8" />
     <script src="https://cdn.zinggrid.com/zinggrid.min.js" defer></script>
     <style is:inline>
-      .wrap { max-width: 1200px; margin: 0 auto; padding: 1rem; }
+      .wrap {
+        width: 100%;
+        max-width: none;
+        margin: 0;
+        padding: 0.9rem 1rem 1.4rem;
+      }
+      .dashboard-shell {
+        display: grid;
+        grid-template-columns: clamp(248px, 19vw, 312px) minmax(0, 1fr);
+        gap: 1rem;
+        align-items: start;
+        min-height: calc(100dvh - 7rem);
+      }
+      .dashboard-sidebar {
+        position: sticky;
+        top: 0.7rem;
+        height: calc(100dvh - 7.4rem);
+        min-height: 0;
+        overflow-y: auto;
+        border: 1px solid var(--c-border);
+        background: var(--c-bg);
+        padding: 1rem;
+      }
+      .dashboard-sidebar-title {
+        margin: 0 0 0.3rem 0;
+        font-size: 1.25rem;
+      }
+      .dashboard-sidebar-copy {
+        margin: 0 0 1rem 0;
+        color: var(--c-fg-dim);
+        font-size: 0.88rem;
+        line-height: 1.45;
+      }
+      .dashboard-sidebar-nav {
+        display: grid;
+        gap: 0.2rem;
+        margin-bottom: 1rem;
+      }
+      .dashboard-sidebar-nav .tab {
+        display: block;
+        text-decoration: none;
+        color: var(--c-fg);
+      }
+      .dashboard-main {
+        min-width: 0;
+      }
       .group-title { margin-top: 3rem; margin-bottom: 1rem; border-bottom: 1px solid var(--c-border); padding-bottom: 0.5rem; }
       .student-section { margin-bottom: 2.25rem; }
       .student-profile-card {
@@ -1133,6 +1652,35 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
       .admin-table th { background: var(--c-bg-mute); padding: 0.75rem; text-align: left; border-bottom: 2px solid var(--c-border); font-weight: 600; }
       .admin-table td { padding: 0.75rem; border-bottom: 1px solid var(--c-border); }
       .admin-table tr:hover { background: var(--c-bg-mute); }
+      .attendance-table th,
+      .attendance-table td {
+        vertical-align: top;
+      }
+      .attendance-stat-cluster {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        align-items: center;
+      }
+      .attendance-stat-cluster-inline {
+        gap: 0.28rem;
+      }
+      .attendance-stat-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.28rem;
+        padding: 0.22rem 0.42rem;
+        border: 1px solid color-mix(in srgb, var(--c-border) 72%, transparent);
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--c-bg-mute) 88%, transparent);
+        font-size: 0.78rem;
+        line-height: 1;
+        cursor: help;
+        white-space: nowrap;
+      }
+      .attendance-stat-chip strong {
+        font-size: 0.8rem;
+      }
       .role-badge { padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 500; }
       .role-teacher { background: #e3f2fd; color: #1976d2; }
       .role-student { background: #f3e5f5; color: #7b1fa2; }
@@ -1181,19 +1729,30 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
       }
       .status-pending { color: #f57c00; }
       .status-graded { color: #388e3c; }
-      .tabs { display: flex; gap: 1rem; border-bottom: 2px solid var(--c-border); margin-bottom: 2rem; }
-      .tab { padding: 0.75rem 1.5rem; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -2px; font-weight: 500; transition: all 0.2s; }
+      .tabs {
+        display: grid;
+        gap: 0.2rem;
+        border-bottom: 0;
+        margin-bottom: 0;
+      }
+      .tab {
+        padding: 0.6rem 0.7rem;
+        cursor: pointer;
+        border-left: 2px solid transparent;
+        margin-bottom: 0;
+        font-weight: 500;
+        transition: all 0.2s;
+      }
       .tab:hover { background: var(--c-bg-mute); }
-      .tab.active { border-bottom-color: var(--c-link); color: var(--c-link); }
+      .tab.active { border-left-color: var(--c-link); color: var(--c-link); background: var(--c-bg-mute); }
       .dashboard-scope-controls {
-        margin-left: auto;
-        display: inline-flex;
-        align-items: flex-end;
+        display: grid;
         gap: 0.8rem;
-        padding-bottom: 0.25rem;
+        padding-top: 1rem;
+        margin: 0;
       }
       .dashboard-scope-field {
-        display: inline-flex;
+        display: grid;
         flex-direction: column;
         gap: 0.22rem;
         font-size: 0.78rem;
@@ -1653,17 +2212,34 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
         font-size: 0.75rem;
       }
       @media (max-width: 960px) {
+        .dashboard-shell {
+          grid-template-columns: 1fr;
+        }
+        .dashboard-sidebar {
+          position: static;
+          height: auto;
+        }
         .log-toolbar {
           grid-template-columns: 1fr;
         }
         .tabs {
+          display: flex;
           flex-wrap: wrap;
+          border-bottom: 1px solid var(--c-border);
+          margin-bottom: 0.2rem;
         }
         .dashboard-scope-controls {
           width: 100%;
-          margin-left: 0;
           justify-content: flex-end;
-          flex-wrap: wrap;
+          padding-top: 0.7rem;
+        }
+        .tab {
+          border-left: 0;
+          border-bottom: 2px solid transparent;
+        }
+        .tab.active {
+          border-left-color: transparent;
+          border-bottom-color: var(--c-link);
         }
       }
     </style>
@@ -1675,42 +2251,83 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
       activeCourseCode={activeCourseCode}
     />
     <main class="wrap">
+      <div class="dashboard-shell">
+        <aside class="dashboard-sidebar" aria-label="Navegación del panel">
+          {isTeacher ? (
+            <>
+              <h1 class="dashboard-sidebar-title">Panel de Administración</h1>
+              <p class="dashboard-sidebar-copy">Usuarios, inscripciones, entregas y asistencia del curso activo.</p>
+              <div class="tabs">
+                <div class="tab active" data-tab="users">Usuarios</div>
+                <div class="tab" data-tab="enrollments">Inscripciones</div>
+                <div class="tab" data-tab="deliveries">Entregas</div>
+                <div class="tab" data-tab="attendance">Asistencia</div>
+                <div class="dashboard-scope-controls">
+                  <label class="dashboard-scope-field">
+                    <span>Curso</span>
+                    <select data-dashboard-scope="course">
+                      {availableCourseMeta.length === 0 ? (
+                        <option value="">Sin cursos</option>
+                      ) : (
+                        availableCourseMeta.map((course) => (
+                          <option value={course.courseId} selected={course.courseId === activeCourseId}>
+                            {course.title}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </label>
+                  <label class="dashboard-scope-field">
+                    <span>Año</span>
+                    <select data-dashboard-scope="year">
+                      {availableYears.map((year) => (
+                        <option value={year} selected={year === activeYear}>{year}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <h1 class="dashboard-sidebar-title">Panel de Estudiante</h1>
+              <p class="dashboard-sidebar-copy">Perfil, entregas y log personal del curso seleccionado.</p>
+              <nav class="dashboard-sidebar-nav" aria-label="Secciones del panel">
+                <a href="#student-profile" class="tab active">Perfil</a>
+                <a href="#student-deliveries" class="tab">Entregas</a>
+                <a href="#student-attendance" class="tab">Asistencia</a>
+                <a href="#student-log" class="tab">Log</a>
+              </nav>
+              <div class="dashboard-scope-controls">
+                <label class="dashboard-scope-field">
+                  <span>Curso</span>
+                  <select data-dashboard-scope="course">
+                    {availableCourseMeta.length === 0 ? (
+                      <option value="">Sin cursos</option>
+                    ) : (
+                      availableCourseMeta.map((course) => (
+                        <option value={course.courseId} selected={course.courseId === activeCourseId}>
+                          {course.title}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </label>
+                <label class="dashboard-scope-field">
+                  <span>Año</span>
+                  <select data-dashboard-scope="year">
+                    {availableYears.map((year) => (
+                      <option value={year} selected={year === activeYear}>{year}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </>
+          )}
+        </aside>
+        <section class="dashboard-main">
       {isTeacher ? (
         <>
-          <h1>Panel de Administración</h1>
-          <p>Gestión de usuarios, inscripciones y calificaciones</p>
-
-          <div class="tabs">
-            <div class="tab active" data-tab="users">Usuarios</div>
-            <div class="tab" data-tab="enrollments">Inscripciones</div>
-            <div class="tab" data-tab="deliveries">Entregas</div>
-            <div class="tab" data-tab="attendance">Asistencia</div>
-            <div class="dashboard-scope-controls">
-              <label class="dashboard-scope-field">
-                <span>Curso</span>
-                <select data-dashboard-scope="course">
-                  {availableCourseMeta.length === 0 ? (
-                    <option value="">Sin cursos</option>
-                  ) : (
-                    availableCourseMeta.map((course) => (
-                      <option value={course.courseId} selected={course.courseId === activeCourseId}>
-                        {course.title}
-                      </option>
-                    ))
-                  )}
-                </select>
-              </label>
-              <label class="dashboard-scope-field">
-                <span>Año</span>
-                <select data-dashboard-scope="year">
-                  {availableYears.map((year) => (
-                    <option value={year} selected={year === activeYear}>{year}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          </div>
-
           <div id="users-content">
             <h2>Lista de Usuarios</h2>
             <table class="admin-table">
@@ -1728,8 +2345,8 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                 {allUsers.map((user:any) => {
                   const userEnrolls = allEnrollments.filter((e:any) => e.userId === user.id);
                   const userSubs = allSubmissions.filter((s:any) => s.userId === user.id);
-                  const pendingSubs = userSubs.filter((s:any) => !s.gradedAt);
-                  const gradedSubs = userSubs.filter((s:any) => s.gradedAt);
+                  const pendingSubs = userSubs.filter((s:any) => !isSubmissionReviewed(s));
+                  const gradedSubs = userSubs.filter((s:any) => isSubmissionReviewed(s));
                   
                   return (
                     <tr>
@@ -1942,7 +2559,7 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
               });
 
               return noteTypeGroups.map((group: any) => {
-                const pendingByType = group.submissions.filter((entry: any) => !entry.submission?.gradedAt).length;
+                const pendingByType = group.submissions.filter((entry: any) => !isSubmissionReviewed(entry.submission)).length;
 
                 return (
                   <section
@@ -2039,7 +2656,7 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                                 <td>
                                   <div class="table-actions">
                                     <span class="inline-grade-note">
-                                      {sub.gradedAt ? 'Auto + editado' : 'Auto'}
+                                      {normalizeText(sub?.feedback) ? 'Auto + feedback' : 'Auto'}
                                     </span>
                                     <button
                                       type="button"
@@ -2093,8 +2710,10 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
               const enrollmentSource = scopedTeacherEnrollments;
 
               const courseGroups = enrollmentSource.reduce((acc, enroll) => {
-                if (!acc[enroll.courseId]) acc[enroll.courseId] = [];
-                acc[enroll.courseId].push(enroll);
+                const courseId = canonicalizeCourseId(enroll?.courseId) || String(enroll?.courseId || '').trim();
+                if (!courseId) return acc;
+                if (!acc[courseId]) acc[courseId] = [];
+                acc[courseId].push(enroll);
                 return acc;
               }, {});
               const usersById = new Map((allUsers || []).map((user) => [user.id, user]));
@@ -2102,18 +2721,44 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
               return Object.entries(courseGroups)
                 .sort(([left], [right]) => String(left).localeCompare(String(right), 'es'))
                 .map(([courseId, enrolls]) => {
-                  const courseAssignments = allAssignments
-                    .filter((assignment) => assignment.courseId === courseId)
+                  const courseSubmissionsAllYears = scopedTeacherSubmissions.filter((submission) => {
+                    const meta = resolveSubmissionMeta(submission);
+                    const submissionCourseId = canonicalizeCourseId(meta?.courseIdRaw || meta?.courseId || '');
+                    return submissionCourseId === courseId;
+                  });
+
+                  const courseAssignmentsMap = new Map();
+
+                  (allAssignments || [])
+                    .filter((assignment) => canonicalizeCourseId(assignment?.courseId) === courseId)
+                    .forEach((assignment) => {
+                      if (!assignment?.id) return;
+                      courseAssignmentsMap.set(assignment.id, assignment);
+                    });
+
+                  courseSubmissionsAllYears.forEach((submission) => {
+                    const assignmentId = String(submission?.assignmentId || '').trim();
+                    if (!assignmentId || courseAssignmentsMap.has(assignmentId)) return;
+                    const meta = resolveSubmissionMeta(submission);
+                    courseAssignmentsMap.set(assignmentId, {
+                      id: assignmentId,
+                      courseId,
+                      slug: meta.assignmentSlug || `${courseId}/${assignmentId}`,
+                    });
+                  });
+
+                  const courseAssignments = Array.from(courseAssignmentsMap.values())
                     .sort((left, right) => {
                       const leftKey = String(left.slug || left.id || '');
                       const rightKey = String(right.slug || right.id || '');
                       return leftKey.localeCompare(rightKey, 'es');
                     });
                   const assignmentsByPage = courseAssignments.reduce((acc, assignment) => {
-                    const assignmentSlug = String(assignment.slug || assignment.id || '');
-                    const coursePrefix = `${courseId}/`;
-                    const pageSlug = assignmentSlug.startsWith(coursePrefix)
-                      ? assignmentSlug.slice(coursePrefix.length)
+                    const assignmentSlug = String(assignment.slug || assignment.id || '').replace(/^\/+|\/+$/g, '');
+                    const slugParts = assignmentSlug.split('/').filter(Boolean);
+                    const slugCourseId = canonicalizeCourseId(slugParts[0] || '');
+                    const pageSlug = slugCourseId === courseId
+                      ? slugParts.slice(1).join('/')
                       : assignmentSlug;
                     const page = pageSlug || 'other';
                     if (!acc[page]) acc[page] = [];
@@ -2133,11 +2778,11 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                     }));
                   const flatAssignments = lessonGroups.flatMap((lesson) => lesson.assignments);
                   const assignmentIdSet = new Set(flatAssignments.map((assignment) => assignment.id));
-                  const courseSubmissionsAllYears = scopedTeacherSubmissions.filter((submission) =>
+                  const scopedCourseSubmissionsAllYears = courseSubmissionsAllYears.filter((submission) =>
                     assignmentIdSet.has(submission.assignmentId),
                   );
                   const yearSet = new Set([activeYear]);
-                  courseSubmissionsAllYears.forEach((submission) => {
+                  scopedCourseSubmissionsAllYears.forEach((submission) => {
                     yearSet.add(getSubmissionYear(submission));
                   });
                   const years = Array.from(yearSet).sort((left, right) => {
@@ -2151,7 +2796,7 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                     .map((enrollment) => usersById.get(enrollment.userId))
                     .filter(Boolean);
 
-                  if (currentStudents.length === 0 && courseSubmissionsAllYears.length === 0) return null;
+                  if (currentStudents.length === 0 && scopedCourseSubmissionsAllYears.length === 0) return null;
 
                   const enrollmentsByStudent = new Map(
                     enrolls
@@ -2165,7 +2810,7 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                         <p class="student-empty">No hay bloques de evaluación registrados en este curso.</p>
                       ) : (
                         years.map((year, yearIndex) => {
-                            const yearSubmissions = courseSubmissionsAllYears.filter(
+                            const yearSubmissions = scopedCourseSubmissionsAllYears.filter(
                               (submission) => getSubmissionYear(submission) === year,
                             );
                             const submissionMap = new Map();
@@ -2190,7 +2835,7 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
 
                             if (students.length === 0) return null;
 
-                            const yearPending = yearSubmissions.filter((submission) => !submission.gradedAt).length;
+                            const yearPending = yearSubmissions.filter((submission) => !isSubmissionReviewed(submission)).length;
 
                             return (
                               <section
@@ -2215,7 +2860,7 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                                           <th rowspan="2">Nombre</th>
                                           <th rowspan="2">Turno</th>
                                           <th rowspan="2">Email</th>
-                                          <th colspan="3" class:list={['grade-board-final-header', 'group-general', 'group-start']}>General</th>
+                                          <th colspan="4" class:list={['grade-board-final-header', 'group-general', 'group-start']}>General</th>
                                           {lessonGroups.map((lesson, lessonIndex) => (
                                             <th
                                               class:list={[
@@ -2232,6 +2877,7 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                                         </tr>
                                         <tr>
                                           <th class:list={['group-general', 'group-start']}>Promedio</th>
+                                          <th class="group-general">Asistencia</th>
                                           <th class="group-general">Concepto</th>
                                           <th class="group-general">Grupo</th>
                                           {lessonGroups.map((lesson, lessonIndex) => lesson.assignments.map((assignment, assignmentIndex) => {
@@ -2271,6 +2917,7 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                                           const studentEnrollment = enrollmentsByStudent.get(student.id);
                                           const metaKey = `${normalizeTextLower(courseId)}::${year}::${student.id}`;
                                           const savedMeta = courseStudentMetaByKey.get(metaKey);
+                                          const attendanceCount = attendanceDayCountByStudentKey.get(metaKey)?.size || 0;
                                           const turnoRaw = normalizeText(savedMeta?.turno || studentEnrollment?.turno || student?.turno || '').toUpperCase();
                                           const turnoValue = ['M', 'T', 'N'].includes(turnoRaw) ? turnoRaw : 'M';
                                           const groupValue = normalizeText(
@@ -2293,6 +2940,7 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                                             student?.name,
                                             student?.email,
                                             turnoValue,
+                                            String(attendanceCount),
                                             groupValue,
                                             conceptValue,
                                             ...lessonGroups.map((lesson) => lesson.lessonLabel),
@@ -2333,6 +2981,9 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                                               <td class:list={['grade-board-average', 'group-general', 'group-start']} data-average-for={panelKey}>
                                                 {average}
                                               </td>
+                                              <td class="group-general" title={`${attendanceCount} dias asistidos`}>
+                                                {attendanceCount}
+                                              </td>
                                               <td class="group-general">
                                                 <input
                                                   type="number"
@@ -2363,7 +3014,7 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                                               {lessonGroups.map((lesson, lessonIndex) => lesson.assignments.map((assignment, assignmentIndex) => {
                                                 const assignmentLabel = decodeUriSafe(String(assignment.id || '').split('/').pop() || assignment.id);
                                                 const submission = submissionMap.get(`${student.id}::${assignment.id}`);
-                                                const statusLabel = submission?.gradedAt
+                                                const statusLabel = isSubmissionReviewed(submission)
                                                   ? 'calificada'
                                                   : submission
                                                     ? 'pendiente'
@@ -2485,7 +3136,7 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
 
             {!activeCourseId ? (
               <p class="student-empty">Selecciona un curso activo para ver la asistencia.</p>
-            ) : scopedTeacherLiveSessions.length === 0 && attendanceCourseSummaryRows.length === 0 ? (
+            ) : attendanceSessionRows.length === 0 && attendanceLogRows.length === 0 ? (
               <p class="student-empty">Todavía no hay registros de asistencia para este curso y año.</p>
             ) : (
               <>
@@ -2498,131 +3149,263 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                 >
                   <button type="button" class="fold-header" data-fold-toggle>
                     <span class="fold-toggle-icon">▾</span>
-                    <span>📘 Curso</span>
+                    <span>📘 Resumen</span>
                     <span class="fold-student-summary">
-                      {activeCourseMeta?.title || decodeUriSafe(activeCourseId)} • {attendanceCourseSummaryRows.length} estudiantes • {scopedTeacherLiveSessions.length} clases
+                      {activeCourseMeta?.title || decodeUriSafe(activeCourseId)} • {attendanceUserSummaryRows.length} participantes • {attendanceSessionRows.length} sesiones
                     </span>
                   </button>
                   <div class="fold-children">
-                    {attendanceCourseSummaryRows.length > 0 ? (
-                      <table class="admin-table" style="margin-top: 0;">
-                        <thead>
-                          <tr>
-                            <th>Estudiante</th>
-                            <th>Email</th>
-                            <th>Clases</th>
-                            <th>Ingresos</th>
-                            <th>Salidas</th>
-                            <th>Abortos</th>
-                            <th>Tiempo total</th>
-                            <th>Última actividad</th>
-                            <th>Estado</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {attendanceCourseSummaryRows.map((row: any) => (
-                            <tr>
-                              <td>{row.name}</td>
-                              <td style="font-size: 0.85rem; color: var(--c-fg-dim);">{row.email || '—'}</td>
-                              <td>{row.sessionsAttended}/{row.totalSessions}</td>
-                              <td>{row.totalJoinCount}</td>
-                              <td>{row.totalLeaveCount}</td>
-                              <td>{row.totalAbortedCount}</td>
-                              <td>{row.totalDurationLabel}</td>
-                              <td>{row.lastSeenLabel}</td>
-                              <td>{row.lastStatus || '—'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    ) : (
-                      <p class="student-empty" style="margin: 0.75rem 0 0;">No hay estudiantes con asistencia registrada en este curso.</p>
-                    )}
+                    <div class="attendance-stat-cluster">
+                      <span class="attendance-stat-chip" title="Dias con actividad registrada">
+                        <span aria-hidden="true">📅</span>
+                        <strong>{attendanceDayGroups.length}</strong>
+                      </span>
+                      <span class="attendance-stat-chip" title="Sesiones registradas">
+                        <span aria-hidden="true">🎬</span>
+                        <strong>{attendanceSessionRows.length}</strong>
+                      </span>
+                      <span class="attendance-stat-chip" title="Participantes visibles para tu rol">
+                        <span aria-hidden="true">👥</span>
+                        <strong>{attendanceUserSummaryRows.length}</strong>
+                      </span>
+                      <span class="attendance-stat-chip" title="Tiempo total conectado registrado">
+                        <span aria-hidden="true">⏱</span>
+                        <strong>{formatDurationFromMs(attendanceUserSummaryRows.reduce((sum: number, row: any) => sum + Number(row.totalDurationMs || 0), 0))}</strong>
+                      </span>
+                    </div>
                   </div>
                 </section>
 
-                {attendanceLessonGroups.map((group: any) => (
-                  <section
-                    class="fold-node fold-level-1"
-                    data-fold-level="1"
-                    data-fold-node
-                    data-fold-scope="attendance"
-                    style="margin-bottom: 0.7rem;"
-                  >
-                    <button type="button" class="fold-header" data-fold-toggle>
-                      <span class="fold-toggle-icon">▾</span>
-                      <span>🎬 {group.lessonLabel}</span>
-                      <span class="fold-student-summary">{group.sessions.length} sesiones</span>
-                    </button>
-                    <div class="fold-children">
-                      {group.sessions.map((session: any) => (
-                        <section
-                          class="fold-node fold-level-2"
-                          data-fold-level="2"
-                          data-fold-node
-                          data-fold-scope="attendance"
-                          style="margin-bottom: 0.55rem;"
-                        >
-                          <button type="button" class="fold-header" data-fold-toggle>
-                            <span class="fold-toggle-icon">▾</span>
-                            <span>{session.startedAtLabel}</span>
-                            <span class="fold-student-summary">
-                              {session.studentCount} estudiantes • {session.participantCount} participantes • {session.durationLabel}
+                <section
+                  class="fold-node fold-level-1"
+                  data-fold-level="1"
+                  data-fold-node
+                  data-fold-scope="attendance"
+                  style="margin-bottom: 0.7rem;"
+                >
+                  <button type="button" class="fold-header" data-fold-toggle>
+                    <span class="fold-toggle-icon">▾</span>
+                    <span>🗓 Por dia</span>
+                    <span class="fold-student-summary">{attendanceDayGroups.length} dias</span>
+                  </button>
+                  <div class="fold-children">
+                    {attendanceDayGroups.length === 0 ? (
+                      <p class="student-empty" style="margin: 0;">No hay dias con asistencia registrada.</p>
+                    ) : attendanceDayGroups.map((group: any) => (
+                      <section
+                        class="fold-node fold-level-2"
+                        data-fold-level="2"
+                        data-fold-node
+                        data-fold-scope="attendance"
+                        style="margin-bottom: 0.55rem;"
+                      >
+                        <button type="button" class="fold-header" data-fold-toggle>
+                          <span class="fold-toggle-icon">▾</span>
+                          <span>{group.dayLabel}</span>
+                          <span class="fold-summary attendance-stat-cluster">
+                            <span class="attendance-stat-chip" title="Sesiones registradas en este dia">
+                              <span aria-hidden="true">🎬</span>
+                              <strong>{group.sessionCount}</strong>
                             </span>
-                          </button>
-                          <div class="fold-children">
-                            <table class="admin-table" style="margin-top: 0;">
-                              <thead>
+                            <span class="attendance-stat-chip" title="Students con actividad en este dia">
+                              <span aria-hidden="true">🎓</span>
+                              <strong>{group.studentCount}</strong>
+                            </span>
+                            <span class="attendance-stat-chip" title="Teachers con actividad en este dia">
+                              <span aria-hidden="true">🧑‍🏫</span>
+                              <strong>{group.teacherCount}</strong>
+                            </span>
+                            <span class="attendance-stat-chip" title="Duracion agregada de las sesiones del dia">
+                              <span aria-hidden="true">⏱</span>
+                              <strong>{group.totalDurationLabel}</strong>
+                            </span>
+                          </span>
+                        </button>
+                        <div class="fold-children">
+                          <table class="admin-table attendance-table" style="margin-top: 0;">
+                            <thead>
+                              <tr>
+                                <th>Clase</th>
+                                <th>Inicio</th>
+                                <th>Stats</th>
+                                <th>Participantes</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {group.sessions.map((session: any) => (
                                 <tr>
-                                  <th>Participante</th>
-                                  <th>Rol</th>
-                                  <th>Email / Identity</th>
-                                  <th>Ingresos</th>
-                                  <th>Salidas</th>
-                                  <th>Abortos</th>
-                                  <th>Primera entrada</th>
-                                  <th>Última salida</th>
-                                  <th>Duración</th>
-                                  <th>Estado</th>
+                                  <td title={session.pageSlug}>{session.lessonLabel}</td>
+                                  <td>{session.startedAtLabel}</td>
+                                  <td>
+                                    <div class="attendance-stat-cluster attendance-stat-cluster-inline">
+                                      <span class="attendance-stat-chip" title="Students en la sesion">
+                                        <span aria-hidden="true">🎓</span>
+                                        <strong>{session.studentCount}</strong>
+                                      </span>
+                                      <span class="attendance-stat-chip" title="Teachers en la sesion">
+                                        <span aria-hidden="true">🧑‍🏫</span>
+                                        <strong>{session.teacherCount}</strong>
+                                      </span>
+                                      <span class="attendance-stat-chip" title="Duracion de la sesion">
+                                        <span aria-hidden="true">⏱</span>
+                                        <strong>{session.durationLabel}</strong>
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td>{session.participantCount}</td>
                                 </tr>
-                              </thead>
-                              <tbody>
-                                {session.participants.length > 0 ? (
-                                  session.participants.map((participant: any) => (
-                                    <tr>
-                                      <td>{participant.displayName}</td>
-                                      <td>
-                                        <span class:list={['role-badge', normalizeRole(participant?.role) === 'teacher' ? 'role-teacher' : 'role-student']}>
-                                          {participant.role || 'student'}
-                                        </span>
-                                      </td>
-                                      <td style="font-size: 0.85rem; color: var(--c-fg-dim);">
-                                        {participant.email || participant.identity || '—'}
-                                      </td>
-                                      <td>{participant.joinCount || 0}</td>
-                                      <td>{participant.leaveCount || 0}</td>
-                                      <td>{participant.abortedCount || 0}</td>
-                                      <td>{participant.firstJoinedLabel}</td>
-                                      <td>{participant.lastLeftLabel}</td>
-                                      <td>{participant.durationLabel}</td>
-                                      <td>{participant.lastStatus || '—'}</td>
-                                    </tr>
-                                  ))
-                                ) : (
-                                  <tr>
-                                    <td colspan="10" style="color: var(--c-fg-dim); font-style: italic;">
-                                      No hay participantes registrados para esta sesión.
-                                    </td>
-                                  </tr>
-                                )}
-                              </tbody>
-                            </table>
-                          </div>
-                        </section>
-                      ))}
-                    </div>
-                  </section>
-                ))}
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+                </section>
+                <section
+                  class="fold-node fold-level-1"
+                  data-fold-level="1"
+                  data-fold-node
+                  data-fold-scope="attendance"
+                  style="margin-bottom: 0.7rem;"
+                >
+                  <button type="button" class="fold-header" data-fold-toggle>
+                    <span class="fold-toggle-icon">▾</span>
+                    <span>👤 Por usuario</span>
+                    <span class="fold-student-summary">{attendanceUserSummaryRows.length} participantes</span>
+                  </button>
+                  <div class="fold-children">
+                    <table class="admin-table attendance-table" style="margin-top: 0;">
+                      <thead>
+                        <tr>
+                          <th>Usuario</th>
+                          <th>Email / Identity</th>
+                          <th>Rol</th>
+                          <th>Stats</th>
+                          <th>Ultima actividad</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {attendanceUserSummaryRows.length > 0 ? (
+                          attendanceUserSummaryRows.map((row: any) => (
+                            <tr>
+                              <td>{row.name}</td>
+                              <td style="font-size: 0.85rem; color: var(--c-fg-dim);">
+                                {row.email || row.identity || '—'}
+                              </td>
+                              <td>
+                                <span class:list={['role-badge', normalizeRole(row?.role) === 'teacher' ? 'role-teacher' : 'role-student']}>
+                                  {normalizeRole(row?.role) === 'teacher' ? 'teacher' : 'student'}
+                                </span>
+                              </td>
+                              <td>
+                                <div class="attendance-stat-cluster attendance-stat-cluster-inline">
+                                  <span class="attendance-stat-chip" title="Sesiones con ingreso registrado">
+                                    <span aria-hidden="true">🎬</span>
+                                    <strong>{row.sessionsAttended}</strong>
+                                  </span>
+                                  <span class="attendance-stat-chip" title="Dias asistidos">
+                                    <span aria-hidden="true">📅</span>
+                                    <strong>{row.totalDaysAttended}</strong>
+                                  </span>
+                                  <span class="attendance-stat-chip" title="Cantidad total de conexiones">
+                                    <span aria-hidden="true">↻</span>
+                                    <strong>{row.totalJoinCount}</strong>
+                                  </span>
+                                  <span class="attendance-stat-chip" title="Tiempo total conectado">
+                                    <span aria-hidden="true">⏱</span>
+                                    <strong>{row.totalDurationLabel}</strong>
+                                  </span>
+                                </div>
+                              </td>
+                              <td>{row.lastSeenLabel}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colspan="5" style="color: var(--c-fg-dim); font-style: italic;">
+                              No hay participantes con asistencia registrada.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section
+                  class="fold-node fold-level-1"
+                  data-fold-level="1"
+                  data-fold-node
+                  data-fold-scope="attendance"
+                  style="margin-bottom: 0.7rem;"
+                >
+                  <button type="button" class="fold-header" data-fold-toggle>
+                    <span class="fold-toggle-icon">▾</span>
+                    <span>🧾 Log</span>
+                    <span class="fold-student-summary">{attendanceLogRows.length} registros</span>
+                  </button>
+                  <div class="fold-children">
+                    <table class="admin-table attendance-table" style="margin-top: 0;">
+                      <thead>
+                        <tr>
+                          <th>Dia</th>
+                          <th>Usuario</th>
+                          <th>Clase</th>
+                          <th>Rol</th>
+                          <th>Stats</th>
+                          <th>Ultima actividad</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {attendanceLogRows.length > 0 ? (
+                          attendanceLogRows.map((row: any) => (
+                            <tr>
+                              <td>{row.dayLabel}</td>
+                              <td>
+                                <div>{row.displayName}</div>
+                                <div style="font-size: 0.8rem; color: var(--c-fg-dim);">{row.email || row.identity || '—'}</div>
+                              </td>
+                              <td title={row.pageSlug}>{row.lessonLabel}</td>
+                              <td>
+                                <span class:list={['role-badge', normalizeRole(row?.role) === 'teacher' ? 'role-teacher' : 'role-student']}>
+                                  {normalizeRole(row?.role) === 'teacher' ? 'teacher' : 'student'}
+                                </span>
+                              </td>
+                              <td>
+                                <div class="attendance-stat-cluster attendance-stat-cluster-inline">
+                                  <span class="attendance-stat-chip" title="Cantidad de conexiones">
+                                    <span aria-hidden="true">↻</span>
+                                    <strong>{row.joinCount}</strong>
+                                  </span>
+                                  <span class="attendance-stat-chip" title="Cantidad de salidas">
+                                    <span aria-hidden="true">↩</span>
+                                    <strong>{row.leaveCount}</strong>
+                                  </span>
+                                  <span class="attendance-stat-chip" title="Abortos registrados">
+                                    <span aria-hidden="true">✕</span>
+                                    <strong>{row.abortedCount}</strong>
+                                  </span>
+                                  <span class="attendance-stat-chip" title="Tiempo conectado para este registro">
+                                    <span aria-hidden="true">⏱</span>
+                                    <strong>{row.durationLabel}</strong>
+                                  </span>
+                                </div>
+                              </td>
+                              <td>{row.lastSeenLabel}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colspan="6" style="color: var(--c-fg-dim); font-style: italic;">
+                              No hay registros de conexion para este curso y año.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
               </>
             )}
           </div>
@@ -3539,9 +4322,7 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
         </>
       ) : (
         <>
-          <h1>Panel de Estudiante</h1>
-
-          <section class="student-section">
+          <section class="student-section" id="student-profile">
             <h2 class="group-title">Mi Perfil</h2>
             <article class="student-profile-card">
               {dbUser.image ? (
@@ -3558,13 +4339,13 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                   <span>Rol: estudiante</span>
                 </p>
                 <p class="student-profile-note">
-                  Este panel solo muestra tus datos y tus entregas.
+                  Este panel muestra tus datos, entregas, asistencia y log personal del curso activo.
                 </p>
               </div>
             </article>
           </section>
 
-          <section class="student-section">
+          <section class="student-section" id="student-deliveries">
             <h2 class="group-title">Entregas</h2>
             {scopedStudentSubmissions.length === 0 ? (
               <p class="student-empty">No registras entregas todavía.</p>
@@ -3578,6 +4359,7 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                     <th>Fecha</th>
                     <th>Estado</th>
                     <th>Calificación</th>
+                    <th>Retroalimentación</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -3604,13 +4386,14 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
                         <td>{courseLabel}</td>
                         <td>{formatSubmissionDate(sub.submittedAt)}</td>
                         <td>
-                          {sub.gradedAt ? (
+                          {isSubmissionReviewed(sub) ? (
                             <span class="status-graded">✓ Calificada</span>
                           ) : (
                             <span class="status-pending">⏳ Pendiente</span>
                           )}
                         </td>
                         <td>{sub.score !== null && sub.score !== undefined ? `${sub.score}/10` : '-'}</td>
+                        <td>{sub.feedback || '—'}</td>
                       </tr>
                     );
                   })}
@@ -3619,7 +4402,70 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
             )}
           </section>
 
-          <section class="student-section">
+          <section class="student-section" id="student-attendance">
+            <h2 class="group-title">Asistencia</h2>
+            {attendanceLogRows.length === 0 ? (
+              <p class="student-empty">No registras conexiones en vivo para este curso y año.</p>
+            ) : (
+              <>
+                <div class="attendance-stat-cluster" style="margin-bottom: 0.8rem;">
+                  <span class="attendance-stat-chip" title="Dias asistidos">
+                    <span aria-hidden="true">📅</span>
+                    <strong>{attendanceDayGroups.length}</strong>
+                  </span>
+                  <span class="attendance-stat-chip" title="Sesiones con ingreso registrado">
+                    <span aria-hidden="true">🎬</span>
+                    <strong>{attendanceUserSummaryRows[0]?.sessionsAttended || 0}</strong>
+                  </span>
+                  <span class="attendance-stat-chip" title="Cantidad total de conexiones">
+                    <span aria-hidden="true">↻</span>
+                    <strong>{attendanceUserSummaryRows[0]?.totalJoinCount || 0}</strong>
+                  </span>
+                  <span class="attendance-stat-chip" title="Tiempo total conectado">
+                    <span aria-hidden="true">⏱</span>
+                    <strong>{attendanceUserSummaryRows[0]?.totalDurationLabel || '—'}</strong>
+                  </span>
+                </div>
+                <table class="admin-table attendance-table" style="margin-top: 0;">
+                  <thead>
+                    <tr>
+                      <th>Dia</th>
+                      <th>Clase</th>
+                      <th>Stats</th>
+                      <th>Ultima actividad</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {attendanceLogRows.map((row: any) => (
+                      <tr>
+                        <td>{row.dayLabel}</td>
+                        <td title={row.pageSlug}>{row.lessonLabel}</td>
+                        <td>
+                          <div class="attendance-stat-cluster attendance-stat-cluster-inline">
+                            <span class="attendance-stat-chip" title="Cantidad de conexiones">
+                              <span aria-hidden="true">↻</span>
+                              <strong>{row.joinCount}</strong>
+                            </span>
+                            <span class="attendance-stat-chip" title="Cantidad de salidas">
+                              <span aria-hidden="true">↩</span>
+                              <strong>{row.leaveCount}</strong>
+                            </span>
+                            <span class="attendance-stat-chip" title="Tiempo conectado para este registro">
+                              <span aria-hidden="true">⏱</span>
+                              <strong>{row.durationLabel}</strong>
+                            </span>
+                          </div>
+                        </td>
+                        <td>{row.lastSeenLabel}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </section>
+
+          <section class="student-section" id="student-log">
             <h2 class="group-title">Log</h2>
             <div class="log-panel" data-log-panel data-log-scope="student" data-show-user="false">
               <div class="log-toolbar">
@@ -3673,6 +4519,8 @@ const dashboardLogDataJson = JSON.stringify(dashboardLogData).replaceAll('<', '\
           </section>
         </>
       )}
+        </section>
+      </div>
     </main>
     <script type="application/json" id="dashboard-log-data" set:html={dashboardLogDataJson}></script>
 

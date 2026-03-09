@@ -109,27 +109,101 @@ if (
               <input id="conference-room-input" name="room" type="text" value={defaultRoom} data-room-input />
             </div>
 
-            <div class="conference-field">
-              <label for="conference-identity-input">Identity</label>
-              <input
-                id="conference-identity-input"
-                name="identity"
-                type="text"
-                value={defaultIdentity}
-                data-identity-input
-              />
-            </div>
+            <details class="conference-session-setup" aria-label="Session setup" data-session-setup>
+              <summary class="conference-session-setup-summary">
+                <span class="conference-sidebar-heading">SETUP SESSION</span>
+              </summary>
 
-            <div class="conference-field">
-              <label for="conference-name-input">Nombre</label>
-              <div class="conference-name-row">
-                <input id="conference-name-input" name="name" type="text" value={defaultName} data-name-input />
-                <span class="conference-role-tag" data-role-label
-                  >{defaultRole === 'teacher' ? 'teacher' : 'student'}</span
-                >
+              <div class="conference-session-setup-body">
+                <div class="conference-field">
+                  <label for="conference-identity-input">Identity</label>
+                  <input
+                    id="conference-identity-input"
+                    name="identity"
+                    type="text"
+                    value={defaultIdentity}
+                    data-identity-input
+                  />
+                </div>
+
+                <div class="conference-field">
+                  <label for="conference-name-input">Nombre</label>
+                  <div class="conference-name-row">
+                    <input id="conference-name-input" name="name" type="text" value={defaultName} data-name-input />
+                    <span class="conference-role-tag" data-role-label
+                      >{defaultRole === 'teacher' ? 'teacher' : 'student'}</span
+                    >
+                  </div>
+                  <input type="hidden" name="role" value={defaultRole} data-role-input />
+                </div>
+
+                <div class="conference-field">
+                  <label for="conference-audio-input-select-sidebar">MIC IN</label>
+                  <select
+                    id="conference-audio-input-select-sidebar"
+                    name="audio-input-sidebar"
+                    data-audio-input-select
+                    data-audio-input-select-sidebar
+                  >
+                    <option value="">Selecciona un microfono</option>
+                  </select>
+                </div>
+
+                <div class="conference-field">
+                  <label for="conference-video-input-select-sidebar">CAM IN</label>
+                  <select
+                    id="conference-video-input-select-sidebar"
+                    name="video-input-sidebar"
+                    data-video-input-select
+                    data-video-input-select-sidebar
+                  >
+                    <option value="">Selecciona una camara</option>
+                  </select>
+                </div>
+
+                <div class="conference-field">
+                  <label for="conference-circle-zoom-input">Circle preview zoom</label>
+                  <div class="conference-range-row">
+                    <input
+                      id="conference-circle-zoom-input"
+                      name="circle-preview-zoom"
+                      type="range"
+                      min="0.8"
+                      max="4"
+                      step="0.02"
+                      value="1"
+                      data-preview-zoom-input
+                    />
+                    <output for="conference-circle-zoom-input" data-preview-zoom-output>1.00x</output>
+                  </div>
+                </div>
+
+                <div class="conference-field conference-field--checkbox">
+                  <label class="conference-checkbox-row" for="conference-show-circle-input">
+                    <input
+                      id="conference-show-circle-input"
+                      name="show-circle"
+                      type="checkbox"
+                      checked
+                      data-show-circle-input
+                    />
+                    <span>Show Circle</span>
+                  </label>
+                </div>
+
+                <div class="conference-field conference-field--checkbox">
+                  <label class="conference-checkbox-row" for="conference-blur-background-input">
+                    <input
+                      id="conference-blur-background-input"
+                      name="blur-background"
+                      type="checkbox"
+                      data-preview-blur-input
+                    />
+                    <span>Blur Background</span>
+                  </label>
+                </div>
               </div>
-              <input type="hidden" name="role" value={defaultRole} data-role-input />
-            </div>
+            </details>
           </div>
 
           <div class="conference-self-preview-shell">
@@ -479,6 +553,8 @@ if (
   .conference-shell {
     --conference-bar-height: 42px;
     --conference-sidebar-size: clamp(300px, 22vw, 420px);
+    --conference-self-preview-zoom: 1;
+    --conference-circle-preview-zoom: 1;
     --conference-line: rgba(255, 255, 255, 0.12);
     --conference-line-soft: rgba(255, 255, 255, 0.06);
     --conference-fg: #f5f7fb;
@@ -498,6 +574,14 @@ if (
     color: var(--conference-fg);
     overflow: hidden;
     padding-bottom: var(--conference-bar-height);
+  }
+
+  .conference-shell[data-show-circle='false'] .conference-stage[data-layout='presentation'] .conference-stage-panel--focus {
+    display: none;
+  }
+
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus:has(.conference-tile[data-show-circle='false']) {
+    display: none;
   }
 
   .conference-shell[data-sidebar-collapsed='true'] {
@@ -578,7 +662,7 @@ if (
 
   .conference-stage[data-layout='presentation'] .conference-stage-panel--focus {
     inset: auto 1rem 1rem auto;
-    width: clamp(140px, 18vw, 220px);
+    width: clamp(101px, 13vw, 158px);
     aspect-ratio: 1;
     display: block;
     border: 1px solid rgba(255, 255, 255, 0.24);
@@ -754,14 +838,14 @@ if (
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 1.6rem;
-    height: 1.6rem;
+    width: 1rem;
+    height: 1rem;
     padding: 0;
     border: 0;
     background: transparent;
     color: rgba(245, 247, 251, 0.36);
     cursor: pointer;
-    transition: color 140ms ease, opacity 140ms ease;
+    transition: color 440ms ease, opacity 140ms ease;
   }
 
   .conference-hand-button:hover,
@@ -938,6 +1022,7 @@ if (
   }
 
   .conference-field input,
+  .conference-field select,
   .conference-chat-compose textarea,
   .conference-chat-compose button,
   .conference-bottombar select,
@@ -945,7 +1030,8 @@ if (
     font: inherit;
   }
 
-  .conference-field input,
+  .conference-field input:not([type='range']):not([type='checkbox']),
+  .conference-field select,
   .conference-chat-compose textarea,
   .conference-bottombar select,
   .conference-device-panel select {
@@ -960,10 +1046,90 @@ if (
   }
 
   .conference-field input:focus,
+  .conference-field select:focus,
   .conference-chat-compose textarea:focus,
   .conference-bottombar select:focus,
   .conference-device-panel select:focus {
     border-bottom-color: var(--conference-accent);
+  }
+
+  .conference-session-setup {
+    padding-top: 0.45rem;
+  }
+
+  .conference-session-setup-summary {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    cursor: pointer;
+    list-style: none;
+    color: var(--conference-fg);
+  }
+
+  .conference-session-setup-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .conference-session-setup-summary::before {
+    content: '';
+    width: 0.42rem;
+    height: 0.42rem;
+    border-right: 1px solid currentColor;
+    border-bottom: 1px solid currentColor;
+    transform: rotate(-45deg);
+    transform-origin: center;
+    opacity: 0.72;
+    margin-top: 0.08rem;
+    transition: transform 140ms ease;
+  }
+
+  .conference-session-setup[open] .conference-session-setup-summary::before {
+    transform: rotate(45deg);
+  }
+
+  .conference-session-setup-body {
+    display: grid;
+    gap: 0.72rem;
+    padding-top: 0.72rem;
+  }
+
+  .conference-range-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.75rem;
+    align-items: center;
+  }
+
+  .conference-range-row input[type='range'] {
+    width: 100%;
+    margin: 0;
+    accent-color: var(--conference-accent);
+  }
+
+  .conference-range-row output {
+    color: var(--conference-muted);
+    font-size: 0.72rem;
+    white-space: nowrap;
+  }
+
+  .conference-field--checkbox {
+    gap: 0;
+  }
+
+  .conference-checkbox-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.58rem;
+    color: var(--conference-fg);
+    font-size: 0.76rem;
+    letter-spacing: 0.01em;
+    text-transform: none;
+    cursor: pointer;
+  }
+
+  .conference-checkbox-row input[type='checkbox'] {
+    margin: 0;
+    accent-color: var(--conference-accent);
   }
 
   .conference-name-row {
@@ -1007,7 +1173,7 @@ if (
     max-height: none !important;
     object-fit: contain !important;
     object-position: 50% 70% !important;
-    transform: scale(0.92) !important;
+    transform: scale(var(--conference-local-preview-zoom, 1)) !important;
     transform-origin: center center;
   }
 
@@ -1046,16 +1212,15 @@ if (
     align-items: baseline;
     gap: 0.28rem;
     margin-bottom: 0.2rem;
-    color: rgba(245, 247, 251, 0.6);
+    color: var(--conference-fg);
     font-size: 0.61rem;
     line-height: 1.1;
-    opacity: 0.6;
   }
 
   .conference-chat-author {
     display: inline;
-    color: inherit;
-    font-size: inherit;
+    color: rgba(245, 247, 251, 0.6);
+    font-size: 0.61rem;
     font-weight: 700;
     font-style: normal;
     letter-spacing: 0.01em;
@@ -1064,14 +1229,14 @@ if (
   .conference-chat-header-separator {
     display: inline;
     color: inherit;
-    font-size: inherit;
+    font-size: 0.61rem;
     opacity: 0.55;
   }
 
   .conference-chat-stamp {
     display: inline;
-    color: inherit;
-    font-size: inherit;
+    color: rgba(245, 247, 251, 0.4);
+    font-size: 0.61rem;
     font-style: italic;
     font-weight: 400;
   }
@@ -1235,19 +1400,62 @@ if (
     object-fit: contain;
   }
 
+  .conference-self-preview .conference-media-frame--local-preview,
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-media-frame {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
   .conference-self-preview .conference-media-frame--local-preview > video,
-  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-media-frame--local-camera > video,
-  .conference-media-frame--local-preview > video,
-  .conference-media-frame--local-camera > video {
+  .conference-media-frame--local-preview > video {
+    position: relative !important;
+    inset: auto !important;
+    display: block !important;
     width: 100% !important;
     height: 100% !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    object-fit: contain !important;
+    object-position: 50% 62% !important;
+    background: #000;
+    transform: scale(var(--conference-self-preview-zoom, 1)) !important;
+  }
+
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-media-frame > video {
+    position: relative !important;
+    inset: auto !important;
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    object-fit: contain !important;
+    object-position: 50% 62% !important;
+    background: #000;
+    transform: scale(var(--conference-participant-preview-zoom, var(--conference-circle-preview-zoom, 1))) !important;
+  }
+
+  .conference-media-frame--local-camera > video,
+  .conference-stage[data-layout='teacher'] .conference-media-frame--local-camera > video,
+  .conference-slot--grid .conference-media-frame--local-camera > video {
+    position: absolute;
+    inset: 0;
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
     max-width: none !important;
     max-height: none !important;
-    object-fit: contain !important;
-    object-position: 50% 70% !important;
+    object-fit: cover !important;
+    object-position: 50% 58% !important;
+    transform: none !important;
     background: #000;
-    transform: scale(0.92) !important;
-    transform-origin: center center;
   }
 
   .conference-tile-meta {
@@ -1734,7 +1942,7 @@ if (
     }
 
     .conference-stage[data-layout='presentation'] .conference-stage-panel--focus {
-      width: clamp(96px, 15vw, 132px);
+      width: clamp(86px, 13.5vw, 119px);
       inset: auto 0.8rem 0.8rem auto;
     }
 
@@ -1851,7 +2059,7 @@ if (
     }
 
     .conference-stage[data-layout='presentation'] .conference-stage-panel--focus {
-      width: clamp(88px, 25vw, 112px);
+      width: clamp(79px, 22.5vw, 101px);
       inset: auto 0.72rem 0.72rem auto;
     }
 
@@ -1929,5 +2137,113 @@ if (
       right: 0;
       min-width: min(15rem, calc(100vw - 1rem));
     }
+  }
+</style>
+<style is:global>
+  .conference-tile-media > .conference-media-frame,
+  .conference-self-preview > .conference-media-frame,
+  .conference-media-frame {
+    position: relative;
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    overflow: hidden;
+  }
+
+  .conference-media-frame > video,
+  .conference-media-frame > audio,
+  .conference-media-frame > img,
+  .conference-media-frame > canvas {
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    max-width: none !important;
+    max-height: none !important;
+  }
+
+  .conference-stage[data-layout='teacher'] .conference-slot--focus > .conference-tile,
+  .conference-stage[data-layout='teacher'] .conference-slot--focus > .conference-tile > .conference-tile-media,
+  .conference-stage[data-layout='teacher'] .conference-slot--focus > .conference-tile > .conference-tile-media > .conference-media-frame,
+  .conference-stage[data-layout='teacher'] .conference-slot--focus > .conference-tile > .conference-tile-media > .conference-media-frame > video {
+    width: 100% !important;
+    height: 100% !important;
+  }
+
+  .conference-stage[data-layout='screenshare'] .conference-slot--screen > .conference-tile--screen,
+  .conference-stage[data-layout='screenshare'] .conference-slot--screen > .conference-tile--screen > .conference-tile-media,
+  .conference-stage[data-layout='screenshare'] .conference-slot--screen > .conference-tile--screen > .conference-tile-media > .conference-media-frame,
+  .conference-stage[data-layout='screenshare'] .conference-slot--screen > .conference-tile--screen > .conference-tile-media > .conference-media-frame > video {
+    width: 100% !important;
+    height: 100% !important;
+  }
+
+  .conference-stage[data-layout='teacher'] .conference-slot--focus > .conference-tile > .conference-tile-media > .conference-media-frame > video,
+  .conference-slot--grid .conference-media-frame--local-camera > video,
+  .conference-media-frame--local-camera > video {
+    object-fit: cover !important;
+    object-position: 50% 58% !important;
+    transform: none !important;
+  }
+
+  .conference-media-frame--screen > video {
+    object-fit: contain !important;
+  }
+
+  .conference-self-preview .conference-media-frame--local-preview,
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-media-frame {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+
+  .conference-self-preview .conference-media-frame--local-preview > video,
+  .conference-media-frame--local-preview > video {
+    position: relative !important;
+    inset: auto !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    object-fit: contain !important;
+    object-position: 50% 62% !important;
+    transform: scale(var(--conference-self-preview-zoom, 1)) !important;
+  }
+
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-media-frame > video {
+    position: relative !important;
+    inset: auto !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    object-fit: contain !important;
+    object-position: 50% 62% !important;
+    transform: scale(var(--conference-participant-preview-zoom, var(--conference-circle-preview-zoom, 1))) !important;
+  }
+
+  .conference-media-backdrop {
+    position: absolute !important;
+    inset: -10% !important;
+    width: 120% !important;
+    height: 120% !important;
+    max-width: none !important;
+    max-height: none !important;
+    object-fit: cover !important;
+    object-position: 50% 58% !important;
+    filter: blur(18px) saturate(0.88);
+    opacity: 0.78;
+    transform: scale(1.08) !important;
+    transform-origin: center center;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .conference-media-frame--with-backdrop > video:not(.conference-media-backdrop) {
+    position: relative !important;
+    z-index: 1;
   }
 </style>

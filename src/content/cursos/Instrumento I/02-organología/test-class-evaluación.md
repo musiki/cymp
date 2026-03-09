@@ -5,8 +5,8 @@ tags:
 chapter: "Organología I"
 type: "lesson"
 summary: esta es una clase que reune todas las tecnologías de musiki
-theme: zztt
-order: 2
+theme: moon
+order: 3
 ---
 
 
@@ -66,7 +66,7 @@ showResults: true
 ## Interacción en clase (wordcloud test)
 
 ```eval
-id: cym06-wordcloud-organologia-test
+id: wordcloud-org
 type: wordcloud
 mode: classtime
 prompt: "¿Qué palabra te llevas de esta clase de organología?"

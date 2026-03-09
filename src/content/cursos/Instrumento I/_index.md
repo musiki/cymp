@@ -22,13 +22,10 @@ id: i1
 
 Repositorio de las cátedras
 # Instrumentos I 
-
-Departamento: Música
-
-Carrera: Licenciatura en Música
+Licenciatura en Música
 
 #### Año académico:  
-2025 - Primer Cuatrimestre
+2026 - Primer Cuatrimestre
 
 #### Carga horaria:  
 4 horas semanales Teóricas/Prácticas , 64 horas cuatrimestrales.
@@ -403,5 +400,3 @@ Valor total en créditos: 4 (cuatro)
 | Semana 13 |        | revisión de proyectos finales                                             | 4             | expositiva / práctica |
 | Semana 14 |        | revisión de proyectos finales                                             | 4             | expositiva / práctica |
 | Semana 15 |        | evaluación                                                                | 4             | expositiva / práctica |
-
-

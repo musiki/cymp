@@ -242,14 +242,14 @@ function createMediaEmbedNode(target, label, width, height) {
   if (AUDIO_EXTENSIONS.has(extension)) {
     return {
       type: 'html',
-      value: `<audio class="obsidian-audio-embed obsidian-media-embed" controls preload="metadata" src="${escapeHtml(url)}"></audio>`,
+      value: `<figure class="obsidian-media-embed-card obsidian-audio-card"><audio class="obsidian-audio-embed obsidian-media-embed" controls preload="metadata" src="${escapeHtml(url)}"></audio></figure>`,
     };
   }
 
   if (VIDEO_EXTENSIONS.has(extension)) {
     return {
       type: 'html',
-      value: `<video class="obsidian-video-embed obsidian-media-embed" controls preload="metadata" src="${escapeHtml(url)}"></video>`,
+      value: `<figure class="obsidian-media-embed-card obsidian-video-card"><video class="obsidian-video-embed obsidian-media-embed" controls preload="metadata" src="${escapeHtml(url)}"></video></figure>`,
     };
   }
 

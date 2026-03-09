@@ -25,6 +25,7 @@ type PostRow = {
 type ThreadRow = {
   id: string;
   courseId: string;
+  createdByUserId: string;
   isLocked: boolean | null;
 };
 
@@ -68,7 +69,7 @@ async function getPostContext(
 
   const { data: threadRaw, error: threadError } = await supabase
     .from('ForumThread')
-    .select('id, courseId, isLocked')
+    .select('id, courseId, createdByUserId, isLocked')
     .eq('id', post.threadId)
     .maybeSingle();
 
@@ -119,8 +120,9 @@ export const PATCH: APIRoute = async ({ request, params, locals }) => {
     }
 
     const isAuthor = context.post.authorUserId === dbUser.id;
-    if (!isAuthor) {
-      return json({ error: 'Only the message author can edit this post' }, 403);
+    const canModerate = access.isTeacher || isAuthor;
+    if (!canModerate) {
+      return json({ error: 'Only the message author or a teacher can edit this post' }, 403);
     }
 
     if (Boolean(context.thread.isLocked) && !access.isTeacher) {
@@ -158,8 +160,8 @@ export const PATCH: APIRoute = async ({ request, params, locals }) => {
           bodyHtml,
           createdAt: updatedPost.createdAt,
           updatedAt: updatedPost.updatedAt,
-          canEdit: true,
-          canDelete: true,
+          canEdit: canModerate,
+          canDelete: canModerate,
         },
       },
       200,
@@ -196,8 +198,9 @@ export const DELETE: APIRoute = async ({ params, locals }) => {
     }
 
     const isAuthor = context.post.authorUserId === dbUser.id;
-    if (!isAuthor) {
-      return json({ error: 'Only the message author can delete this post' }, 403);
+    const canModerate = access.isTeacher || isAuthor;
+    if (!canModerate) {
+      return json({ error: 'Only the message author or a teacher can delete this post' }, 403);
     }
 
     if (Boolean(context.thread.isLocked) && !access.isTeacher) {

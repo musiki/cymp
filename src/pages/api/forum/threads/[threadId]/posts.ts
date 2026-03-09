@@ -17,6 +17,7 @@ type ThreadRow = {
   id: string;
   courseId: string;
   lessonSlug: string;
+  createdByUserId: string;
   isLocked: boolean | null;
 };
 
@@ -150,7 +151,7 @@ async function loadPostVoteMap(
 async function getThreadOrNull(supabase: SupabaseClient, threadId: string): Promise<ThreadRow | null> {
   const { data: thread, error: threadError } = await supabase
     .from('ForumThread')
-    .select('id, courseId, lessonSlug, isLocked')
+    .select('id, courseId, lessonSlug, createdByUserId, isLocked')
     .eq('id', threadId)
     .maybeSingle();
 
@@ -211,6 +212,7 @@ export const GET: APIRoute = async ({ params, locals }) => {
         const author = authorById.get(post.authorUserId);
         let bodyHtml = '';
         const isAuthor = post.authorUserId === dbUser.id;
+        const canModerate = access.isTeacher || isAuthor;
 
         try {
           bodyHtml = await renderForumMarkdown(post.body || '');
@@ -232,8 +234,8 @@ export const GET: APIRoute = async ({ params, locals }) => {
           bodyHtml,
           createdAt: post.createdAt,
           updatedAt: post.updatedAt,
-          canEdit: isAuthor,
-          canDelete: isAuthor,
+          canEdit: canModerate,
+          canDelete: canModerate,
           reactionCounts: voteSummaryByPostId.get(post.id)?.reactionCounts ?? {
             useful: 0,
             clarifies: 0,

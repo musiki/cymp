@@ -49,6 +49,11 @@ const resolvedSlideTheme =
         background: #000;
       }
 
+      :root {
+        --slides-user-zoom: 1;
+        --slides-extra-height: 20vh;
+      }
+
       #slides-source {
         display: none;
       }
@@ -429,10 +434,11 @@ const resolvedSlideTheme =
         overflow-y: auto !important;
         overflow-x: hidden !important;
         -webkit-overflow-scrolling: touch;
-        max-height: calc(100vh - 2.5rem);
+        max-height: calc(100vh + var(--slides-extra-height) - 2.5rem);
         overscroll-behavior: contain;
         touch-action: pan-y;
         padding-right: 0.45rem;
+        padding-bottom: max(0.8rem, calc(var(--slides-extra-height) * 0.35));
         box-sizing: border-box;
       }
 
@@ -474,6 +480,35 @@ const resolvedSlideTheme =
         background: rgba(38, 38, 38, 0.92);
       }
 
+      .slides-zoom-shell {
+        position: fixed;
+        inset: 0;
+        overflow: hidden;
+        background: #000;
+        touch-action: pan-x pan-y;
+      }
+
+      .slides-zoom-shell > .reveal {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: calc(100% + var(--slides-extra-height));
+        min-height: calc(100% + var(--slides-extra-height));
+        padding-top: calc(var(--slides-extra-height) * 0.5);
+        padding-bottom: calc(var(--slides-extra-height) * 0.5 + 1.5rem);
+        box-sizing: border-box;
+        transform: translateY(calc(var(--slides-extra-height) * -0.5)) scale(var(--slides-user-zoom));
+        transform-origin: center center;
+        will-change: transform;
+      }
+
+      .slides-zoom-shell > .reveal .slides {
+        min-height: 100%;
+        padding-top: calc(var(--slides-extra-height) * 0.5);
+        padding-bottom: calc(var(--slides-extra-height) * 0.5 + 1.5rem);
+        box-sizing: border-box;
+      }
+
       body.slides-fallback {
         overflow: auto;
       }
@@ -512,8 +547,10 @@ const resolvedSlideTheme =
       <button id="slides-fs-btn" type="button" title="Fullscreen (Ctrl+E)">Fullscreen</button>
     </div>
 
-    <div class="reveal">
-      <div class="slides" id="slides-root"></div>
+    <div class="slides-zoom-shell" id="slides-zoom-shell">
+      <div class="reveal">
+        <div class="slides" id="slides-root"></div>
+      </div>
     </div>
 
     <script>
@@ -530,12 +567,13 @@ const resolvedSlideTheme =
       (() => {
         const source = document.getElementById('slides-source');
         const slidesRoot = document.getElementById('slides-root');
+        const zoomShell = document.getElementById('slides-zoom-shell');
         const backBtn = document.getElementById('slides-back-btn');
         const speakerBtn = document.getElementById('slides-speaker-btn');
         const fsBtn = document.getElementById('slides-fs-btn');
         const canManageLive = document.documentElement.dataset.canManageLive === 'true';
 
-        if (!source || !slidesRoot) return;
+        if (!source || !slidesRoot || !zoomShell) return;
 
         const noteUrl = new URL(window.location.href);
         if (noteUrl.pathname.startsWith('/cursos/slides/')) {
@@ -546,6 +584,59 @@ const resolvedSlideTheme =
 
         const goToNote = () => {
           window.location.href = noteUrl.toString();
+        };
+
+        const slidesZoomStorageKey = `musiki:slides:zoom:${window.location.pathname}`;
+        const clampSlidesZoom = (value) => {
+          const numeric = Number(value);
+          if (!Number.isFinite(numeric)) return 1;
+          return Math.min(1.4, Math.max(0.45, Math.round(numeric * 1000) / 1000));
+        };
+
+        let slidesZoom = (() => {
+          try {
+            return clampSlidesZoom(window.localStorage.getItem(slidesZoomStorageKey) || 1);
+          } catch {
+            return 1;
+          }
+        })();
+
+        let pinchStartDistance = 0;
+        let pinchStartZoom = slidesZoom;
+
+        const persistSlidesZoom = () => {
+          try {
+            window.localStorage.setItem(slidesZoomStorageKey, String(slidesZoom));
+          } catch {
+            // ignore storage failures
+          }
+        };
+
+        let emitDeckState = () => {};
+
+        const applySlidesZoom = () => {
+          document.documentElement.style.setProperty('--slides-user-zoom', String(slidesZoom));
+        };
+
+        const setSlidesZoom = (nextZoom) => {
+          const normalized = clampSlidesZoom(nextZoom);
+          if (Math.abs(normalized - slidesZoom) < 0.001) return;
+          slidesZoom = normalized;
+          applySlidesZoom();
+          persistSlidesZoom();
+          emitDeckState('change');
+        };
+
+        const nudgeSlidesZoom = (delta) => {
+          setSlidesZoom(slidesZoom + delta);
+        };
+
+        const measureTouchDistance = (touches) => {
+          if (!touches || touches.length < 2) return 0;
+          const [first, second] = [touches[0], touches[1]];
+          const dx = first.clientX - second.clientX;
+          const dy = first.clientY - second.clientY;
+          return Math.hypot(dx, dy);
         };
 
         backBtn?.addEventListener('click', () => {
@@ -568,6 +659,8 @@ const resolvedSlideTheme =
           if (!fsBtn) return;
           fsBtn.textContent = document.fullscreenElement ? 'Salir fullscreen' : 'Fullscreen';
         };
+
+        applySlidesZoom();
 
         const isSeparator = (node) =>
           node?.nodeType === Node.ELEMENT_NODE && node.tagName === 'HR';
@@ -1016,6 +1109,12 @@ const resolvedSlideTheme =
           return String(marked.parse(markdown, { gfm: true, breaks: true }));
         };
 
+        const normalizeMermaidSource = (value) =>
+          String(value || '')
+            .replace(/\u00a0/g, ' ')
+            .replace(/\r\n?/g, '\n')
+            .trim();
+
         const rewriteMermaidCodeBlocks = (container = slidesRoot) => {
           const nodes = Array.from(
             container.querySelectorAll('pre > code.language-mermaid, pre > code.lang-mermaid'),
@@ -1025,7 +1124,8 @@ const resolvedSlideTheme =
             if (!pre) return;
             const mermaidNode = document.createElement('div');
             mermaidNode.className = 'mermaid';
-            mermaidNode.textContent = String(codeNode.textContent || '');
+            mermaidNode.dataset.mermaidSource = normalizeMermaidSource(codeNode.textContent || '');
+            mermaidNode.textContent = mermaidNode.dataset.mermaidSource;
             pre.replaceWith(mermaidNode);
           });
         };
@@ -1039,7 +1139,8 @@ const resolvedSlideTheme =
             if (!pre) return;
             const mermaidNode = document.createElement('div');
             mermaidNode.className = 'mermaid';
-            mermaidNode.textContent = String(codeNode.textContent || '');
+            mermaidNode.dataset.mermaidSource = normalizeMermaidSource(codeNode.textContent || '');
+            mermaidNode.textContent = mermaidNode.dataset.mermaidSource;
             pre.replaceWith(mermaidNode);
           });
         };
@@ -1200,9 +1301,14 @@ const resolvedSlideTheme =
           if (slidesMermaidPromise) return slidesMermaidPromise;
           slidesMermaidPromise = Promise.resolve(mermaid || null)
             .then((api) => {
-              if (!api?.run) return null;
+              if (!api?.render) return null;
               if (!mermaidConfigured) {
-                api.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
+                api.initialize({
+                  startOnLoad: false,
+                  theme: 'dark',
+                  securityLevel: 'loose',
+                  suppressErrorRendering: false,
+                });
                 mermaidConfigured = true;
               }
               return api;
@@ -1210,6 +1316,17 @@ const resolvedSlideTheme =
             .catch(() => null);
 
           return slidesMermaidPromise;
+        };
+
+        let mermaidRenderSequence = 0;
+        const getMermaidSource = (node) => {
+          const stored = normalizeMermaidSource(node.dataset.mermaidSource || '');
+          if (stored) return stored;
+          const inferred = normalizeMermaidSource(node.textContent || '');
+          if (inferred) {
+            node.dataset.mermaidSource = inferred;
+          }
+          return inferred;
         };
 
         const renderSlidesMermaid = (container = slidesRoot, attempt = 0) => {
@@ -1224,43 +1341,56 @@ const resolvedSlideTheme =
 
           ensureSlidesMermaid()
             .then((mermaid) => {
-              if (!mermaid?.run) return;
+              if (!mermaid?.render) return;
               try {
                 if (!mermaidConfigured) {
-                  mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+                  mermaid.initialize({
+                    startOnLoad: false,
+                    theme: 'dark',
+                    securityLevel: 'loose',
+                    suppressErrorRendering: false,
+                  });
                   mermaidConfigured = true;
                 }
 
-                nodes.forEach((node) => {
+                const renderTasks = nodes.map(async (node) => {
+                  const source = getMermaidSource(node);
+                  if (!source) return;
                   node.dataset.mermaidRendering = 'true';
+                  node.textContent = source;
+                  const renderId = `slides-mermaid-${Date.now()}-${mermaidRenderSequence += 1}`;
+                  const result = await mermaid.render(renderId, source);
+                  node.innerHTML = result?.svg || '';
+                  if (typeof result?.bindFunctions === 'function') {
+                    result.bindFunctions(node);
+                  }
+                  delete node.dataset.mermaidRendering;
+                  node.dataset.mermaidRendered = 'true';
                 });
 
-                Promise.resolve(mermaid.run({ nodes }))
-                  .then(() => {
-                    nodes.forEach((node) => {
-                      delete node.dataset.mermaidRendering;
-                      node.dataset.mermaidRendered = 'true';
-                    });
-                  })
-                  .catch((error) => {
-                    nodes.forEach((node) => {
-                      delete node.dataset.mermaidRendering;
-                      delete node.dataset.mermaidRendered;
-                    });
-
-                    if (attempt < 3) {
-                      const retryDelay = 180 * (attempt + 1);
-                      window.setTimeout(() => {
-                        renderSlidesMermaid(container, attempt + 1);
-                      }, retryDelay);
-                    } else {
-                      console.error('Slides mermaid render error:', error);
-                    }
+                Promise.all(renderTasks).catch((error) => {
+                  nodes.forEach((node) => {
+                    delete node.dataset.mermaidRendering;
+                    delete node.dataset.mermaidRendered;
+                    const source = getMermaidSource(node);
+                    if (source) node.textContent = source;
                   });
+
+                  if (attempt < 3) {
+                    const retryDelay = 180 * (attempt + 1);
+                    window.setTimeout(() => {
+                      renderSlidesMermaid(container, attempt + 1);
+                    }, retryDelay);
+                  } else {
+                    console.error('Slides mermaid render error:', error);
+                  }
+                });
               } catch (error) {
                 nodes.forEach((node) => {
                   delete node.dataset.mermaidRendering;
                   delete node.dataset.mermaidRendered;
+                  const source = getMermaidSource(node);
+                  if (source) node.textContent = source;
                 });
                 if (attempt < 3) {
                   const retryDelay = 180 * (attempt + 1);
@@ -1552,6 +1682,7 @@ const resolvedSlideTheme =
 
           const canRespond = widget.state.active;
           const submitted = Boolean(widget.state.hasSubmitted);
+          const needsManualSubmit = widget.data.type === 'wordcloud' || Boolean(widget.data.allowMultiple);
 
           if (widget.formNode) {
             widget.formNode.hidden = !canRespond;
@@ -1561,7 +1692,7 @@ const resolvedSlideTheme =
           }
 
           if (widget.submitButton) {
-            widget.submitButton.hidden = !canRespond;
+            widget.submitButton.hidden = !canRespond || !needsManualSubmit;
             widget.submitButton.disabled = !canRespond;
             widget.submitButton.textContent = widget.data.type === 'wordcloud'
               ? 'Enviar'
@@ -2079,12 +2210,12 @@ const resolvedSlideTheme =
             });
           }
 
-          submitButton.addEventListener('click', async () => {
-            if (!widget.state.active || !widget.state.sessionId) return;
+          const submitSlidePollResponse = async () => {
+            if (!widget.state.active || !widget.state.sessionId) return false;
             const selected = Array.from(form.querySelectorAll('input:checked')).map((node) => String(node.value));
             if (selected.length === 0) {
               setSlidePollFeedback(widget, 'Selecciona al menos una opción.', true);
-              return;
+              return false;
             }
 
             submitButton.disabled = true;
@@ -2104,7 +2235,7 @@ const resolvedSlideTheme =
               if (!response.ok) {
                 setSlidePollFeedback(widget, payload?.error || 'No se pudo guardar la respuesta.', true);
                 submitButton.disabled = false;
-                return;
+                return false;
               }
 
               widget.state.hasSubmitted = true;
@@ -2142,10 +2273,21 @@ const resolvedSlideTheme =
               if (payload?.snapshot) {
                 applyLivePayloadToSlidePolls(payload.snapshot, 'live.updated');
               }
+              return true;
             } catch (error) {
               setSlidePollFeedback(widget, 'Error de red al enviar la respuesta.', true);
               submitButton.disabled = false;
+              return false;
             }
+          };
+
+          submitButton.addEventListener('click', () => {
+            void submitSlidePollResponse();
+          });
+          form.addEventListener('change', (event) => {
+            if (widget.data.allowMultiple) return;
+            if (!(event.target instanceof HTMLInputElement)) return;
+            void submitSlidePollResponse();
           });
 
           pollWidgetsByEvalId.set(widget.data.id, widget);
@@ -2553,7 +2695,7 @@ const resolvedSlideTheme =
           hash: true,
           controls: true,
           progress: true,
-          center: false,
+          center: true,
           slideNumber: 'c/t',
           transition: 'slide',
           plugins: [
@@ -2564,7 +2706,7 @@ const resolvedSlideTheme =
           ].filter(Boolean),
         });
 
-        const emitDeckState = (reason = 'change') => {
+        emitDeckState = (reason = 'change') => {
           if (window.parent === window) return;
           const indices = deck.getIndices?.();
           if (!indices) return;
@@ -2575,6 +2717,7 @@ const resolvedSlideTheme =
                 indexh: Number(indices.h || 0),
                 indexv: Number(indices.v || 0),
                 indexf: Number(indices.f || 0),
+                zoom: slidesZoom,
               },
             },
             window.location.origin,
@@ -2600,6 +2743,11 @@ const resolvedSlideTheme =
             return;
           }
 
+          if (type === 'musiki:reveal-reset-zoom') {
+            setSlidesZoom(1);
+            return;
+          }
+
           if (type !== 'musiki:reveal-goto') return;
           const state = payload.state && typeof payload.state === 'object' ? payload.state : null;
           if (!state) return;
@@ -2607,6 +2755,7 @@ const resolvedSlideTheme =
           const nextH = Number(state.indexh);
           const nextV = Number(state.indexv);
           const nextF = Number(state.indexf);
+          const nextZoom = clampSlidesZoom(state.zoom ?? 1);
           if (!Number.isFinite(nextH) || !Number.isFinite(nextV) || !Number.isFinite(nextF)) return;
 
           const current = deck.getIndices?.();
@@ -2614,11 +2763,17 @@ const resolvedSlideTheme =
             current &&
             Number(current.h || 0) === Math.round(nextH) &&
             Number(current.v || 0) === Math.round(nextV) &&
-            Number(current.f || 0) === Math.round(nextF)
+            Number(current.f || 0) === Math.round(nextF) &&
+            Math.abs(nextZoom - slidesZoom) < 0.001
           ) {
             return;
           }
 
+          if (Math.abs(nextZoom - slidesZoom) >= 0.001) {
+            slidesZoom = nextZoom;
+            applySlidesZoom();
+            persistSlidesZoom();
+          }
           deck.slide(Math.max(0, Math.round(nextH)), Math.max(0, Math.round(nextV)), Math.max(0, Math.round(nextF)));
         };
 
@@ -2747,6 +2902,41 @@ const resolvedSlideTheme =
           event.stopPropagation();
         }, { passive: true });
 
+        zoomShell.addEventListener('wheel', (event) => {
+          if (!(event.ctrlKey || event.metaKey)) return;
+          event.preventDefault();
+          const delta = event.deltaY > 0 ? -0.05 : 0.05;
+          nudgeSlidesZoom(delta);
+        }, { passive: false });
+
+        zoomShell.addEventListener('touchstart', (event) => {
+          if (event.touches.length < 2) return;
+          pinchStartDistance = measureTouchDistance(event.touches);
+          pinchStartZoom = slidesZoom;
+        }, { passive: true });
+
+        zoomShell.addEventListener('touchmove', (event) => {
+          if (event.touches.length < 2 || pinchStartDistance <= 0) return;
+          event.preventDefault();
+          const currentDistance = measureTouchDistance(event.touches);
+          if (currentDistance <= 0) return;
+          const ratio = currentDistance / pinchStartDistance;
+          setSlidesZoom(pinchStartZoom * ratio);
+        }, { passive: false });
+
+        zoomShell.addEventListener('touchend', (event) => {
+          if (event.touches.length >= 2) {
+            pinchStartDistance = measureTouchDistance(event.touches);
+            pinchStartZoom = slidesZoom;
+            return;
+          }
+          pinchStartDistance = 0;
+        }, { passive: true });
+
+        zoomShell.addEventListener('touchcancel', () => {
+          pinchStartDistance = 0;
+        }, { passive: true });
+
         speakerBtn?.addEventListener('click', () => {
           openSpeakerView();
         });
@@ -2764,6 +2954,26 @@ const resolvedSlideTheme =
             event.preventDefault();
             toggleFullscreen();
             return;
+          }
+
+          if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+            if (event.key === '-' || event.key === '_') {
+              event.preventDefault();
+              nudgeSlidesZoom(-0.06);
+              return;
+            }
+
+            if (event.key === '=' || event.key === '+') {
+              event.preventDefault();
+              nudgeSlidesZoom(0.06);
+              return;
+            }
+
+            if (event.key === '0') {
+              event.preventDefault();
+              setSlidesZoom(1);
+              return;
+            }
           }
 
           if (event.key === 'Escape' && !document.fullscreenElement) {

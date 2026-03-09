@@ -99,10 +99,13 @@ let activeForumScope = 'general';
 let activeForumScopeKey = '';
 let activeForumLabel = 'General';
 let activeForumDescription = 'Foro general del curso.';
+let activeCourseCanModerate = false;
 
 if (activeCourse) {
   const courseId = activeCourse.courseId;
   const courseAliases = await getCourseAliases(courseId);
+  const activeCourseAccess = await getForumCourseAccess(supabase, dbUser, courseId);
+  activeCourseCanModerate = Boolean(activeCourseAccess.isTeacher);
   const buildForumHref = (view: 'board' | 'lesson', scope: string) =>
     `/foro?course=${encodeURIComponent(courseId)}&view=${encodeURIComponent(view)}&scope=${encodeURIComponent(scope)}`;
   const lessonEntries = allCourseEntries
@@ -890,6 +893,17 @@ if (activeCourse) {
         line-height: 1.6;
       }
 
+      #forum-reader-root .forum-textarea.is-upload-target {
+        outline: 2px dashed color-mix(in srgb, var(--forum-accent) 46%, transparent);
+        outline-offset: 1px;
+        background: color-mix(in srgb, var(--forum-accent) 6%, var(--forum-bg-panel));
+      }
+
+      #forum-reader-root .forum-textarea.is-uploading {
+        cursor: progress;
+        opacity: 0.88;
+      }
+
       #forum-reader-root .forum-form-actions {
         display: flex;
         flex-wrap: wrap;
@@ -1382,6 +1396,7 @@ if (activeCourse) {
           <section
             id="forum-reader-root"
             data-course-id={activeCourse.courseId}
+            data-can-moderate={activeCourseCanModerate ? 'true' : 'false'}
             data-view={activeForumView}
             data-scope={activeForumScope}
             data-scope-key={activeForumScopeKey}
@@ -1392,25 +1407,8 @@ if (activeCourse) {
             <p id="forum-status" class="forum-status" hidden></p>
             <div class="forum-grid">
               <section class="forum-panel forum-thread-column">
-                {activeForumView === 'board' && (
-                  <form id="forum-new-board-form" class="forum-form" hidden>
-                    <input id="forum-board-title" class="forum-field" type="text" maxlength="90" placeholder="Crear foro" required />
-                    <input id="forum-board-description" class="forum-field" type="text" maxlength="260" placeholder="Descripción opcional" />
-                    <div class="forum-form-actions">
-                      <button
-                        type="submit"
-                        class="forum-secondary-btn forum-action-btn forum-action-f"
-                        data-tooltip="Crear foro alternativo"
-                        aria-label="Crear foro alternativo"
-                        title="Crear foro alternativo"
-                      >F</button>
-                    </div>
-                  </form>
-                )}
-
-                <section id="forum-new-thread" class="forum-new-thread forum-thread-item">
-                  <h2 class="forum-panel-title">Hilos</h2>
-                  <p class="forum-thread-panel-copy">{activeForumDescription}</p>
+                <details id="forum-new-thread" class="forum-fold forum-new-thread" hidden>
+                  <summary class="forum-fold-summary">Crear hilo</summary>
                   <form id="forum-new-thread-form" class="forum-form">
                     <input id="forum-thread-title" class="forum-field" type="text" maxlength="140" placeholder="Título del hilo" required />
                     <textarea id="forum-thread-body" class="forum-textarea" maxlength="4000" placeholder="Escribe el primer mensaje..." required></textarea>
@@ -1424,11 +1422,30 @@ if (activeCourse) {
                       >H</button>
                     </div>
                   </form>
-                </section>
+                </details>
 
                 <div id="forum-thread-list" class="forum-thread-list">
                   <p class="forum-empty">Cargando hilos...</p>
                 </div>
+
+                {activeForumView === 'board' && (
+                  <details id="forum-new-board-details" class="forum-fold" hidden>
+                    <summary class="forum-fold-summary">Crear foro</summary>
+                    <form id="forum-new-board-form" class="forum-form">
+                      <input id="forum-board-title" class="forum-field" type="text" maxlength="90" placeholder="Título" required />
+                      <input id="forum-board-description" class="forum-field" type="text" maxlength="260" placeholder="Descripción opcional" />
+                      <div class="forum-form-actions">
+                        <button
+                          type="submit"
+                          class="forum-secondary-btn forum-action-btn forum-action-f"
+                          data-tooltip="Crear foro alternativo"
+                          aria-label="Crear foro alternativo"
+                          title="Crear foro alternativo"
+                        >F</button>
+                      </div>
+                    </form>
+                  </details>
+                )}
               </section>
 
               <section id="forum-thread-stage" class="forum-panel forum-thread-stage">
@@ -1726,6 +1743,7 @@ if (activeCourse) {
         }
 
         const courseId = root.dataset.courseId || '';
+        const canModerate = root.dataset.canModerate === 'true';
         const scopeKey = root.dataset.scopeKey || '';
         const view = root.dataset.view === 'lesson' ? 'lesson' : 'board';
         const scope = root.dataset.scope || '';
@@ -1746,6 +1764,7 @@ if (activeCourse) {
         const parentPostInput = document.getElementById('forum-parent-post-id');
         const replyTargetEl = document.getElementById('forum-reply-target');
         const cancelReplyBtn = document.getElementById('forum-cancel-reply');
+        const newBoardDetails = document.getElementById('forum-new-board-details');
         const newBoardForm = document.getElementById('forum-new-board-form');
         const boardTitleInput = document.getElementById('forum-board-title');
         const boardDescriptionInput = document.getElementById('forum-board-description');
@@ -1774,6 +1793,7 @@ if (activeCourse) {
 
         const forumState = {
           courseId,
+          canModerate,
           mode: view,
           lessonSlug: view === 'lesson' ? scope : '',
           boardSlug: view === 'board' ? normalizeForumBoardSlug(scope) : 'general',
@@ -1887,6 +1907,15 @@ if (activeCourse) {
         };
 
         const setForumBodyContent = (container, post) => {
+          const forumBodyHasRenderableMedia = (root) => {
+            if (!(root instanceof HTMLElement)) return false;
+            return Boolean(
+              root.querySelector(
+                'img, audio, video, iframe, svg, .mermaid, .katex, .lily-score, .obsidian-media-embed-card',
+              ),
+            );
+          };
+
           const normalizeForumBodyNode = (root) => {
             if (!(root instanceof HTMLElement)) return;
             root.style.color = 'var(--forum-text-primary, var(--c-fg, #1c1f23))';
@@ -1924,7 +1953,7 @@ if (activeCourse) {
             container.innerHTML = nextHtml;
           }
 
-          if (!String(container.textContent || '').trim()) {
+          if (!String(container.textContent || '').trim() && !forumBodyHasRenderableMedia(container)) {
             const plainFallback = String(post?.body || '').trim();
             const paragraph = document.createElement('p');
             paragraph.innerHTML = plainFallback
@@ -1941,6 +1970,168 @@ if (activeCourse) {
           textarea.value = `${value.slice(0, start)}${nextText}${value.slice(end)}`;
           textarea.setSelectionRange(cursorStart, cursorEnd);
           textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+
+        const FORUM_EDITOR_CURSOR_TOKEN = '<cursor here>';
+        const FORUM_EDITOR_TEMPLATES = {
+          lilypond: {
+            title: 'Insertar bloque LilyPond',
+            icon:
+              '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.75 2v7.1"/><path d="M10.75 2 5.25 3.4v7.35"/><path d="M10.75 5.1 5.25 6.5"/><ellipse cx="4.1" cy="11.8" rx="1.85" ry="1.35"/><ellipse cx="9.6" cy="10.35" rx="1.85" ry="1.35"/></svg>',
+            snippet:
+              '```lily\n'
+              + '\\version "2.24.0" % Specify your LilyPond version\n'
+              + '\\paper { \n'
+              + 'tagline = ##f  \n'
+              + 'paper-height=#(* 2 cm) \n'
+              + 'paper-width=#(* 20 cm)  \n'
+              + 'system-count=#1 }\n\n'
+              + '\\score {\n'
+              + `\\new Staff \\relative{c'4 ${FORUM_EDITOR_CURSOR_TOKEN}}\n`
+              + '}\n'
+              + '```',
+            cursorToken: FORUM_EDITOR_CURSOR_TOKEN,
+          },
+          mermaid: {
+            title: 'Insertar bloque Mermaid',
+            icon:
+              '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.75" y="2" width="3.5" height="2.5" rx="0.45"/><rect x="10.75" y="2" width="3.5" height="2.5" rx="0.45"/><rect x="6.25" y="11.5" width="3.5" height="2.5" rx="0.45"/><path d="M5.25 3.25h5.5"/><path d="M12.5 4.5v2.05c0 .55-.45 1-1 1H8"/><path d="M3.5 4.5v2.05c0 .55.45 1 1 1H8"/><path d="M8 7.55v3.95"/></svg>',
+            snippet: `\`\`\`mermaid
+graph LR
+a[node] -->|edge| b[hub]
+\`\`\``,
+            cursorSearch: 'node',
+          },
+        };
+
+        const insertForumTemplate = (textarea, template) => {
+          if (!textarea || !template?.snippet) return;
+
+          const start = textarea.selectionStart ?? 0;
+          const end = textarea.selectionEnd ?? start;
+          let snippet = template.snippet;
+          let cursorOffset = snippet.length;
+          let selectionLength = 0;
+
+          if (template.cursorToken && snippet.includes(template.cursorToken)) {
+            cursorOffset = snippet.indexOf(template.cursorToken);
+            snippet = snippet.replace(template.cursorToken, '');
+          } else if (template.cursorSearch && snippet.includes(template.cursorSearch)) {
+            cursorOffset = snippet.indexOf(template.cursorSearch);
+            selectionLength = template.cursorSearch.length;
+          }
+
+          replaceForumTextareaSelection(
+            textarea,
+            snippet,
+            start,
+            end,
+            start + cursorOffset,
+            start + cursorOffset + selectionLength,
+          );
+          textarea.focus();
+        };
+
+        const createForumTemplateButton = (textarea, templateKey) => {
+          const template = FORUM_EDITOR_TEMPLATES[templateKey];
+          if (!template) return null;
+
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'forum-action-btn forum-action-f forum-editor-action-btn';
+          button.title = template.title;
+          button.setAttribute('aria-label', template.title);
+          button.dataset.tooltip = template.title;
+          button.innerHTML = template.icon;
+          button.addEventListener('mousedown', (event) => {
+            event.preventDefault();
+          });
+          button.addEventListener('click', () => insertForumTemplate(textarea, template));
+          return button;
+        };
+
+        const ensureForumDropzone = (textarea) => {
+          if (!textarea) return null;
+          const existingParent = textarea.parentElement;
+          if (existingParent && existingParent.classList.contains('forum-editor-dropzone')) {
+            return existingParent;
+          }
+
+          const wrapper = document.createElement('div');
+          wrapper.className = 'forum-editor-dropzone';
+
+          const overlay = document.createElement('div');
+          overlay.className = 'forum-editor-dropzone-overlay';
+          overlay.setAttribute('aria-hidden', 'true');
+
+          const label = document.createElement('span');
+          label.className = 'forum-editor-dropzone-label';
+          label.textContent = 'Drop file';
+          overlay.appendChild(label);
+
+          textarea.parentNode?.insertBefore(wrapper, textarea);
+          wrapper.appendChild(textarea);
+          wrapper.appendChild(overlay);
+          return wrapper;
+        };
+
+        const createForumUploadButton = (textarea) => {
+          if (!textarea) return null;
+
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.multiple = true;
+          input.hidden = true;
+          input.accept = '.png,.jpg,.jpeg,.gif,.webp,.svg,.avif,.mp3,.wav,.ogg,.m4a,.aac,.flac,.mp4,.m4v,.mov,.webm,.ogv,image/*,audio/*,video/*';
+
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'forum-action-btn forum-action-f forum-editor-action-btn';
+          button.title = 'Insertar archivo';
+          button.setAttribute('aria-label', 'Insertar archivo');
+          button.dataset.tooltip = 'Insertar archivo';
+          button.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.15 8.95 10.9 4.2a2.1 2.1 0 0 1 2.95 2.95L8.1 12.9A3.3 3.3 0 1 1 3.45 8.25l5.35-5.35"/><path d="M5.7 11.05 11 5.75"/></svg>';
+          button.addEventListener('mousedown', (event) => {
+            event.preventDefault();
+          });
+          button.addEventListener('click', () => {
+            input.click();
+          });
+          input.addEventListener('change', async () => {
+            const files = Array.from(input.files || []);
+            if (files.length > 0) {
+              await handleForumMediaUpload(textarea, files, 'selector');
+            }
+            input.value = '';
+          });
+
+          button._forumFileInput = input;
+          return button;
+        };
+
+        const mountForumEditorActions = (textarea, explicitActions = null) => {
+          if (!textarea || textarea.dataset.forumEditorActionsEnhanced === 'true') return;
+
+          const actions = explicitActions instanceof HTMLElement
+            ? explicitActions
+            : textarea.closest('form, .forum-edit-form')?.querySelector('.forum-form-actions');
+          if (!(actions instanceof HTMLElement)) return;
+
+          textarea.dataset.forumEditorActionsEnhanced = 'true';
+
+          const spacer = document.createElement('span');
+          spacer.className = 'forum-editor-action-spacer';
+          spacer.setAttribute('aria-hidden', 'true');
+
+          const lilypondButton = createForumTemplateButton(textarea, 'lilypond');
+          const mermaidButton = createForumTemplateButton(textarea, 'mermaid');
+          const uploadButton = createForumUploadButton(textarea);
+
+          if (spacer) actions.prepend(spacer);
+          if (uploadButton?._forumFileInput) actions.appendChild(uploadButton._forumFileInput);
+          if (uploadButton) actions.prepend(uploadButton);
+          if (mermaidButton) actions.prepend(mermaidButton);
+          if (lilypondButton) actions.prepend(lilypondButton);
         };
 
         const attachForumTypingHelpers = (textarea) => {
@@ -2014,11 +2205,198 @@ if (activeCourse) {
           });
         };
 
+        const getForumUploadKind = (file) => {
+          if (!(file instanceof File)) return '';
+          const mime = String(file.type || '').toLowerCase();
+          if (mime.startsWith('image/')) return 'image';
+          if (mime.startsWith('audio/')) return 'audio';
+          if (mime.startsWith('video/')) return 'video';
+          const fileName = String(file.name || '').toLowerCase();
+          if (/\.(png|jpe?g|gif|webp|svg|avif)$/i.test(fileName)) return 'image';
+          if (/\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(fileName)) return 'audio';
+          if (/\.(mp4|m4v|mov|webm|ogv)$/i.test(fileName)) return 'video';
+          return '';
+        };
+
+        const extractForumUploadFiles = (fileLikeCollection, itemLikeCollection = null) => {
+          const directFiles = Array.from(fileLikeCollection || []).filter((file) => {
+            return getForumUploadKind(file) !== '';
+          });
+          if (directFiles.length > 0) return directFiles;
+
+          return Array.from(itemLikeCollection || [])
+            .map((item) => {
+              if (!item || item.kind !== 'file' || typeof item.getAsFile !== 'function') return null;
+              return item.getAsFile();
+            })
+            .filter((file) => {
+              return getForumUploadKind(file) !== '';
+            });
+        };
+
+        const uploadForumMediaFile = async (file) => {
+          const uploadForm = new FormData();
+          uploadForm.append('file', file, file.name || 'forum-upload');
+
+          const response = await fetch('/api/forum/upload-image', {
+            method: 'POST',
+            body: uploadForm,
+          });
+
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(payload?.error || 'No se pudo subir el archivo.');
+          }
+
+          const mediaUrl = typeof payload?.url === 'string' ? payload.url.trim() : '';
+          const kind = typeof payload?.kind === 'string' ? payload.kind.trim() : getForumUploadKind(file);
+          if (!mediaUrl) {
+            throw new Error('El servidor no devolvió una URL de archivo.');
+          }
+
+          return { url: mediaUrl, kind };
+        };
+
+        const insertForumMediaEmbeds = (textarea, mediaEntries) => {
+          if (!textarea || !Array.isArray(mediaEntries) || mediaEntries.length === 0) return;
+
+          const start = textarea.selectionStart ?? 0;
+          const end = textarea.selectionEnd ?? start;
+          const currentValue = textarea.value || '';
+          const previousChar = start > 0 ? currentValue.slice(start - 1, start) : '';
+          const nextChar = end < currentValue.length ? currentValue.slice(end, end + 1) : '';
+
+          let snippet = mediaEntries.map((entry) => `![](${entry.url})`).join('\n');
+          if (previousChar && previousChar !== '\n') snippet = `\n${snippet}`;
+          if (nextChar && nextChar !== '\n') snippet = `${snippet}\n`;
+
+          replaceForumTextareaSelection(textarea, snippet, start, end, start + snippet.length);
+          textarea.focus();
+        };
+
+        const describeForumUploadBatch = (files) => {
+          let imageCount = 0;
+          let audioCount = 0;
+          let videoCount = 0;
+          for (const file of files) {
+            const kind = getForumUploadKind(file);
+            if (kind === 'image') imageCount += 1;
+            if (kind === 'audio') audioCount += 1;
+            if (kind === 'video') videoCount += 1;
+          }
+
+          const labels = [];
+          if (imageCount > 0) labels.push(imageCount === 1 ? 'imagen' : `${imageCount} imágenes`);
+          if (audioCount > 0) labels.push(audioCount === 1 ? 'audio' : `${audioCount} audios`);
+          if (videoCount > 0) labels.push(videoCount === 1 ? 'video' : `${videoCount} videos`);
+          return labels.join(' y ') || 'archivo';
+        };
+
+        const handleForumMediaUpload = async (textarea, files, sourceLabel) => {
+          const uploadFiles = extractForumUploadFiles(files);
+          if (!textarea || uploadFiles.length === 0) return false;
+
+          const uploadLabel = describeForumUploadBatch(uploadFiles);
+          textarea.closest('.forum-editor-dropzone')?.classList.add('is-uploading');
+          textarea.classList.add('is-uploading');
+          setStatus(`Subiendo ${uploadLabel} desde ${sourceLabel}...`, 'info');
+
+          try {
+            const uploadedEntries = [];
+            for (const file of uploadFiles) {
+              const uploaded = await uploadForumMediaFile(file);
+              uploadedEntries.push(uploaded);
+            }
+
+            insertForumMediaEmbeds(textarea, uploadedEntries);
+            setStatus(
+              uploadFiles.length === 1 ? 'Archivo insertado.' : `${uploadFiles.length} archivos insertados.`,
+              'info',
+            );
+            return true;
+          } catch (error) {
+            console.error('Forum media upload client error:', error);
+            setStatus(error?.message || 'No se pudo subir el archivo.', 'error');
+            return true;
+          } finally {
+            textarea.closest('.forum-editor-dropzone')?.classList.remove('is-uploading');
+            textarea.closest('.forum-editor-dropzone')?.classList.remove('is-upload-target');
+            textarea.classList.remove('is-uploading');
+            textarea.classList.remove('is-upload-target');
+          }
+        };
+
         const attachForumEditor = (textarea) => {
           if (!textarea || textarea.dataset.forumEditorEnhanced === 'true') return;
           textarea.dataset.forumEditorEnhanced = 'true';
+          const dropzone = ensureForumDropzone(textarea);
+          let dragDepth = 0;
+          textarea.spellcheck = false;
+          textarea.autocomplete = 'off';
+          textarea.autocapitalize = 'off';
+          textarea.setAttribute('autocorrect', 'off');
           attachForumTypingHelpers(textarea);
           textarea.classList.add('forum-editor-input');
+          mountForumEditorActions(textarea);
+
+          textarea.addEventListener('paste', async (event) => {
+            const uploadFiles = extractForumUploadFiles(
+              event.clipboardData?.files,
+              event.clipboardData?.items,
+            );
+            if (uploadFiles.length === 0) return;
+
+            event.preventDefault();
+            await handleForumMediaUpload(textarea, uploadFiles, 'portapapeles');
+          });
+
+          textarea.addEventListener('dragover', (event) => {
+            const uploadFiles = extractForumUploadFiles(
+              event.dataTransfer?.files,
+              event.dataTransfer?.items,
+            );
+            if (uploadFiles.length === 0) return;
+
+            event.preventDefault();
+            if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+            if (dropzone) dropzone.classList.add('is-upload-target');
+            textarea.classList.add('is-upload-target');
+          });
+
+          textarea.addEventListener('dragenter', (event) => {
+            const uploadFiles = extractForumUploadFiles(
+              event.dataTransfer?.files,
+              event.dataTransfer?.items,
+            );
+            if (uploadFiles.length === 0) return;
+
+            event.preventDefault();
+            dragDepth += 1;
+            if (dropzone) dropzone.classList.add('is-upload-target');
+            textarea.classList.add('is-upload-target');
+          });
+
+          textarea.addEventListener('dragleave', () => {
+            dragDepth = Math.max(0, dragDepth - 1);
+            if (dragDepth === 0) {
+              if (dropzone) dropzone.classList.remove('is-upload-target');
+              textarea.classList.remove('is-upload-target');
+            }
+          });
+
+          textarea.addEventListener('drop', async (event) => {
+            const uploadFiles = extractForumUploadFiles(
+              event.dataTransfer?.files,
+              event.dataTransfer?.items,
+            );
+            if (uploadFiles.length === 0) return;
+
+            event.preventDefault();
+            dragDepth = 0;
+            if (dropzone) dropzone.classList.remove('is-upload-target');
+            textarea.classList.remove('is-upload-target');
+            await handleForumMediaUpload(textarea, uploadFiles, 'arrastre');
+          });
         };
 
         const isForumPostEdited = (post) => {
@@ -2147,8 +2525,8 @@ if (activeCourse) {
               setForumBodyContent(body, post);
               main.appendChild(body);
 
-              const canEditPost = Boolean(post.canEdit);
-              const canDeletePost = Boolean(post.canDelete);
+              const canEditPost = Boolean(post.canEdit || forumState.canModerate);
+              const canDeletePost = Boolean(post.canDelete || forumState.canModerate);
               const canVotePost = Boolean(canVote);
 
               if (canReply || canEditPost || canDeletePost || canVotePost) {
@@ -2506,8 +2884,6 @@ if (activeCourse) {
 
             const trailing = document.createElement('span');
             trailing.className = 'forum-thread-trailing';
-            trailing.appendChild(counts);
-            trailing.appendChild(caret);
 
             top.appendChild(title);
             top.appendChild(trailing);
@@ -2545,6 +2921,108 @@ if (activeCourse) {
               updateThreadQuery('');
               renderPosts([], false, false);
             });
+
+            const canEditThread = Boolean(thread.canEdit || forumState.canModerate);
+            const canDeleteThread = Boolean(thread.canDelete || forumState.canModerate);
+            let threadEditButton = null;
+            let threadDeleteButton = null;
+
+            const setThreadActionState = (isDisabled) => {
+              if (threadEditButton) threadEditButton.disabled = isDisabled;
+              if (threadDeleteButton) threadDeleteButton.disabled = isDisabled;
+            };
+
+            const threadActions = document.createElement('div');
+            threadActions.className = 'forum-thread-actions';
+            threadActions.hidden = !canEditThread && !canDeleteThread;
+
+            if (canEditThread) {
+              threadEditButton = document.createElement('button');
+              threadEditButton.type = 'button';
+              threadEditButton.className = 'forum-thread-edit-btn forum-action-btn forum-action-e';
+              threadEditButton.textContent = 'E';
+              threadEditButton.dataset.tooltip = 'Editar hilo';
+              threadEditButton.title = 'Editar hilo';
+              threadEditButton.setAttribute('aria-label', 'Editar hilo');
+              threadEditButton.addEventListener('click', async (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                const nextTitle = window.prompt('Editar título del hilo', thread.title || '');
+                if (nextTitle === null) return;
+
+                const cleanedTitle = nextTitle.trim();
+                if (cleanedTitle.length < 3) {
+                  setForumStatus('El título del hilo debe tener al menos 3 caracteres.', 'error');
+                  return;
+                }
+
+                setThreadActionState(true);
+                try {
+                  const response = await fetch(`/api/forum/threads/${encodeURIComponent(thread.id)}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title: cleanedTitle }),
+                  });
+                  const payload = await response.json().catch(() => ({}));
+                  if (!response.ok) {
+                    throw new Error(payload?.error || 'No se pudo editar el hilo.');
+                  }
+
+                  setForumStatus('Hilo actualizado.', 'info');
+                  await loadThreads({ preserveSelection: true });
+                } catch (error) {
+                  console.error('Forum thread edit error:', error);
+                  setForumStatus(error?.message || 'No se pudo editar el hilo.', 'error');
+                } finally {
+                  setThreadActionState(false);
+                }
+              });
+              threadActions.appendChild(threadEditButton);
+            }
+
+            if (canDeleteThread) {
+              threadDeleteButton = document.createElement('button');
+              threadDeleteButton.type = 'button';
+              threadDeleteButton.className = 'forum-thread-delete-btn forum-action-btn forum-action-b';
+              threadDeleteButton.textContent = 'B';
+              threadDeleteButton.dataset.tooltip = 'Borrar hilo';
+              threadDeleteButton.title = 'Borrar hilo';
+              threadDeleteButton.setAttribute('aria-label', 'Borrar hilo');
+              threadDeleteButton.addEventListener('click', async (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                if (!confirm('¿Seguro que quieres borrar este hilo completo?')) return;
+
+                setThreadActionState(true);
+                try {
+                  const response = await fetch(`/api/forum/threads/${encodeURIComponent(thread.id)}`, {
+                    method: 'DELETE',
+                  });
+                  const payload = await response.json().catch(() => ({}));
+                  if (!response.ok) {
+                    throw new Error(payload?.error || 'No se pudo borrar el hilo.');
+                  }
+
+                  clearReplyTarget();
+                  setForumStatus('Hilo borrado.', 'info');
+                  await loadThreads({ preserveSelection: true });
+                } catch (error) {
+                  console.error('Forum thread delete error:', error);
+                  setForumStatus(error?.message || 'No se pudo borrar el hilo.', 'error');
+                } finally {
+                  setThreadActionState(false);
+                }
+              });
+              threadActions.appendChild(threadDeleteButton);
+            }
+
+            trailing.appendChild(counts);
+            if (!threadActions.hidden) {
+              trailing.appendChild(threadActions);
+            }
+            trailing.appendChild(caret);
 
             item.appendChild(toggle);
             threadListEl.appendChild(item);
@@ -2591,6 +3069,9 @@ if (activeCourse) {
           forumState.canManageBoards = Boolean(payload.canManageBoards);
           if (newBoardForm) {
             newBoardForm.hidden = !forumState.canManageBoards;
+          }
+          if (newBoardDetails instanceof HTMLElement) {
+            newBoardDetails.hidden = !forumState.canManageBoards;
           }
 
           const slugs = forumState.boards
@@ -2761,6 +3242,9 @@ if (activeCourse) {
 
             threadTitleInput.value = '';
             threadBodyInput.value = '';
+            if (newThreadContainer instanceof HTMLDetailsElement) {
+              newThreadContainer.open = false;
+            }
             setForumStatus('Hilo publicado.', 'info');
             await loadThreads({ preserveSelection: false });
           } catch (error) {

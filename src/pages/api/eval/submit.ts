@@ -553,7 +553,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       baseUpdate.feedback = feedback;
     }
 
-    if (markAsGraded) {
+    if (markAsGraded || finalScore !== null) {
       baseUpdate.gradedAt = new Date();
     }
 
@@ -578,7 +578,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
       if (finalScore !== null) insertPayload.score = finalScore;
       if (feedback) insertPayload.feedback = feedback;
-      if (markAsGraded) insertPayload.gradedAt = new Date();
+      if (markAsGraded || finalScore !== null) insertPayload.gradedAt = new Date();
 
       const { data: createdSubmission, error: insertError } = await supabase
         .from('Submission')
