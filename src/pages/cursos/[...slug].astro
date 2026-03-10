@@ -252,6 +252,9 @@ const forumThreadPrompt = sessionFirstName
     />
     <style>
       .course-container {
+        --course-shell-top-gap: clamp(0.7rem, 1vw, 1rem);
+        --course-shell-top: calc(var(--musiki-header-height, 4.5rem) + var(--course-shell-top-gap));
+        --course-shell-bottom-gap: 0.7rem;
         --left-sidebar-width: clamp(248px, 19vw, 312px);
         --right-sidebar-width: clamp(400px, 31vw, 520px);
         display: grid;
@@ -263,7 +266,7 @@ const forumThreadPrompt = sessionFirstName
         width: 100%;
         max-width: none;
         margin: 0;
-        padding: clamp(0.7rem, 1vw, 1rem) clamp(0.7rem, 1.5vw, 1.4rem) 1.35rem;
+        padding: var(--course-shell-top-gap) clamp(0.7rem, 1.5vw, 1.4rem) 1.35rem;
         min-height: calc(100dvh - 6.75rem);
         align-items: start;
         position: relative;
@@ -334,8 +337,8 @@ const forumThreadPrompt = sessionFirstName
       
       .sidebar {
         position: sticky;
-        top: calc(var(--musiki-header-height, 4.5rem) + 0.7rem);
-        height: calc(100dvh - var(--musiki-header-height, 4.5rem) - 1.4rem);
+        top: var(--course-shell-top);
+        height: calc(100dvh - var(--course-shell-top) - var(--course-shell-bottom-gap));
         min-height: 0;
         min-width: 0;
         width: 100%;
@@ -359,8 +362,8 @@ const forumThreadPrompt = sessionFirstName
 
       .sidebar--right {
         justify-self: stretch;
-        top: calc(var(--musiki-header-height, 4.5rem) + 0.7rem);
-        height: calc(100dvh - var(--musiki-header-height, 4.5rem) - 1.4rem);
+        top: var(--course-shell-top);
+        height: calc(100dvh - var(--course-shell-top) - var(--course-shell-bottom-gap));
       }
 
       .course-container[data-left-open='false'] .sidebar--left {
@@ -409,8 +412,17 @@ const forumThreadPrompt = sessionFirstName
 
       .sidebar-panel-actions {
         display: flex;
-        justify-content: flex-end;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.45rem;
         margin-bottom: 0.35rem;
+      }
+
+      .sidebar-panel-actions-group {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        min-width: 0;
       }
 
       .sidebar-toggle-btn {
@@ -761,6 +773,30 @@ const forumThreadPrompt = sessionFirstName
         box-shadow: 0 5px 18px rgba(0, 0, 0, 0.12);
       }
 
+      .sidebar-maximize-btn {
+        display: inline-flex;
+      }
+
+      .course-container[data-right-maximized='true'] .sidebar--right {
+        position: fixed;
+        left: calc(
+          clamp(0.7rem, 1.5vw, 1.4rem) +
+          var(--left-sidebar-width) +
+          clamp(0.9rem, 1.35vw, 1.3rem)
+        );
+        right: clamp(0.7rem, 1.5vw, 1.4rem);
+        top: var(--course-shell-top);
+        width: auto;
+        max-width: none;
+        height: calc(100dvh - var(--course-shell-top) - var(--course-shell-bottom-gap));
+        z-index: 43;
+        box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+      }
+
+      .course-container[data-left-open='false'][data-right-maximized='true'] .sidebar--right {
+        left: clamp(0.7rem, 1.5vw, 1.4rem);
+      }
+
       .scroll-shortcut-btn:hover {
         background: var(--c-bg-mute);
       }
@@ -785,6 +821,18 @@ const forumThreadPrompt = sessionFirstName
         display: none;
       }
 
+      .sidebar--left details > summary.chapter-title {
+        list-style: none;
+      }
+
+      .sidebar--left details > summary.chapter-title::-webkit-details-marker {
+        display: none;
+      }
+
+      .sidebar--left details > summary.chapter-title::marker {
+        content: "";
+      }
+
       .class-toc-list {
         margin-top: 0.55rem;
       }
@@ -806,20 +854,6 @@ const forumThreadPrompt = sessionFirstName
 
       .class-toc-summary::-webkit-details-marker {
         display: none;
-      }
-
-      .class-toc-summary::before {
-        content: '▸';
-        color: var(--c-fg-dim);
-        font-size: 0.68rem;
-        line-height: 1;
-        margin-top: 0.42rem;
-        margin-right: 0.12rem;
-        flex: 0 0 auto;
-      }
-
-      .class-toc-branch[open] > .class-toc-summary::before {
-        content: '▾';
       }
 
       .class-toc-children {
@@ -1528,7 +1562,7 @@ const forumThreadPrompt = sessionFirstName
         overflow-x: auto;
       }
 
-      .forum-post-body :where(img, video, audio, a[data-forum-media-link='true']) {
+      .forum-post-body :where(img, video, audio, a[data-forum-media-link='true'], .mermaid) {
         cursor: zoom-in;
       }
 
@@ -1603,6 +1637,19 @@ const forumThreadPrompt = sessionFirstName
         -webkit-user-drag: none;
         transform-origin: center center;
         will-change: transform;
+      }
+
+      .forum-media-modal-content .mermaid {
+        display: block;
+        max-width: none;
+        transform-origin: center center;
+        will-change: transform;
+      }
+
+      .forum-media-modal-content .mermaid svg {
+        display: block;
+        max-width: none;
+        height: auto;
       }
 
       .forum-media-modal-content img[data-forum-svg='true'] {
@@ -1737,6 +1784,10 @@ const forumThreadPrompt = sessionFirstName
           overflow-y: auto;
           scrollbar-gutter: auto;
           box-shadow: 0 18px 42px rgba(0, 0, 0, 0.18);
+        }
+
+        .sidebar-maximize-btn {
+          display: none;
         }
 
         .sidebar--left {
@@ -1915,6 +1966,7 @@ const forumThreadPrompt = sessionFirstName
       data-user-key={String(session?.user?.email || '').trim()}
       data-left-open="true"
       data-right-open="false"
+      data-right-maximized="false"
       data-has-right-sidebar={hasForumSidebar ? 'true' : 'false'}
       data-can-manage-live-interactions={canManageLiveInteractions ? 'true' : 'false'}
       data-live-course-id={canonicalCourseId || courseSlug}
@@ -2053,13 +2105,24 @@ const forumThreadPrompt = sessionFirstName
 
       <aside class="sidebar sidebar--right" data-course-sidebar="right" aria-label="Foros de clase">
         <div class="sidebar-panel-actions">
-          <button
-            type="button"
-            class="sidebar-toggle-btn"
-            data-sidebar-toggle="right"
-            aria-label="Ocultar foros"
-            title="Ocultar foros (⌘/Ctrl + Shift + \\)"
-          >×</button>
+          <div class="sidebar-panel-actions-group">
+            <button
+              type="button"
+              class="sidebar-toggle-btn sidebar-maximize-btn"
+              data-sidebar-maximize="right"
+              aria-label="Maximizar foros"
+              title="Maximizar foros"
+            >⤢</button>
+          </div>
+          <div class="sidebar-panel-actions-group">
+            <button
+              type="button"
+              class="sidebar-toggle-btn"
+              data-sidebar-toggle="right"
+              aria-label="Ocultar foros"
+              title="Ocultar foros (⌘/Ctrl + Shift + \\)"
+            >×</button>
+          </div>
         </div>
 
         {hasForumSidebar ? (
@@ -2262,6 +2325,7 @@ const forumThreadPrompt = sessionFirstName
         const overlay = root.querySelector('[data-course-sidebar-overlay]');
         const leftButtons = Array.from(root.querySelectorAll('[data-sidebar-toggle="left"], [data-sidebar-handle="left"]'));
         const rightButtons = Array.from(root.querySelectorAll('[data-sidebar-toggle="right"], [data-sidebar-handle="right"]'));
+        const rightMaximizeButtons = Array.from(root.querySelectorAll('[data-sidebar-maximize="right"]'));
         const hasRightSidebar = root.dataset.hasRightSidebar === 'true';
 
         const isMobileViewport = () => window.matchMedia('(max-width: 1024px)').matches;
@@ -2277,14 +2341,34 @@ const forumThreadPrompt = sessionFirstName
           window.localStorage.getItem('musiki:course:right-open'),
           root.dataset.rightOpen !== 'false',
         );
+        let rightMaximized = hasRightSidebar && coerceBoolean(
+          window.localStorage.getItem('musiki:course:right-maximized'),
+          root.dataset.rightMaximized === 'true',
+        );
+
+        const syncShellOffsets = () => {
+          const rootRect = root.getBoundingClientRect();
+          const viewportTop = Math.max(0, Math.round(rootRect.top));
+          const viewportBottomGap = Math.max(0, Math.round(window.innerHeight - rootRect.bottom));
+          root.style.setProperty('--course-shell-top', `${viewportTop}px`);
+          root.style.setProperty('--course-shell-bottom-gap', `${viewportBottomGap}px`);
+        };
 
         const syncLayoutState = () => {
+          syncShellOffsets();
+
           if (!hasRightSidebar) {
             rightOpen = false;
+            rightMaximized = false;
+          }
+
+          if (isMobileViewport()) {
+            rightMaximized = false;
           }
 
           root.dataset.leftOpen = leftOpen ? 'true' : 'false';
           root.dataset.rightOpen = rightOpen ? 'true' : 'false';
+          root.dataset.rightMaximized = rightOpen && rightMaximized ? 'true' : 'false';
 
           const overlayActive = isMobileViewport() && (leftOpen || rightOpen);
           root.classList.toggle('is-overlay-active', overlayActive);
@@ -2294,11 +2378,21 @@ const forumThreadPrompt = sessionFirstName
 
           document.documentElement.classList.toggle('course-sidebars-open', overlayActive);
           document.body.classList.toggle('course-sidebars-open', overlayActive);
+
+          rightMaximizeButtons.forEach((button) => {
+            if (!(button instanceof HTMLButtonElement)) return;
+            const active = rightOpen && rightMaximized;
+            button.dataset.active = active ? 'true' : 'false';
+            button.setAttribute('aria-label', active ? 'Minimizar foros' : 'Maximizar foros');
+            button.title = active ? 'Minimizar foros' : 'Maximizar foros';
+            button.textContent = active ? '⤡' : '⤢';
+          });
         };
 
         const persistLayoutState = () => {
           window.localStorage.setItem('musiki:course:left-open', leftOpen ? 'true' : 'false');
           window.localStorage.setItem('musiki:course:right-open', rightOpen ? 'true' : 'false');
+          window.localStorage.setItem('musiki:course:right-maximized', rightMaximized ? 'true' : 'false');
         };
 
         const toggleSidebar = (side: 'left' | 'right') => {
@@ -2306,8 +2400,19 @@ const forumThreadPrompt = sessionFirstName
             leftOpen = !leftOpen;
           } else if (side === 'right' && hasRightSidebar) {
             rightOpen = !rightOpen;
+            if (!rightOpen) {
+              rightMaximized = false;
+            }
           }
 
+          persistLayoutState();
+          syncLayoutState();
+        };
+
+        const toggleRightMaximized = () => {
+          if (!hasRightSidebar || isMobileViewport()) return;
+          rightOpen = true;
+          rightMaximized = !rightMaximized;
           persistLayoutState();
           syncLayoutState();
         };
@@ -2324,11 +2429,18 @@ const forumThreadPrompt = sessionFirstName
           button.addEventListener('click', () => toggleSidebar('right'));
         });
 
+        rightMaximizeButtons.forEach((button) => {
+          if (!(button instanceof HTMLElement) || button.dataset.boundCourseSidebar === 'true') return;
+          button.dataset.boundCourseSidebar = 'true';
+          button.addEventListener('click', () => toggleRightMaximized());
+        });
+
         if (overlay instanceof HTMLElement && overlay.dataset.boundCourseSidebar !== 'true') {
           overlay.dataset.boundCourseSidebar = 'true';
           overlay.addEventListener('click', () => {
             leftOpen = false;
             rightOpen = false;
+            rightMaximized = false;
             persistLayoutState();
             syncLayoutState();
           });
@@ -5037,6 +5149,14 @@ const forumThreadPrompt = sessionFirstName
 
         const extractForumMediaTarget = (target) => {
           if (!(target instanceof Element)) return null;
+          const mermaidEl = target.closest('.forum-post-body .mermaid');
+          if (mermaidEl instanceof HTMLElement) {
+            return {
+              kind: 'diagram',
+              node: mermaidEl.cloneNode(true),
+            };
+          }
+
           const mediaEl = target.closest('.forum-post-body img, .forum-post-body video, .forum-post-body audio, .forum-post-body a[href]');
           if (!mediaEl) return null;
           if (mediaEl instanceof HTMLAnchorElement && !isDirectForumMediaUrl(mediaEl.href)) return null;
@@ -5140,7 +5260,7 @@ const forumThreadPrompt = sessionFirstName
 
         const openForumMediaModal = (payload) => {
           if (!(mediaModalEl instanceof HTMLElement) || !(mediaModalContentEl instanceof HTMLElement)) return;
-          if (!payload?.src) return;
+          if (!payload || (!payload.src && payload.kind !== 'diagram')) return;
 
           let node = null;
           if (payload.kind === 'image') {
@@ -5165,6 +5285,8 @@ const forumThreadPrompt = sessionFirstName
             audio.autoplay = true;
             audio.preload = 'metadata';
             node = audio;
+          } else if (payload.kind === 'diagram' && payload.node instanceof HTMLElement) {
+            node = payload.node;
           }
 
           if (!node) return;
@@ -5173,7 +5295,7 @@ const forumThreadPrompt = sessionFirstName
             node.dataset.forumSvg = 'true';
           }
 
-          if (payload.kind === 'image' || payload.kind === 'video') {
+          if (payload.kind === 'image' || payload.kind === 'video' || payload.kind === 'diagram') {
             const viewport = document.createElement('div');
             viewport.className = 'forum-media-modal-viewport';
             viewport.appendChild(node);

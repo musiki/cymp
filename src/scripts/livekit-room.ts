@@ -115,8 +115,11 @@ type ParticipantMount = MediaMount & {
 };
 
 type LocalPreviewStreamMount = {
+  cleanup?: () => Promise<void> | void;
   deviceId: string;
   element: HTMLVideoElement;
+  processed: boolean;
+  sourceStream?: MediaStream;
   stream: MediaStream;
   wrapper: HTMLElement;
 };
@@ -1325,6 +1328,25 @@ const isLocalCameraTrackLike = (value: unknown): value is LocalCameraTrackLike =
 
 const isBackgroundBlurProcessorActive = (track: LocalCameraTrackLike | null | undefined) =>
   normalizeText(track?.getProcessor?.()?.name) === BACKGROUND_BLUR_PROCESSOR_NAME;
+
+const shouldProcessLocalCameraVideo = ({
+  gravityBallEnabled,
+  handTrackEnabled,
+  previewBlur,
+  previewInvert,
+  videoMix,
+}: {
+  gravityBallEnabled: boolean;
+  handTrackEnabled: boolean;
+  previewBlur: boolean;
+  previewInvert: boolean;
+  videoMix: VideoMixSettings;
+}) =>
+  previewBlur ||
+  previewInvert ||
+  handTrackEnabled ||
+  gravityBallEnabled ||
+  hasActiveVideoMix(videoMix);
 
 class BackgroundBlurVideoProcessor implements VideoTrackProcessorLike {
   name = BACKGROUND_BLUR_PROCESSOR_NAME;
@@ -3559,6 +3581,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   let recordingPresentationUrl = '';
   let recordingPresentationSnapshotTask: Promise<void> | null = null;
   let recordingPresentationLastSnapshotAt = 0;
+  let disconnectedPreviewProcessor: BackgroundBlurVideoProcessor | null = null;
+  let disconnectedPreviewSourceVideo: HTMLVideoElement | null = null;
   let reverseMicKeyActive = false;
   let reverseMicRestoreState: boolean | null = null;
   let micMeterAnimationId = 0;
@@ -3676,11 +3700,13 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     if (!localCameraTrack) return;
 
     localCameraHandOverlayState.enabled = handTrackEnabled;
-    const shouldProcessVideo =
-      previewBlur ||
-      previewInvert ||
-      handTrackEnabled ||
-      hasActiveVideoMix(localCameraProcessorState.videoMix);
+    const shouldProcessVideo = shouldProcessLocalCameraVideo({
+      gravityBallEnabled,
+      handTrackEnabled,
+      previewBlur,
+      previewInvert,
+      videoMix: localCameraProcessorState.videoMix,
+    });
 
     if (!shouldProcessVideo) {
       if (isBackgroundBlurProcessorActive(localCameraTrack)) {
@@ -3953,7 +3979,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   const syncLocalVideoDisplayFlip = () => {
     const shouldMirrorViaCss =
       previewInvert &&
-      room.state !== ConnectionState.Connected;
+      room.state !== ConnectionState.Connected &&
+      !isDisconnectedPreviewProcessingActive();
     root.style.setProperty('--conference-local-video-flip', shouldMirrorViaCss ? '-1' : '1');
   };
 
@@ -4146,7 +4173,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   const applyGravityBallStageVisibilityState = () => {
     const stageVisible =
       gravityBallEnabled &&
-      room.state !== ConnectionState.Connected;
+      room.state !== ConnectionState.Connected &&
+      !isDisconnectedPreviewProcessingActive();
     root.dataset.gravityBallStageVisible = stageVisible ? 'true' : 'false';
   };
 
@@ -4586,10 +4614,28 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     incomingAudioMasterPannerNode = null;
   };
 
+  const getParticipantJoinedAtMs = (participant: Participant | null | undefined) => {
+    const joinedAt = participant?.joinedAt;
+    if (!(joinedAt instanceof Date)) return Number.POSITIVE_INFINITY;
+    const joinedAtMs = joinedAt.getTime();
+    return Number.isFinite(joinedAtMs) ? joinedAtMs : Number.POSITIVE_INFINITY;
+  };
+
+  const compareSessionLeaderCandidates = (left: Participant, right: Participant) => {
+    const joinedAtDifference = getParticipantJoinedAtMs(left) - getParticipantJoinedAtMs(right);
+    if (joinedAtDifference !== 0) return joinedAtDifference;
+
+    const localIdentity = normalizeText(room.localParticipant?.identity);
+    if (left.identity === localIdentity && right.identity !== localIdentity) return -1;
+    if (right.identity === localIdentity && left.identity !== localIdentity) return 1;
+
+    return left.identity.localeCompare(right.identity, 'es');
+  };
+
   const getFallbackSessionLeaderIdentity = () => {
     const teachers = allParticipants()
       .filter((participant) => readParticipantRole(room, participant, localRole) === 'teacher')
-      .sort((left, right) => left.identity.localeCompare(right.identity, 'es'));
+      .sort(compareSessionLeaderCandidates);
     return teachers[0]?.identity || '';
   };
 
@@ -4791,6 +4837,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       !landmarks ||
       !handTrackEnabled ||
       room.state === ConnectionState.Connected ||
+      isDisconnectedPreviewProcessingActive() ||
       !(stageHandOverlay instanceof HTMLCanvasElement)
     ) {
       clearHandOverlays();
@@ -5732,15 +5779,27 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     });
   };
 
+  const canRecordCurrentStage = () => {
+    const connecting =
+      room.state === ConnectionState.Connecting ||
+      room.state === ConnectionState.Reconnecting ||
+      room.state === ConnectionState.SignalReconnecting;
+    if (connecting) return false;
+    if (room.state === ConnectionState.Connected) return true;
+    if (disconnectedCameraPreviewEnabled) return true;
+    if (Boolean(presentation.getHref())) return true;
+    if (gravityBallEnabled || handTrackEnabled) return true;
+    return getVisibleVideoElements().length > 0;
+  };
+
   const setRecordState = (isRecording: boolean) => {
     if (!(recordButton instanceof HTMLButtonElement)) return;
     root.dataset.recording = isRecording ? 'true' : 'false';
     recordButton.dataset.recording = isRecording ? 'true' : 'false';
-    recordButton.disabled = room.state !== ConnectionState.Connected;
-    recordButton.title = isRecording ? 'Detener grabacion' : 'Grabar transmision';
+    recordButton.title = isRecording ? 'Detener grabacion' : 'Grabar escena';
     recordButton.setAttribute(
       'aria-label',
-      isRecording ? 'Detener grabacion' : 'Grabar transmision',
+      isRecording ? 'Detener grabacion' : 'Grabar escena',
     );
   };
 
@@ -6504,6 +6563,26 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       });
     }
 
+    if (room.state !== ConnectionState.Connected) {
+      const synthOutputTrack = fmSynth.getOutputTrack();
+      if (synthOutputTrack?.readyState === 'live') {
+        const trackKey = `offline:synth:${synthOutputTrack.id}`;
+        if (!seenTrackIds.has(trackKey)) {
+          seenTrackIds.add(trackKey);
+          connectTrack(synthOutputTrack);
+        }
+      }
+
+      const ballOutputTrack = gravityBallRenderer?.getOutputTrack() || null;
+      if (ballOutputTrack?.readyState === 'live') {
+        const trackKey = `offline:ball:${ballOutputTrack.id}`;
+        if (!seenTrackIds.has(trackKey)) {
+          seenTrackIds.add(trackKey);
+          connectTrack(ballOutputTrack);
+        }
+      }
+    }
+
     Array.from(room.localParticipant.audioTrackPublications.values()).forEach((publication) => {
       const mediaStreamTrack = (
         publication.track as { mediaStreamTrack?: MediaStreamTrack } | undefined
@@ -6534,7 +6613,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
   const startRecording = async () => {
     if (!(recordButton instanceof HTMLButtonElement)) return;
-    if (room.state !== ConnectionState.Connected) return;
+    if (!canRecordCurrentStage()) return;
     if (typeof MediaRecorder === 'undefined') {
       throw new Error('MediaRecorder is not available in this browser.');
     }
@@ -6748,12 +6827,95 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     }
   };
 
+  const isDisconnectedPreviewProcessingActive = () =>
+    Boolean(
+      room.state === ConnectionState.Disconnected &&
+        disconnectedCameraPreviewEnabled &&
+        localPreviewStreamMount?.processed,
+    );
+
+  const buildDisconnectedPreviewStream = async (stream: MediaStream) => {
+    const sourceTrack = stream.getVideoTracks()[0];
+    const shouldProcessVideo = shouldProcessLocalCameraVideo({
+      gravityBallEnabled,
+      handTrackEnabled,
+      previewBlur,
+      previewInvert,
+      videoMix,
+    });
+
+    if (!sourceTrack || !shouldProcessVideo) {
+      return {
+        cleanup: undefined,
+        processed: false,
+        sourceStream: stream,
+        stream,
+      };
+    }
+
+    const sourceVideo = document.createElement('video');
+    sourceVideo.autoplay = true;
+    sourceVideo.muted = true;
+    sourceVideo.playsInline = true;
+    sourceVideo.srcObject = stream;
+    await sourceVideo.play().catch(() => undefined);
+
+    const processor = new BackgroundBlurVideoProcessor();
+    await processor.init({
+      element: sourceVideo,
+      kind: Track.Kind.Video,
+      track: sourceTrack,
+    });
+
+    const processedTrack = processor.processedTrack;
+    if (!processedTrack) {
+      await processor.destroy().catch(() => undefined);
+      sourceVideo.pause();
+      sourceVideo.srcObject = null;
+      return {
+        cleanup: undefined,
+        processed: false,
+        sourceStream: stream,
+        stream,
+      };
+    }
+
+    disconnectedPreviewProcessor = processor;
+    disconnectedPreviewSourceVideo = sourceVideo;
+
+    return {
+      cleanup: async () => {
+        await processor.destroy().catch(() => undefined);
+        sourceVideo.pause();
+        sourceVideo.srcObject = null;
+        if (disconnectedPreviewProcessor === processor) {
+          disconnectedPreviewProcessor = null;
+        }
+        if (disconnectedPreviewSourceVideo === sourceVideo) {
+          disconnectedPreviewSourceVideo = null;
+        }
+      },
+      processed: true,
+      sourceStream: stream,
+      stream: new MediaStream([processedTrack]),
+    };
+  };
+
   const removeLocalPreviewStream = () => {
     if (!localPreviewStreamMount) return;
-    localPreviewStreamMount.stream.getTracks().forEach((track) => track.stop());
-    localPreviewStreamMount.element.srcObject = null;
-    localPreviewStreamMount.wrapper.remove();
+    const mount = localPreviewStreamMount;
     localPreviewStreamMount = null;
+    void Promise.resolve(mount.cleanup?.()).catch(() => undefined);
+    const seenTrackIds = new Set<string>();
+    [mount.stream, mount.sourceStream].forEach((stream) => {
+      stream?.getTracks().forEach((track) => {
+        if (seenTrackIds.has(track.id)) return;
+        seenTrackIds.add(track.id);
+        track.stop();
+      });
+    });
+    mount.element.srcObject = null;
+    mount.wrapper.remove();
   };
 
   const clearDisconnectedStagePreview = () => {
@@ -6779,7 +6941,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     const nextTrack = stream.getVideoTracks()[0];
     const nextTrackId = normalizeText(nextTrack?.id);
     const hasBackdrop = Boolean(disconnectedStagePreviewMount?.wrapper.querySelector('.conference-media-backdrop'));
-    const needsBackdrop = previewBlur;
+    const needsBackdrop = previewBlur && !localPreviewStreamMount?.processed;
 
     if (
       disconnectedStagePreviewMount &&
@@ -6809,7 +6971,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
     const wrapper = document.createElement('div');
     wrapper.className = 'conference-media-frame conference-media-frame--local-camera';
-    if (previewBlur) {
+    if (previewBlur && !localPreviewStreamMount?.processed) {
       appendBlurBackdrop({ stream, wrapper });
     }
 
@@ -6840,7 +7002,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     };
   };
 
-  const mountLocalPreviewStream = (stream: MediaStream) => {
+  const mountLocalPreviewStream = async (stream: MediaStream) => {
     if (!(identityPreviewSlot instanceof HTMLElement)) {
       stream.getTracks().forEach((track) => track.stop());
       return;
@@ -6851,12 +7013,14 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     removeLocalPreviewStream();
     clearIdentityPreviewSlot();
 
+    const previewMount = await buildDisconnectedPreviewStream(stream);
+
     const wrapper = document.createElement('div');
     wrapper.className = 'conference-media-frame conference-media-frame--local-preview';
 
-    if (previewBlur) {
+    if (previewBlur && !previewMount.processed) {
       appendBlurBackdrop({
-        stream,
+        stream: previewMount.stream,
         wrapper,
       });
     }
@@ -6865,7 +7029,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     element.autoplay = true;
     element.muted = true;
     element.playsInline = true;
-    element.srcObject = stream;
+    element.srcObject = previewMount.stream;
     wrapper.appendChild(element);
     identityPreviewSlot.appendChild(wrapper);
     void element.play().catch(() => undefined);
@@ -6874,9 +7038,12 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     const deviceId = normalizeText(settings?.deviceId) || preferredVideoInputId;
 
     localPreviewStreamMount = {
+      cleanup: previewMount.cleanup,
       deviceId,
       element,
-      stream,
+      processed: previewMount.processed,
+      sourceStream: previewMount.sourceStream,
+      stream: previewMount.stream,
       wrapper,
     };
     syncDisconnectedStagePreview();
@@ -6914,7 +7081,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     }
 
     disconnectedCameraPreviewEnabled = true;
-    mountLocalPreviewStream(stream);
+    await mountLocalPreviewStream(stream);
     await refreshDeviceOptions(true);
   };
 
@@ -6925,6 +7092,34 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     if (room.state === ConnectionState.Disconnected) {
       clearIdentityPreviewSlot();
     }
+  };
+
+  const syncDisconnectedPreviewProcessing = async () => {
+    if (room.state !== ConnectionState.Disconnected || !disconnectedCameraPreviewEnabled) return;
+    const shouldProcessVideo = shouldProcessLocalCameraVideo({
+      gravityBallEnabled,
+      handTrackEnabled,
+      previewBlur,
+      previewInvert,
+      videoMix,
+    });
+    const isProcessed = Boolean(localPreviewStreamMount?.processed);
+
+    if (shouldProcessVideo !== isProcessed) {
+      const currentStatus = statusNode.textContent || '';
+      disableDisconnectedCameraPreview();
+      await enableDisconnectedCameraPreview();
+      if (currentStatus) {
+        setStatus(currentStatus);
+      }
+    } else {
+      syncIdentityPreview();
+      syncDisconnectedStagePreview();
+    }
+
+    syncLocalVideoDisplayFlip();
+    applyGravityBallStageVisibilityState();
+    clearHandOverlays();
   };
 
   const syncIdentityPreview = () => {
@@ -7685,7 +7880,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     microphoneButton.disabled = connecting;
     shareScreenButton.disabled = !connected;
     if (recordButton instanceof HTMLButtonElement) {
-      recordButton.disabled = !connected;
+      recordButton.disabled = !canRecordCurrentStage();
     }
     layoutInput.disabled = localRole === 'teacher'
       ? (connected ? !sessionLeader : false) || !canChangeLayoutLocally()
@@ -8396,7 +8591,26 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
         await room.localParticipant.setScreenShareEnabled(false);
       } else {
         await room.localParticipant.setScreenShareEnabled(true, {
-          audio: true,
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
+          video: {
+            displaySurface: 'browser',
+          },
+          resolution: {
+            width: 1920,
+            height: 1080,
+            frameRate: 30,
+            aspectRatio: 16 / 9,
+          },
+          contentHint: 'detail',
+          preferCurrentTab: true,
+          selfBrowserSurface: 'include',
+          surfaceSwitching: 'include',
+          systemAudio: 'include',
+          suppressLocalAudioPlayback: false,
         });
       }
       syncAllParticipants();
@@ -8559,9 +8773,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       applyPreviewBlurState();
       persistSetupState();
 
-      if (room.state === ConnectionState.Disconnected && disconnectedCameraPreviewEnabled) {
-        disableDisconnectedCameraPreview();
-        void enableDisconnectedCameraPreview().catch((error) => {
+      if (room.state === ConnectionState.Disconnected) {
+        void syncDisconnectedPreviewProcessing().catch((error) => {
           setStatus(safeErrorMessage(error));
         });
         return;
@@ -8589,11 +8802,16 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       previewInvert = previewInvertInput.checked;
       applyPreviewInvertState();
       persistSetupState();
-      syncIdentityPreview();
-      syncAllParticipants();
       if (room.state === ConnectionState.Connected) {
         void syncLocalBackgroundBlurProcessor().catch(() => undefined);
+        syncIdentityPreview();
+        syncAllParticipants();
+        return;
       }
+
+      void syncDisconnectedPreviewProcessing().catch((error) => {
+        setStatus(safeErrorMessage(error));
+      });
     });
   }
 
@@ -8618,6 +8836,10 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
       if (room.state === ConnectionState.Connected) {
         void syncLocalBackgroundBlurProcessor().catch(() => undefined);
+      } else if (room.state === ConnectionState.Disconnected) {
+        void syncDisconnectedPreviewProcessing().catch((error) => {
+          setStatus(safeErrorMessage(error));
+        });
       }
 
       if (shouldRunHandTracking()) {
@@ -8642,6 +8864,11 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
       if (room.state === ConnectionState.Connected) {
         void syncPublishedBallTrack();
+        void syncLocalBackgroundBlurProcessor().catch(() => undefined);
+      } else if (room.state === ConnectionState.Disconnected) {
+        void syncDisconnectedPreviewProcessing().catch((error) => {
+          setStatus(safeErrorMessage(error));
+        });
       }
 
       if (shouldRunHandTracking()) {
@@ -8877,6 +9104,11 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
     if (room.state === ConnectionState.Connected) {
       await syncLocalBackgroundBlurProcessor().catch(() => undefined);
+      return;
+    }
+
+    if (room.state === ConnectionState.Disconnected) {
+      await syncDisconnectedPreviewProcessing().catch(() => undefined);
     }
   };
 

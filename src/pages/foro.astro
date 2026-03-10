@@ -1107,7 +1107,7 @@ if (activeCourse) {
         overflow-x: auto;
       }
 
-      #forum-reader-root .forum-post-body :where(img, video, audio, a[data-forum-media-link='true']) {
+      #forum-reader-root .forum-post-body :where(img, video, audio, a[data-forum-media-link='true'], .mermaid) {
         cursor: zoom-in;
       }
 
@@ -1155,12 +1155,45 @@ if (activeCourse) {
         max-height: 92vh;
       }
 
+      .forum-media-modal-viewport {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 100%;
+        max-width: min(96vw, 92rem);
+        max-height: 88vh;
+        overflow: hidden;
+        cursor: grab;
+        touch-action: none;
+      }
+
+      .forum-media-modal-viewport.is-dragging {
+        cursor: grabbing;
+      }
+
       .forum-media-modal-content img,
       .forum-media-modal-content video {
         display: block;
         max-width: 100%;
         max-height: 88vh;
         width: auto;
+        height: auto;
+        user-select: none;
+        -webkit-user-drag: none;
+        transform-origin: center center;
+        will-change: transform;
+      }
+
+      .forum-media-modal-content .mermaid {
+        display: block;
+        max-width: none;
+        transform-origin: center center;
+        will-change: transform;
+      }
+
+      .forum-media-modal-content .mermaid svg {
+        display: block;
+        max-width: none;
         height: auto;
       }
 
@@ -1906,6 +1939,14 @@ if (activeCourse) {
 
         const extractForumMediaTarget = (target) => {
           if (!(target instanceof Element)) return null;
+          const mermaidEl = target.closest('.forum-post-body .mermaid');
+          if (mermaidEl instanceof HTMLElement) {
+            return {
+              kind: 'diagram',
+              node: mermaidEl.cloneNode(true),
+            };
+          }
+
           const mediaEl = target.closest('.forum-post-body img, .forum-post-body video, .forum-post-body audio, .forum-post-body a[href]');
           if (!mediaEl) return null;
           if (mediaEl instanceof HTMLAnchorElement && !isDirectForumMediaUrl(mediaEl.href)) return null;
@@ -1939,9 +1980,77 @@ if (activeCourse) {
           document.documentElement.style.overflow = '';
         };
 
+        const enableForumMediaZoom = (viewport, target) => {
+          if (!(viewport instanceof HTMLElement) || !(target instanceof HTMLElement)) return;
+
+          let scale = 1;
+          let offsetX = 0;
+          let offsetY = 0;
+          let pointerId = null;
+          let dragOriginX = 0;
+          let dragOriginY = 0;
+          let startOffsetX = 0;
+          let startOffsetY = 0;
+
+          const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+          const applyTransform = () => {
+            if (scale <= 1) {
+              offsetX = 0;
+              offsetY = 0;
+            }
+            target.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+          };
+          const setScale = (nextScale) => {
+            scale = clamp(nextScale, 1, 8);
+            applyTransform();
+          };
+
+          viewport.addEventListener('wheel', (event) => {
+            event.preventDefault();
+            setScale(scale + (event.deltaY < 0 ? 0.24 : -0.24));
+          }, { passive: false });
+
+          target.addEventListener('dblclick', (event) => {
+            event.preventDefault();
+            setScale(scale < 2 ? scale + 1 : 1);
+          });
+
+          viewport.addEventListener('pointerdown', (event) => {
+            if (scale <= 1) return;
+            pointerId = event.pointerId;
+            dragOriginX = event.clientX;
+            dragOriginY = event.clientY;
+            startOffsetX = offsetX;
+            startOffsetY = offsetY;
+            viewport.classList.add('is-dragging');
+            viewport.setPointerCapture(pointerId);
+          });
+
+          viewport.addEventListener('pointermove', (event) => {
+            if (pointerId !== event.pointerId) return;
+            offsetX = startOffsetX + (event.clientX - dragOriginX);
+            offsetY = startOffsetY + (event.clientY - dragOriginY);
+            applyTransform();
+          });
+
+          const stopDragging = (event) => {
+            if (pointerId !== event.pointerId) return;
+            try {
+              viewport.releasePointerCapture(pointerId);
+            } catch {}
+            pointerId = null;
+            viewport.classList.remove('is-dragging');
+          };
+
+          viewport.addEventListener('pointerup', stopDragging);
+          viewport.addEventListener('pointercancel', stopDragging);
+
+          applyTransform();
+        };
+
         const openForumMediaModal = (payload) => {
           if (!(mediaModalEl instanceof HTMLElement) || !(mediaModalContentEl instanceof HTMLElement)) return;
-          if (!payload?.src) return;
+          if (!payload || (!payload.src && payload.kind !== 'diagram')) return;
 
           let node = null;
           if (payload.kind === 'image') {
@@ -1966,6 +2075,8 @@ if (activeCourse) {
             audio.autoplay = true;
             audio.preload = 'metadata';
             node = audio;
+          } else if (payload.kind === 'diagram' && payload.node instanceof HTMLElement) {
+            node = payload.node;
           }
 
           if (!node) return;
@@ -1974,7 +2085,15 @@ if (activeCourse) {
             node.dataset.forumSvg = 'true';
           }
 
-          mediaModalContentEl.replaceChildren(node);
+          if (payload.kind === 'image' || payload.kind === 'video' || payload.kind === 'diagram') {
+            const viewport = document.createElement('div');
+            viewport.className = 'forum-media-modal-viewport';
+            viewport.appendChild(node);
+            mediaModalContentEl.replaceChildren(viewport);
+            enableForumMediaZoom(viewport, node);
+          } else {
+            mediaModalContentEl.replaceChildren(node);
+          }
           activeForumModalMedia = node instanceof HTMLMediaElement ? node : null;
           mediaModalEl.hidden = false;
           mediaModalEl.setAttribute('aria-hidden', 'false');

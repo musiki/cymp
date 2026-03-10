@@ -5,7 +5,7 @@ tags:
 chapter: "Organología I"
 type: "lesson"
 summary: esta es una clase que reune todas las tecnologías de musiki
-theme: moon
+theme: zztt
 order: 3
 ---
 
@@ -21,7 +21,7 @@ order: 3
 - tema2 <br>
 </grid>
 
-<grid drag="-5 10" drop="5 -10" bg="black">
+<grid drag="10 10" drop="1 -14" bg="black">
 ![](https://i.imgur.com/3dKJzNX.png)  
 </grid>
 

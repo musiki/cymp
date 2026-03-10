@@ -17,6 +17,7 @@ import remarkMediaEmbed from '../plugins/remark-media-embed.mjs';
 import remarkWikiLink from '../plugins/remark-wiki-link.mjs';
 import remarkLily from '../plugins/remark-lily.mjs';
 import remarkRemoteLilypond from '../plugins/remark-remote-lilypond.mjs';
+import remarkForumMathMacros from '../plugins/remark-forum-math-macros.mjs';
 
 const forumHighlightAliases = {
   javascript: ['js'],
@@ -38,6 +39,7 @@ function createForumMarkdownProcessor(options: RenderForumMarkdownOptions = {}) 
     .use(remarkGfm)
     .use(slugMathRemark)
     .use(remarkMath)
+    .use(remarkForumMathMacros)
     .use(remarkMermaid)
     .use(remarkWikiLink)
     .use(remarkMediaEmbed);
