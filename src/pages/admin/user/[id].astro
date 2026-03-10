@@ -28,6 +28,9 @@ if (userError || !user) {
   return Astro.redirect('/dashboard');
 }
 
+const normalizedUserRole = String(user.role || '').trim().toLowerCase() === 'teacher' ? 'teacher' : 'student';
+const userShortName = String(user.name || user.email || user.id).trim().split(/\s+/).filter(Boolean)[0] || 'usuario';
+
 // Fetch Enrollments
 const { data: enrollments } = await supabase.from('Enrollment').select('*').eq('userId', id);
 
@@ -249,6 +252,70 @@ const attendanceDayGroups = (() => {
       .avatar { width: 80px; height: 80px; background: var(--c-link); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 2rem; font-weight: bold; }
       .info h1 { margin: 0 0 0.5rem 0; font-size: 1.8rem; }
       .meta { color: var(--c-fg-dim); font-size: 0.9rem; display: flex; gap: 1rem; }
+      .profile-role-tools {
+        margin-left: auto;
+        min-width: 260px;
+        display: grid;
+        gap: 0.6rem;
+        padding: 0.9rem 1rem;
+        border: 1px solid var(--c-border);
+        border-radius: 8px;
+        background: var(--c-bg);
+      }
+      .profile-role-label {
+        font-size: 0.78rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--c-fg-dim);
+      }
+      .profile-role-row {
+        display: flex;
+        gap: 0.55rem;
+        align-items: center;
+      }
+      .profile-role-select {
+        flex: 1 1 auto;
+        min-width: 0;
+        padding: 0.55rem 0.7rem;
+        border: 1px solid var(--c-border);
+        border-radius: 6px;
+        background: var(--c-bg);
+        color: var(--c-fg);
+        font-size: 0.92rem;
+      }
+      .profile-role-save {
+        padding: 0.55rem 0.9rem;
+        border: 1px solid var(--c-border);
+        border-radius: 6px;
+        background: var(--c-bg);
+        color: var(--c-fg);
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .profile-role-save:hover {
+        border-color: var(--c-link);
+        color: var(--c-link);
+      }
+      .profile-role-save:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
+      .profile-role-note {
+        margin: 0;
+        font-size: 0.8rem;
+        color: var(--c-fg-dim);
+      }
+      .profile-role-status {
+        min-height: 1.1rem;
+        font-size: 0.78rem;
+        color: var(--c-fg-dim);
+      }
+      .profile-role-status.is-success {
+        color: #1f8f45;
+      }
+      .profile-role-status.is-error {
+        color: #c62828;
+      }
       .badge { padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; }
       .role-student { background: #e8f5e9; color: #2e7d32; }
       .role-teacher { background: #e3f2fd; color: #1565c0; }
@@ -380,6 +447,16 @@ const attendanceDayGroups = (() => {
       
       .back-link { display: inline-block; margin-bottom: 1rem; color: var(--c-link); text-decoration: none; }
       .back-link:hover { text-decoration: underline; }
+      @media (max-width: 900px) {
+        .profile-header {
+          align-items: flex-start;
+          flex-wrap: wrap;
+        }
+        .profile-role-tools {
+          width: 100%;
+          margin-left: 0;
+        }
+      }
     </style>
   </head>
   <body>
@@ -396,9 +473,29 @@ const attendanceDayGroups = (() => {
           <div class="meta">
             <span>📧 {user.email}</span>
             <span>🆔 {user.id}</span>
-            <span class={`badge role-${user.role}`}>{user.role}</span>
+            <span class={`badge role-${normalizedUserRole}`} data-user-role-badge>{normalizedUserRole}</span>
           </div>
         </div>
+        <section class="profile-role-tools" aria-label="Editar rol del usuario">
+          <span class="profile-role-label">Rol global</span>
+          <div class="profile-role-row">
+            <select class="profile-role-select" data-role-select value={normalizedUserRole}>
+              <option value="student">student</option>
+              <option value="teacher">teacher</option>
+            </select>
+            <button
+              type="button"
+              class="profile-role-save"
+              data-role-save
+              data-user-id={user.id}
+              data-user-label={userShortName}
+            >
+              Guardar
+            </button>
+          </div>
+          <p class="profile-role-note">Teachers pueden promover o degradar otros usuarios desde esta vista.</p>
+          <div class="profile-role-status" data-role-status aria-live="polite"></div>
+        </section>
       </div>
 
       <div class="section">
@@ -791,6 +888,68 @@ const attendanceDayGroups = (() => {
         });
       }
 
+      function initializeRoleEditor() {
+        const select = document.querySelector('[data-role-select]');
+        const button = document.querySelector('[data-role-save]');
+        const status = document.querySelector('[data-role-status]');
+        const badge = document.querySelector('[data-user-role-badge]');
+        if (!(select instanceof HTMLSelectElement) || !(button instanceof HTMLButtonElement) || !(status instanceof HTMLElement)) {
+          return;
+        }
+
+        const setStatus = (message, state = '') => {
+          status.textContent = message;
+          status.classList.remove('is-success', 'is-error');
+          if (state) status.classList.add(state);
+        };
+
+        const syncDirtyState = () => {
+          button.disabled = select.value === select.defaultValue;
+        };
+
+        syncDirtyState();
+        select.addEventListener('change', syncDirtyState);
+
+        button.addEventListener('click', async () => {
+          const userId = String(button.dataset.userId || '').trim();
+          const userLabel = String(button.dataset.userLabel || 'este usuario').trim();
+          const nextRole = String(select.value || '').trim().toLowerCase();
+          if (!userId || !nextRole) return;
+
+          const confirmed = window.confirm(`¿Cambiar el rol de ${userLabel} a "${nextRole}"?`);
+          if (!confirmed) return;
+
+          button.disabled = true;
+          setStatus('Guardando…');
+
+          try {
+            const response = await fetch(`/api/admin/users/${userId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ role: nextRole }),
+            });
+
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              throw new Error(payload?.error || 'No se pudo actualizar el rol');
+            }
+
+            select.defaultValue = nextRole;
+            if (badge) {
+              badge.textContent = nextRole;
+              badge.classList.remove('role-student', 'role-teacher');
+              badge.classList.add(`role-${nextRole}`);
+            }
+            setStatus('Rol actualizado.', 'is-success');
+          } catch (error) {
+            console.error('Error updating user role:', error);
+            setStatus(error?.message || 'No se pudo actualizar el rol.', 'is-error');
+          } finally {
+            syncDirtyState();
+          }
+        });
+      }
+
       const foldScope = 'user-corrections';
       const foldState = { depth: 0, maxLevel: 1 };
 
@@ -881,6 +1040,7 @@ const attendanceDayGroups = (() => {
 
       document.addEventListener('DOMContentLoaded', () => {
         initializeSubmissionQuickEditors();
+        initializeRoleEditor();
         initializeCorrectionsFolding();
         document.addEventListener('keydown', handleFoldShortcuts);
       });
