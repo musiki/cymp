@@ -1164,6 +1164,15 @@ if (activeCourse) {
         height: auto;
       }
 
+      .forum-media-modal-content img[data-forum-svg='true'] {
+        background: #fff;
+      }
+
+      :global(.dark) .forum-media-modal-content img[data-forum-svg='true'] {
+        background: #000;
+        filter: invert(1) hue-rotate(180deg);
+      }
+
       .forum-media-modal-content audio {
         width: min(92vw, 44rem);
         max-width: 100%;
@@ -1961,6 +1970,10 @@ if (activeCourse) {
 
           if (!node) return;
 
+          if (payload.kind === 'image' && /\.svg(?:$|[?#])/i.test(payload.src)) {
+            node.dataset.forumSvg = 'true';
+          }
+
           mediaModalContentEl.replaceChildren(node);
           activeForumModalMedia = node instanceof HTMLMediaElement ? node : null;
           mediaModalEl.hidden = false;
@@ -2154,7 +2167,7 @@ if (activeCourse) {
               + '\\paper { \n'
               + 'tagline = ##f  \n'
               + 'paper-height=#(* 2 cm) \n'
-              + 'paper-width=#(* 20 cm)  \n'
+              + 'paper-width=#(* 10 cm)  \n'
               + 'system-count=#1 }\n\n'
               + '\\score {\n'
               + `\\new Staff \\relative{c'4 ${FORUM_EDITOR_CURSOR_TOKEN}}\n`

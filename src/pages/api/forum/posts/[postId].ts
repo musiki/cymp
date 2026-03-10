@@ -88,6 +88,8 @@ export const PATCH: APIRoute = async ({ request, params, locals }) => {
     return json({ error: 'Not authenticated' }, 401);
   }
 
+  const requestUrl = new URL(request.url);
+  const useRemoteLilypond = cleanString(requestUrl.searchParams.get('renderContext'), 40) === 'course';
   const postId = cleanString(params.postId, 80);
   if (!postId) {
     return json({ error: 'postId is required' }, 400);
@@ -141,7 +143,9 @@ export const PATCH: APIRoute = async ({ request, params, locals }) => {
     const updatedPost = updatedRaw as PostRow;
     let bodyHtml = '';
     try {
-      bodyHtml = await renderForumMarkdown(updatedPost.body || '');
+      bodyHtml = await renderForumMarkdown(updatedPost.body || '', {
+        remoteLilypond: useRemoteLilypond,
+      });
     } catch (renderError) {
       console.error('Forum markdown render error:', renderError);
       bodyHtml = `<p>${escapeHtml(updatedPost.body || '')}</p>`;

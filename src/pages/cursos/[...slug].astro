@@ -1473,9 +1473,21 @@ const forumThreadPrompt = sessionFirstName
         margin-bottom: 0;
       }
 
-      .forum-post-body :where(p, ul, ol, pre, blockquote, table, .callout, .mermaid, .katex-display, .lily-score) {
+      .forum-post-body :where(p, ul, ol, pre, blockquote, table, .callout, .mermaid, .katex-display, .lily-score, .lilypond-block) {
         margin: 0 0 0.7rem 0;
         max-width: 100%;
+      }
+
+      .forum-post-body .lilypond-block {
+        display: block;
+        overflow-x: auto;
+      }
+
+      .forum-post-body .lilypond-block img {
+        display: block;
+        width: 200%;
+        max-width: none;
+        height: auto;
       }
 
       .forum-post-body pre {
@@ -1595,6 +1607,11 @@ const forumThreadPrompt = sessionFirstName
 
       .forum-media-modal-content img[data-forum-svg='true'] {
         background: #fff;
+      }
+
+      :global(.dark) .forum-media-modal-content img[data-forum-svg='true'] {
+        background: #000;
+        filter: invert(1) hue-rotate(180deg);
       }
 
       .forum-media-modal-content audio {
@@ -5348,7 +5365,7 @@ const forumThreadPrompt = sessionFirstName
               + '\\paper { \n'
               + 'tagline = ##f  \n'
               + 'paper-height=#(* 2 cm) \n'
-              + 'paper-width=#(* 20 cm)  \n'
+              + 'paper-width=#(* 10 cm)  \n'
               + 'system-count=#1 }\n\n'
               + '\\score {\n'
               + `\\new Staff \\relative{c'4 ${FORUM_EDITOR_CURSOR_TOKEN}}\n`
@@ -6488,7 +6505,7 @@ a[node] -->|edge| b[hub]
                     if (cancelEditButton) cancelEditButton.disabled = true;
 
                     try {
-                      const response = await fetch(`/api/forum/posts/${encodeURIComponent(post.id)}`, {
+                      const response = await fetch(`/api/forum/posts/${encodeURIComponent(post.id)}?renderContext=course`, {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -6592,7 +6609,7 @@ a[node] -->|edge| b[hub]
 
           const requestToken = ++latestPostRequestToken;
           try {
-            const response = await fetch(`/api/forum/threads/${encodeURIComponent(threadId)}/posts`);
+            const response = await fetch(`/api/forum/threads/${encodeURIComponent(threadId)}/posts?renderContext=course`);
             const payload = await response.json().catch(() => ({}));
 
             if (requestToken !== latestPostRequestToken) return;
@@ -6957,7 +6974,7 @@ a[node] -->|edge| b[hub]
 
           try {
             const response = await fetch(
-              `/api/forum/threads/${encodeURIComponent(forumState.selectedThreadId)}/posts`,
+              `/api/forum/threads/${encodeURIComponent(forumState.selectedThreadId)}/posts?renderContext=course`,
               {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

@@ -160,12 +160,14 @@ async function getThreadOrNull(supabase: SupabaseClient, threadId: string): Prom
   return thread as ThreadRow;
 }
 
-export const GET: APIRoute = async ({ params, locals }) => {
+export const GET: APIRoute = async ({ params, locals, request }) => {
   const session = (locals as any).session;
   if (!session?.user?.email) {
     return json({ error: 'Not authenticated' }, 401);
   }
 
+  const requestUrl = new URL(request.url);
+  const useRemoteLilypond = cleanString(requestUrl.searchParams.get('renderContext'), 40) === 'course';
   const threadId = cleanString(params.threadId, 80);
   if (!threadId) {
     return json({ error: 'threadId is required' }, 400);
@@ -215,7 +217,9 @@ export const GET: APIRoute = async ({ params, locals }) => {
         const canModerate = access.isTeacher || isAuthor;
 
         try {
-          bodyHtml = await renderForumMarkdown(post.body || '');
+          bodyHtml = await renderForumMarkdown(post.body || '', {
+            remoteLilypond: useRemoteLilypond,
+          });
         } catch (renderError) {
           console.error('Forum markdown render error:', renderError);
           bodyHtml = `<p>${escapeHtml(post.body || '')}</p>`;
@@ -275,6 +279,8 @@ export const POST: APIRoute = async ({ request, params, locals }) => {
     return json({ error: 'Not authenticated' }, 401);
   }
 
+  const requestUrl = new URL(request.url);
+  const useRemoteLilypond = cleanString(requestUrl.searchParams.get('renderContext'), 40) === 'course';
   const threadId = cleanString(params.threadId, 80);
   if (!threadId) {
     return json({ error: 'threadId is required' }, 400);
@@ -358,7 +364,9 @@ export const POST: APIRoute = async ({ request, params, locals }) => {
 
     let bodyHtml = '';
     try {
-      bodyHtml = await renderForumMarkdown((insertedPost as PostRow).body || '');
+      bodyHtml = await renderForumMarkdown((insertedPost as PostRow).body || '', {
+        remoteLilypond: useRemoteLilypond,
+      });
     } catch (renderError) {
       console.error('Forum markdown render error:', renderError);
       bodyHtml = `<p>${escapeHtml((insertedPost as PostRow).body || '')}</p>`;

@@ -9586,12 +9586,6 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
     const plainKey = String(event.key || '').toLowerCase();
 
-    if (plainKey === 'g') {
-      event.preventDefault();
-      executeRoomShortcutCommand('toggle-graph');
-      return;
-    }
-
     if (plainKey === 'h') {
       event.preventDefault();
       executeRoomShortcutCommand('toggle-hand');
