@@ -173,13 +173,35 @@
         
         return `
           <li>
-            <a href="${item.slug}">
+            <a href="${item.slug}" data-title="${String(item.title || '').replace(/"/g, '&quot;')}">
               <h3>${item.title}${dvBullet} <small style="opacity:0.5; font-size:0.8em">(${item.type})</small></h3>
               <p>${snippet}</p>
             </a>
           </li>
         `;
       }).join('');
+    };
+
+    resultsContainer.onclick = async (e) => {
+      const link = e.target.closest('a');
+      if (!link) return;
+      const handler = window.handleSearchNavigation;
+      if (typeof handler !== 'function') return;
+
+      e.preventDefault();
+
+      try {
+        const handled = await handler({
+          href: link.getAttribute('href') || '',
+          title: link.getAttribute('data-title') || '',
+        });
+
+        if (handled !== false) {
+          window.closeSearch();
+        }
+      } catch (error) {
+        console.error('Room search navigation failed', error);
+      }
     };
   }
 

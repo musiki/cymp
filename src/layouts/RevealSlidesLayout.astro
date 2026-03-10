@@ -488,6 +488,10 @@ const resolvedSlideTheme =
         touch-action: pan-x pan-y;
       }
 
+      .slides-zoom-shell[data-pointer-mode='true'] {
+        cursor: crosshair;
+      }
+
       .slides-zoom-shell > .reveal {
         position: absolute;
         inset: 0;
@@ -507,6 +511,15 @@ const resolvedSlideTheme =
         padding-top: calc(var(--slides-extra-height) * 0.5);
         padding-bottom: calc(var(--slides-extra-height) * 0.5 + 1.5rem);
         box-sizing: border-box;
+      }
+
+      .slides-pointer-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 10008;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
       }
 
       body.slides-fallback {
@@ -552,6 +565,7 @@ const resolvedSlideTheme =
         <div class="slides" id="slides-root"></div>
       </div>
     </div>
+    <canvas class="slides-pointer-overlay" id="slides-pointer-overlay" aria-hidden="true"></canvas>
 
     <script>
       import Reveal from 'reveal.js';
@@ -568,6 +582,7 @@ const resolvedSlideTheme =
         const source = document.getElementById('slides-source');
         const slidesRoot = document.getElementById('slides-root');
         const zoomShell = document.getElementById('slides-zoom-shell');
+        const pointerCanvas = document.getElementById('slides-pointer-overlay');
         const backBtn = document.getElementById('slides-back-btn');
         const speakerBtn = document.getElementById('slides-speaker-btn');
         const fsBtn = document.getElementById('slides-fs-btn');
@@ -609,6 +624,130 @@ const resolvedSlideTheme =
 
         let pinchStartDistance = 0;
         let pinchStartZoom = slidesZoom;
+        let pointerMode = false;
+        let pointerAnimationFrame = 0;
+        let pointerPointerDown = false;
+        let pointerTrail = [];
+        let pointerMarks = [];
+        let pointerCanvasContext = null;
+
+        const postParentMessage = (payload) => {
+          if (window.parent === window) return;
+          window.parent.postMessage(payload, window.location.origin);
+        };
+
+        const postRoomCommand = (command, detail = {}) => {
+          postParentMessage({
+            type: 'musiki:room-command',
+            command,
+            ...detail,
+          });
+        };
+
+        const shouldIgnoreRevealShortcutTarget = (target) =>
+          target instanceof HTMLElement &&
+          Boolean(target.closest('input, textarea, select, button, [contenteditable="true"]'));
+
+        const syncPointerModeUi = () => {
+          zoomShell.dataset.pointerMode = pointerMode ? 'true' : 'false';
+        };
+
+        const resizePointerCanvas = () => {
+          if (!(pointerCanvas instanceof HTMLCanvasElement)) return;
+          const dpr = Math.max(1, window.devicePixelRatio || 1);
+          const nextWidth = Math.max(2, Math.round(window.innerWidth * dpr));
+          const nextHeight = Math.max(2, Math.round(window.innerHeight * dpr));
+          if (pointerCanvas.width !== nextWidth || pointerCanvas.height !== nextHeight) {
+            pointerCanvas.width = nextWidth;
+            pointerCanvas.height = nextHeight;
+          }
+          pointerCanvas.style.width = `${window.innerWidth}px`;
+          pointerCanvas.style.height = `${window.innerHeight}px`;
+          if (!pointerCanvasContext) {
+            pointerCanvasContext = pointerCanvas.getContext('2d');
+          }
+          if (pointerCanvasContext) {
+            pointerCanvasContext.setTransform(1, 0, 0, 1, 0, 0);
+            pointerCanvasContext.scale(dpr, dpr);
+          }
+        };
+
+        const queuePointerRender = () => {
+          if (pointerAnimationFrame) return;
+          pointerAnimationFrame = window.requestAnimationFrame(() => {
+            pointerAnimationFrame = 0;
+            if (!pointerCanvasContext) return;
+            resizePointerCanvas();
+            const now = performance.now();
+            const trailLifetime = 500;
+            const markLifetime = 1200;
+            pointerTrail = pointerTrail.filter((point) => now - point.t <= trailLifetime);
+            pointerMarks = pointerMarks.filter((mark) => now - mark.t <= markLifetime);
+
+            pointerCanvasContext.clearRect(0, 0, window.innerWidth, window.innerHeight);
+
+            if (pointerTrail.length > 1) {
+              for (let index = 1; index < pointerTrail.length; index += 1) {
+                const previous = pointerTrail[index - 1];
+                const current = pointerTrail[index];
+                const alpha = Math.max(0, 1 - (now - current.t) / trailLifetime);
+                pointerCanvasContext.strokeStyle = `rgba(255, 64, 64, ${alpha * 0.95})`;
+                pointerCanvasContext.lineWidth = 3;
+                pointerCanvasContext.lineCap = 'round';
+                pointerCanvasContext.lineJoin = 'round';
+                pointerCanvasContext.shadowColor = `rgba(255, 72, 72, ${alpha})`;
+                pointerCanvasContext.shadowBlur = 18;
+                pointerCanvasContext.beginPath();
+                pointerCanvasContext.moveTo(previous.x, previous.y);
+                pointerCanvasContext.lineTo(current.x, current.y);
+                pointerCanvasContext.stroke();
+              }
+            }
+
+            pointerMarks.forEach((mark) => {
+              const alpha = Math.max(0, 1 - (now - mark.t) / markLifetime);
+              pointerCanvasContext.fillStyle = `rgba(255, 52, 52, ${alpha * 0.92})`;
+              pointerCanvasContext.strokeStyle = `rgba(255, 0, 0, ${alpha})`;
+              pointerCanvasContext.lineWidth = 1.5;
+              pointerCanvasContext.shadowColor = `rgba(255, 64, 64, ${alpha})`;
+              pointerCanvasContext.shadowBlur = 12;
+              pointerCanvasContext.beginPath();
+              pointerCanvasContext.arc(mark.x, mark.y, mark.r, 0, Math.PI * 2);
+              pointerCanvasContext.fill();
+              pointerCanvasContext.stroke();
+            });
+
+            if (pointerTrail.length || pointerMarks.length) {
+              queuePointerRender();
+            }
+          });
+        };
+
+        const pushPointerTrail = (x, y) => {
+          pointerTrail.push({ t: performance.now(), x, y });
+          if (pointerTrail.length > 40) {
+            pointerTrail = pointerTrail.slice(-40);
+          }
+          queuePointerRender();
+        };
+
+        const pushPointerMark = (x, y) => {
+          pointerMarks.push({ r: 6, t: performance.now(), x, y });
+          queuePointerRender();
+        };
+
+        const extractPointerPosition = (event) => {
+          if (event.touches?.length) {
+            return { x: event.touches[0].clientX, y: event.touches[0].clientY };
+          }
+          if (event.changedTouches?.length) {
+            return { x: event.changedTouches[0].clientX, y: event.changedTouches[0].clientY };
+          }
+          if (typeof event.clientX === 'number' && typeof event.clientY === 'number') {
+            return { x: event.clientX, y: event.clientY };
+          }
+          return null;
+        };
 
         const persistSlidesZoom = () => {
           try {
@@ -2709,12 +2848,15 @@ const resolvedSlideTheme =
 
         document.addEventListener('fullscreenchange', setFsButtonLabel);
         setFsButtonLabel();
+        resizePointerCanvas();
+        syncPointerModeUi();
 
         const deck = new Reveal({
           hash: true,
           controls: true,
           progress: true,
           center: true,
+          jumpToSlide: true,
           slideNumber: 'c/t',
           transition: 'slide',
           plugins: [
@@ -2776,6 +2918,11 @@ const resolvedSlideTheme =
 
           if (type === 'musiki:reveal-reset-zoom') {
             setSlidesZoom(1);
+            return;
+          }
+
+          if (type === 'musiki:reveal-toggle-jump-to-slide') {
+            deck.toggleJumpToSlide?.();
             return;
           }
 
@@ -2972,7 +3119,176 @@ const resolvedSlideTheme =
           openSpeakerView();
         });
 
+        zoomShell.addEventListener('pointermove', (event) => {
+          if (!pointerMode) return;
+          pushPointerTrail(event.clientX, event.clientY);
+          if (pointerPointerDown) {
+            pushPointerMark(event.clientX, event.clientY);
+          }
+        });
+
+        zoomShell.addEventListener('pointerdown', (event) => {
+          if (!pointerMode) return;
+          pointerPointerDown = true;
+          pushPointerTrail(event.clientX, event.clientY);
+          pushPointerMark(event.clientX, event.clientY);
+        });
+
+        zoomShell.addEventListener('pointerup', () => {
+          pointerPointerDown = false;
+        });
+
+        zoomShell.addEventListener('pointerleave', () => {
+          pointerPointerDown = false;
+        });
+
+        zoomShell.addEventListener('touchmove', (event) => {
+          if (!pointerMode || event.touches.length !== 1) return;
+          const point = extractPointerPosition(event);
+          if (!point) return;
+          pushPointerTrail(point.x, point.y);
+        }, { passive: true });
+
+        zoomShell.addEventListener('touchstart', (event) => {
+          if (!pointerMode || event.touches.length !== 1) return;
+          const point = extractPointerPosition(event);
+          if (!point) return;
+          pushPointerTrail(point.x, point.y);
+          pushPointerMark(point.x, point.y);
+        }, { passive: true });
+
         document.addEventListener('keydown', (event) => {
+          const key = String(event.key || '').toLowerCase();
+
+          if ((event.metaKey || event.ctrlKey) && !event.altKey && event.code === 'Backslash') {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            window.parent.postMessage(
+              { type: event.shiftKey ? 'musiki:reveal-toggle-sidebar-right' : 'musiki:reveal-toggle-sidebar-left' },
+              window.location.origin,
+            );
+            return;
+          }
+
+          if (shouldIgnoreRevealShortcutTarget(event.target)) return;
+
+          if ((event.ctrlKey || event.metaKey) && event.altKey && !event.shiftKey) {
+            if (key === 'g') {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              deck.toggleJumpToSlide?.();
+              return;
+            }
+
+            if (['1', '2', '3', '4', '5', '6', '7', 'c', 'm', 'n', 'r', 's', 't', 'v', 'y'].includes(key)) {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              const commandMap = {
+                '1': 'layout-full',
+                '2': 'layout-share',
+                '3': 'layout-presentation',
+                '4': 'layout-grid',
+                '5': 'toggle-circle',
+                '6': 'toggle-invert-video',
+                '7': 'open-delegate-session',
+                c: 'focus-chat',
+                m: 'mute-all',
+                n: 'cycle-camera',
+                r: 'toggle-record',
+                s: 'share-screen',
+                t: 'stage-screenshot',
+                v: 'toggle-camera',
+                y: 'toggle-hand',
+              };
+              postRoomCommand(commandMap[key]);
+              return;
+            }
+          }
+
+          if (event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+            const reactionMap = {
+              Digit4: 'reaction:clap',
+              Digit5: 'reaction:thumbsup',
+              Digit6: 'reaction:heart',
+              Digit7: 'reaction:joy',
+              Digit8: 'reaction:wow',
+              Digit9: 'reaction:tada',
+            };
+            const reactionCommand = reactionMap[event.code];
+            if (reactionCommand) {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              postRoomCommand(reactionCommand);
+              return;
+            }
+          }
+
+          if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey) {
+            if (key === 'f' || key === 'i' || key === 'n' || key === 'v') {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              const commandMap = {
+                f: 'toggle-fullscreen',
+                i: 'copy-invite-link',
+                n: 'cycle-camera',
+                v: 'toggle-camera',
+              };
+              postRoomCommand(commandMap[key]);
+              return;
+            }
+          }
+
+          if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && key === 'j') {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            postRoomCommand('toggle-connect');
+            return;
+          }
+
+          if (!event.metaKey && !event.ctrlKey && !event.altKey) {
+            if (key === 'g') {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              postRoomCommand('toggle-graph');
+              return;
+            }
+
+            if (key === 'h') {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              postRoomCommand('toggle-hand');
+              return;
+            }
+
+            if (key === 'p') {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              pointerMode = !pointerMode;
+              pointerPointerDown = false;
+              if (!pointerMode) {
+                pointerTrail = [];
+                pointerMarks = [];
+                queuePointerRender();
+              }
+              syncPointerModeUi();
+              return;
+            }
+
+            if (event.key === ' ' || event.code === 'Space') {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              postRoomCommand('hold-mic-start');
+              return;
+            }
+          }
+
+          if (event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && event.key === '?') {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            postRoomCommand('open-search');
+            return;
+          }
+
           if (isSpeakerShortcut(event)) {
             if (event.defaultPrevented) return;
             event.preventDefault();
@@ -3012,6 +3328,19 @@ const resolvedSlideTheme =
             event.preventDefault();
             goToNote();
           }
+        }, true);
+
+        document.addEventListener('keyup', (event) => {
+          if (shouldIgnoreRevealShortcutTarget(event.target)) return;
+          if (event.metaKey || event.ctrlKey || event.altKey) return;
+          if (event.key !== ' ' && event.code !== 'Space') return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          postRoomCommand('hold-mic-end');
+        }, true);
+
+        window.addEventListener('blur', () => {
+          postRoomCommand('hold-mic-end');
         });
       })();
     </script>

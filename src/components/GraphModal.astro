@@ -61,18 +61,27 @@ const currentSlug = Astro.url.pathname.replace(/^\//, '').replace(/\/$/, '');
   }
 
   // Show/hide modal
-  function toggleModal() {
+  async function setModalOpen(open, source = 'local') {
     const modal = document.getElementById('graph-modal');
-    const isVisible = modal.classList.contains('visible');
-    
-    if (isVisible) {
-      modal.classList.remove('visible');
-    } else {
-      modal.classList.add('visible');
-      if (!graphInstance) {
-        renderGraph();
-      }
+    if (!modal) return;
+
+    if (open && !graphInstance) {
+      await renderGraph();
     }
+
+    modal.classList.toggle('visible', open);
+    modal.classList.toggle('hidden', !open);
+    modal.dataset.open = open ? 'true' : 'false';
+
+    window.dispatchEvent(new CustomEvent('graph:statechange', {
+      detail: { open, source },
+    }));
+  }
+
+  function toggleModal(source = 'local') {
+    const modal = document.getElementById('graph-modal');
+    const isVisible = modal?.classList.contains('visible');
+    void setModalOpen(!isVisible, source);
   }
 
   // Get current theme colors
@@ -316,6 +325,7 @@ const currentSlug = Astro.url.pathname.replace(/^\//, '').replace(/\/$/, '');
   }
 
   const handleGraphShortcut = (e) => {
+    if (e.defaultPrevented) return;
     // Only trigger if not typing in an input field
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
     
@@ -331,19 +341,37 @@ const currentSlug = Astro.url.pathname.replace(/^\//, '').replace(/\/$/, '');
   };
 
   const handleGraphToggleRequest = () => {
-    toggleModal();
+    toggleModal('remote-toggle');
+  };
+
+  const handleGraphSetRequest = (event) => {
+    const nextOpen = Boolean(event?.detail?.open);
+    void setModalOpen(nextOpen, event?.detail?.source || 'remote');
+  };
+
+  const handleGraphOpenRequest = () => {
+    void setModalOpen(true, 'remote');
+  };
+
+  const handleGraphCloseRequest = () => {
+    void setModalOpen(false, 'remote');
   };
 
   // Event listeners
   document.addEventListener('keydown', handleGraphShortcut);
   window.addEventListener('graph:toggle', handleGraphToggleRequest);
+  window.addEventListener('graph:set', handleGraphSetRequest);
+  window.addEventListener('graph:open', handleGraphOpenRequest);
+  window.addEventListener('graph:close', handleGraphCloseRequest);
 
-  document.getElementById('graph-close')?.addEventListener('click', toggleModal);
+  document.getElementById('graph-close')?.addEventListener('click', () => {
+    void setModalOpen(false, 'local');
+  });
   document.getElementById('graph-center')?.addEventListener('click', centerOnCurrent);
   
   document.getElementById('graph-modal')?.addEventListener('click', (e) => {
     if (e.target.id === 'graph-modal') {
-      toggleModal();
+      void setModalOpen(false, 'local');
     }
   });
 
@@ -352,6 +380,9 @@ const currentSlug = Astro.url.pathname.replace(/^\//, '').replace(/\/$/, '');
     () => {
       document.removeEventListener('keydown', handleGraphShortcut);
       window.removeEventListener('graph:toggle', handleGraphToggleRequest);
+      window.removeEventListener('graph:set', handleGraphSetRequest);
+      window.removeEventListener('graph:open', handleGraphOpenRequest);
+      window.removeEventListener('graph:close', handleGraphCloseRequest);
     },
     { once: true }
   );

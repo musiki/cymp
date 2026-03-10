@@ -3,6 +3,8 @@ export const prerender = false;
 
 import BaseHead from '../components/BaseHead.astro';
 import ConferenceLayout from '../components/ConferenceLayout.astro';
+import GraphModal from '../components/GraphModal.astro';
+import Search from '../components/Search.astro';
 import { resolveLiveParticipantRole } from '../lib/live/access';
 import { listRoomPresentationOptions } from '../lib/live/presentation-options';
 import { canonicalizeCourseId } from '../lib/course-alias';
@@ -60,5 +62,7 @@ const presentationOptions = await listRoomPresentationOptions({
         presentationOptions={presentationOptions}
       />
     </main>
+    <Search />
+    <GraphModal />
   </body>
 </html>

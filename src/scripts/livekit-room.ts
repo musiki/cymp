@@ -18,6 +18,7 @@ import { createPresentationController } from './presentation';
 
 type Participant = LocalParticipant | RemoteParticipant;
 type ParticipantRole = 'teacher' | 'student';
+type ReactionKind = 'clap' | 'heart' | 'joy' | 'tada' | 'thumbsup' | 'wow';
 type SlideState = {
   indexf: number;
   indexh: number;
@@ -29,6 +30,10 @@ type ConferenceMessage =
   | {
       type: 'layout';
       layout: LayoutMode;
+    }
+  | {
+      type: 'graph';
+      open: boolean;
     }
   | {
       type: 'session-control';
@@ -58,6 +63,15 @@ type ConferenceMessage =
     }
   | {
       type: 'mute-all';
+    }
+  | {
+      id: string;
+      identity: string;
+      name: string;
+      reaction: ReactionKind;
+      role: ParticipantRole;
+      sentAt: string;
+      type: 'reaction';
     }
   | ({
       type: 'slide-state';
@@ -266,6 +280,26 @@ type RecordingPresetConfig = {
 };
 
 const MESSAGE_TOPIC = 'conference-ui';
+const REACTION_SHORTCUTS_BY_CODE: Record<string, ReactionKind> = {
+  Digit4: 'clap',
+  Digit5: 'thumbsup',
+  Digit6: 'heart',
+  Digit7: 'joy',
+  Digit8: 'wow',
+  Digit9: 'tada',
+};
+const REACTION_EMOJIS: Record<ReactionKind, string> = {
+  clap: '👏',
+  heart: '❤️',
+  joy: '😂',
+  tada: '🎉',
+  thumbsup: '👍',
+  wow: '😮',
+};
+const GRAVITY_BALL_LUNAR_MS2 = 1.62;
+const GRAVITY_BALL_EARTH_MS2 = 9.8;
+const GRAVITY_BALL_HEAVY_MS2 = 14.7;
+const GRAVITY_BALL_SIM_EARTH = 0.35;
 const RECORDING_PRESET_CONFIGS: Record<RecordingPresetKey, RecordingPresetConfig> = {
   'instagram-story': {
     height: 1920,
@@ -1951,8 +1985,32 @@ const drawStylizedHandOverlay = (
   context.restore();
 };
 
-const normalizeGravityBallGravity = (value: unknown, fallback = 0.35) =>
-  clampNumber(value, 0, 1.5, fallback, 2);
+const normalizeGravityBallGravity = (value: unknown, fallback = GRAVITY_BALL_EARTH_MS2) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return clampNumber(fallback, GRAVITY_BALL_LUNAR_MS2, GRAVITY_BALL_HEAVY_MS2, GRAVITY_BALL_EARTH_MS2, 2);
+  }
+
+  // Backward compatibility for old persisted normalized values like 0.35.
+  if (parsed > 0 && parsed <= 1.5) {
+    const converted = (parsed / GRAVITY_BALL_SIM_EARTH) * GRAVITY_BALL_EARTH_MS2;
+    return clampNumber(
+      converted,
+      GRAVITY_BALL_LUNAR_MS2,
+      GRAVITY_BALL_HEAVY_MS2,
+      GRAVITY_BALL_EARTH_MS2,
+      2,
+    );
+  }
+
+  return clampNumber(
+    parsed,
+    GRAVITY_BALL_LUNAR_MS2,
+    GRAVITY_BALL_HEAVY_MS2,
+    clampNumber(fallback, GRAVITY_BALL_LUNAR_MS2, GRAVITY_BALL_HEAVY_MS2, GRAVITY_BALL_EARTH_MS2, 2),
+    2,
+  );
+};
 
 const createGravityBallMesh = () => {
   const latitudeSegments = 9;
@@ -2024,6 +2082,9 @@ const createGravityBallMesh = () => {
 };
 
 class GravityBallFoley {
+  private airBandpassNode: BiquadFilterNode | null = null;
+  private airGainNode: GainNode | null = null;
+  private airNoiseSource: AudioBufferSourceNode | null = null;
   private channelAnalyser: AnalyserNode | null = null;
   private channelMeterData: Uint8Array | null = null;
   private channelGain = 1;
@@ -2032,15 +2093,13 @@ class GravityBallFoley {
   private channelPanNode: StereoPannerNode | null = null;
   private context: AudioContext | null = null;
   private initPromise: Promise<void> | null = null;
-  private listener: InstanceType<ThreeModule['AudioListener']> | null = null;
   private lastImpactAt = 0;
   private outputNode: AudioNode | null = null;
   private outputDestination: MediaStreamAudioDestinationNode | null = null;
-  private soundNode: InstanceType<ThreeModule['PositionalAudio']> | null = null;
-  private soundObject: InstanceType<ThreeModule['Object3D']> | null = null;
+  private spatialPannerNode: PannerNode | null = null;
 
   private async ensureReady() {
-    if (this.context && this.listener && this.soundNode && this.soundObject && this.outputNode) {
+    if (this.context && this.spatialPannerNode && this.outputNode) {
       return;
     }
 
@@ -2050,47 +2109,73 @@ class GravityBallFoley {
     }
 
     this.initPromise = (async () => {
-      const THREE = await loadThreeModule();
-      const listener = new THREE.AudioListener();
-      const soundObject = new THREE.Object3D();
-      const soundNode = new THREE.PositionalAudio(listener);
-      const channelPanNode = listener.context.createStereoPanner();
-      const channelGainNode = listener.context.createGain();
-      const channelAnalyser = listener.context.createAnalyser();
-      const outputDestination = listener.context.createMediaStreamDestination();
+      const AudioContextCtor =
+        window.AudioContext ||
+        (window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext })
+          .webkitAudioContext;
+      if (!AudioContextCtor) {
+        throw new Error('AudioContext is not available in this browser.');
+      }
 
-      soundNode.setRefDistance(0.85);
-      soundNode.setRolloffFactor(1.6);
-      soundNode.setDistanceModel('inverse');
-      soundNode.setMaxDistance(8);
-      soundNode.setDirectionalCone(360, 360, 1);
+      const context = new AudioContextCtor({ sampleRate: 48_000 });
+      const spatialPannerNode = new PannerNode(context, {
+        coneInnerAngle: 360,
+        coneOuterAngle: 360,
+        coneOuterGain: 1,
+        distanceModel: 'inverse',
+        maxDistance: 8,
+        panningModel: 'HRTF',
+        positionX: 0,
+        positionY: 0,
+        positionZ: 0,
+        refDistance: 0.85,
+        rolloffFactor: 1.6,
+      });
+      const channelPanNode = context.createStereoPanner();
+      const channelGainNode = context.createGain();
+      const channelAnalyser = context.createAnalyser();
+      const outputDestination = context.createMediaStreamDestination();
+      const airBandpassNode = context.createBiquadFilter();
+      const airGainNode = context.createGain();
 
-      soundObject.add(soundNode);
-      listener.position.set(0, 0, 2.35);
-      listener.updateMatrixWorld(true);
-      soundObject.position.set(0, 0, 0);
-      soundObject.updateMatrixWorld(true);
-      soundNode.updateMatrixWorld(true);
-      soundNode.gain.disconnect(listener.getInput());
-      soundNode.gain.connect(channelPanNode);
+      const noiseBuffer = context.createBuffer(1, context.sampleRate * 2, context.sampleRate);
+      const noiseData = noiseBuffer.getChannelData(0);
+      for (let index = 0; index < noiseData.length; index += 1) {
+        noiseData[index] = (Math.random() * 2 - 1) * 0.22;
+      }
+      const airNoiseSource = context.createBufferSource();
+      airNoiseSource.buffer = noiseBuffer;
+      airNoiseSource.loop = true;
+
+      airBandpassNode.type = 'bandpass';
+      airBandpassNode.frequency.value = 900;
+      airBandpassNode.Q.value = 2.4;
+      airGainNode.gain.value = 0.00001;
+
+      airNoiseSource.connect(airBandpassNode);
+      airBandpassNode.connect(airGainNode);
+      airGainNode.connect(spatialPannerNode);
+      spatialPannerNode.connect(channelPanNode);
       channelPanNode.connect(channelGainNode);
       channelGainNode.connect(channelAnalyser);
-      channelAnalyser.connect(listener.getInput());
+      channelAnalyser.connect(context.destination);
       channelAnalyser.connect(outputDestination);
       channelAnalyser.fftSize = 256;
       channelPanNode.pan.value = this.channelPan;
       channelGainNode.gain.value = this.channelGain;
 
-      this.listener = listener;
-      this.soundObject = soundObject;
-      this.soundNode = soundNode;
+      this.spatialPannerNode = spatialPannerNode;
+      this.airBandpassNode = airBandpassNode;
+      this.airGainNode = airGainNode;
+      this.airNoiseSource = airNoiseSource;
       this.channelPanNode = channelPanNode;
       this.channelGainNode = channelGainNode;
       this.channelAnalyser = channelAnalyser;
       this.channelMeterData = new Uint8Array(channelAnalyser.fftSize);
-      this.context = listener.context;
-      this.outputNode = soundNode.getOutput();
+      this.context = context;
+      this.outputNode = spatialPannerNode;
       this.outputDestination = outputDestination;
+      airNoiseSource.start();
     })().finally(() => {
       this.initPromise = null;
     });
@@ -2106,17 +2191,37 @@ class GravityBallFoley {
   }
 
   private updatePosition(xNorm: number, yNorm: number, zNorm: number) {
-    if (!this.soundObject || !this.soundNode) return;
+    if (!this.spatialPannerNode) return;
     const x = (clamp01(xNorm) - 0.5) * 2.6;
     const y = (0.5 - clamp01(yNorm)) * 1.8;
     const z = clampNumber(zNorm, -1, 1, 0, 3) * 2.8;
-
-    this.soundObject.position.set(x, y, z);
-    this.soundObject.updateMatrixWorld(true);
-    this.soundNode.updateMatrixWorld(true);
+    const context = this.context;
+    if (!context) return;
+    this.spatialPannerNode.positionX.setValueAtTime(x, context.currentTime);
+    this.spatialPannerNode.positionY.setValueAtTime(y, context.currentTime);
+    this.spatialPannerNode.positionZ.setValueAtTime(z, context.currentTime);
   }
 
-  async playBounce(intensity: number, xNorm: number, yNorm: number, zNorm: number) {
+  setMotion(speedNorm: number) {
+    const context = this.context;
+    if (!context || !this.airGainNode || !this.airBandpassNode) return;
+    const speed = clampNumber(speedNorm, 0, 1.4, 0, 3);
+    const gain = speed <= 0.04 ? 0.00001 : Math.min(0.055, Math.pow(speed, 1.5) * 0.026);
+    const frequency = lerp(950, 3600, clamp01(speed));
+    const q = lerp(2.4, 7.2, clamp01(speed));
+    this.airGainNode.gain.setTargetAtTime(gain, context.currentTime, 0.08);
+    this.airBandpassNode.frequency.setTargetAtTime(frequency, context.currentTime, 0.09);
+    this.airBandpassNode.Q.setTargetAtTime(q, context.currentTime, 0.1);
+  }
+
+  async playBounce(
+    intensity: number,
+    xNorm: number,
+    yNorm: number,
+    zNorm: number,
+    impactSpeed = intensity,
+    tangentialSpeed = 0,
+  ) {
     const now = performance.now();
     const clampedIntensity = clamp01(intensity);
     if (clampedIntensity < 0.05 || now - this.lastImpactAt < 28) {
@@ -2132,55 +2237,85 @@ class GravityBallFoley {
     const context = this.context;
     const startAt = context.currentTime + 0.002;
     const duration = 0.14 + clampedIntensity * 0.14;
-    const baseFrequency = 38 + clampedIntensity * 32;
-    const endFrequency = 8 + clampedIntensity * 6;
-    const gainValue = (0.045 + clampedIntensity * 0.16) * 1.3;
+    const impactNorm = clamp01(impactSpeed);
+    const tangentialNorm = clamp01(tangentialSpeed);
+    const baseFrequency = lerp(24, 112, impactNorm) + tangentialNorm * 18;
+    const endFrequency = lerp(7, 18, impactNorm * 0.82);
+    const gainValue = (0.045 + clampedIntensity * 0.16) * 2.6;
 
     const oscillator = context.createOscillator();
+    const subOscillator = context.createOscillator();
     const clickOscillator = context.createOscillator();
     const gainNode = context.createGain();
+    const subGainNode = context.createGain();
     const clickGainNode = context.createGain();
     const lowpass = context.createBiquadFilter();
+    const subLowpass = context.createBiquadFilter();
 
     oscillator.type = 'sine';
     oscillator.frequency.setValueAtTime(baseFrequency, startAt);
     oscillator.frequency.exponentialRampToValueAtTime(endFrequency, startAt + duration);
 
     clickOscillator.type = 'triangle';
-    clickOscillator.frequency.setValueAtTime(baseFrequency * 1.18, startAt);
-    clickOscillator.frequency.exponentialRampToValueAtTime(baseFrequency * 0.28, startAt + duration * 0.65);
+    clickOscillator.frequency.setValueAtTime(baseFrequency * (1.1 + tangentialNorm * 0.28), startAt);
+    clickOscillator.frequency.exponentialRampToValueAtTime(baseFrequency * 0.24, startAt + duration * 0.65);
+
+    const subDuration = duration * 1.16;
+    const subStartFrequency = lerp(32, 68, impactNorm) + tangentialNorm * 4;
+    const subEndFrequency = lerp(15, 24, impactNorm * 0.78);
+    subOscillator.type = 'sine';
+    subOscillator.frequency.setValueAtTime(subStartFrequency, startAt);
+    subOscillator.frequency.exponentialRampToValueAtTime(subEndFrequency, startAt + subDuration);
 
     lowpass.type = 'lowpass';
-    lowpass.frequency.setValueAtTime(420 + clampedIntensity * 980, startAt);
+    lowpass.frequency.setValueAtTime(320 + clampedIntensity * 720 + tangentialNorm * 560, startAt);
     lowpass.frequency.exponentialRampToValueAtTime(110, startAt + duration);
-    lowpass.Q.setValueAtTime(0.8 + clampedIntensity * 2.4, startAt);
+    lowpass.Q.setValueAtTime(0.8 + clampedIntensity * 2.1 + tangentialNorm * 0.9, startAt);
+
+    subLowpass.type = 'lowpass';
+    subLowpass.frequency.setValueAtTime(120 + clampedIntensity * 60, startAt);
+    subLowpass.frequency.exponentialRampToValueAtTime(52, startAt + subDuration);
+    subLowpass.Q.setValueAtTime(1.1 + impactNorm * 0.6, startAt);
 
     gainNode.gain.setValueAtTime(0.0001, startAt);
     gainNode.gain.linearRampToValueAtTime(gainValue, startAt + 0.01);
     gainNode.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+
+    const subGainValue = gainValue * (0.34 + impactNorm * 0.24);
+    subGainNode.gain.setValueAtTime(0.0001, startAt);
+    subGainNode.gain.linearRampToValueAtTime(subGainValue, startAt + 0.008);
+    subGainNode.gain.exponentialRampToValueAtTime(0.0001, startAt + subDuration);
 
     clickGainNode.gain.setValueAtTime(0.0001, startAt);
     clickGainNode.gain.linearRampToValueAtTime(gainValue * 0.32, startAt + 0.004);
     clickGainNode.gain.exponentialRampToValueAtTime(0.0001, startAt + duration * 0.42);
 
     oscillator.connect(lowpass);
+    subOscillator.connect(subLowpass);
     clickOscillator.connect(clickGainNode);
     clickGainNode.connect(lowpass);
     lowpass.connect(gainNode);
+    subLowpass.connect(subGainNode);
     gainNode.connect(this.outputNode);
+    subGainNode.connect(this.outputNode);
 
-    const stopAt = startAt + duration + 0.02;
+    const stopAt = startAt + Math.max(duration, subDuration) + 0.02;
     oscillator.start(startAt);
+    subOscillator.start(startAt);
     clickOscillator.start(startAt);
     oscillator.stop(stopAt);
+    subOscillator.stop(stopAt);
     clickOscillator.stop(stopAt);
 
-    oscillator.onended = () => {
+    subOscillator.onended = () => {
       oscillator.disconnect();
+      subOscillator.disconnect();
       clickOscillator.disconnect();
       gainNode.disconnect();
+      subGainNode.disconnect();
       clickGainNode.disconnect();
       lowpass.disconnect();
+      subLowpass.disconnect();
     };
   }
 
@@ -2222,10 +2357,12 @@ class GravityBallFoley {
     this.channelGainNode = null;
     this.channelPanNode = null;
     this.context = null;
-    this.listener = null;
     this.outputDestination = null;
-    this.soundNode = null;
-    this.soundObject = null;
+    this.spatialPannerNode = null;
+    this.airBandpassNode = null;
+    this.airGainNode = null;
+    this.airNoiseSource?.stop?.();
+    this.airNoiseSource = null;
     this.outputNode = null;
     this.initPromise = null;
   }
@@ -2238,7 +2375,7 @@ class GravityBallRenderer {
   private forcedCanvasHeight = 0;
   private forcedCanvasWidth = 0;
   private gl: WebGLRenderingContext | null = null;
-  private gravity = 0.35;
+  private gravity = GRAVITY_BALL_EARTH_MS2;
   private grabAnchor: GravityBallGrabAnchor | null = null;
   private handPoints: GravityBallHandPoint[] | null = null;
   private isGrabbed = false;
@@ -2557,16 +2694,25 @@ class GravityBallRenderer {
     const radiusEase = 1 - Math.exp(-dt * 5.4);
     this.radius += (targetRadius - this.radius) * radiusEase;
 
-    const gravityForce = this.gravity * height * 0.42;
+    const gravityForce = (this.gravity / GRAVITY_BALL_EARTH_MS2) * GRAVITY_BALL_SIM_EARTH * height * 0.42;
     const airDrag = Math.pow(0.992, dt * 60);
     const angularDrag = Math.pow(0.985, dt * 60);
-    const playImpact = (impactVelocity: number) => {
+    const playImpact = (impactVelocity: number, tangentialVelocity = 0) => {
       const normalizedImpact = clampNumber(impactVelocity / Math.max(120, height * 0.5), 0, 1.25, 0, 3);
+      const normalizedTangential = clampNumber(
+        tangentialVelocity / Math.max(80, width * 0.38),
+        0,
+        1.25,
+        0,
+        3,
+      );
       void this.foley.playBounce(
         normalizedImpact,
         this.position.x / Math.max(1, width),
         this.position.y / Math.max(1, height),
         this.position.z,
+        normalizedImpact,
+        normalizedTangential,
       ).catch(() => undefined);
     };
 
@@ -2610,6 +2756,11 @@ class GravityBallRenderer {
     this.angularVelocity.x *= angularDrag;
     this.angularVelocity.y *= angularDrag;
     this.angularVelocity.z *= angularDrag;
+    const planarSpeed = Math.hypot(this.velocity.x, this.velocity.y);
+    const depthSpeed = Math.abs(this.velocity.z) * Math.max(width, height) * 0.22;
+    this.foley.setMotion(
+      clampNumber((planarSpeed + depthSpeed) / Math.max(160, Math.min(width, height) * 0.7), 0, 1.4, 0, 3),
+    );
 
     this.position.x += this.velocity.x * dt;
     this.position.y += this.velocity.y * dt;
@@ -2619,29 +2770,33 @@ class GravityBallRenderer {
     if (this.position.x < this.radius) {
       this.position.x = this.radius;
       const impactVelocity = Math.abs(this.velocity.x);
+      const tangentialVelocity = Math.abs(this.velocity.y);
       this.velocity.x = Math.abs(this.velocity.x) * restitution;
       this.angularVelocity.y += 0.8;
-      playImpact(impactVelocity);
+      playImpact(impactVelocity, tangentialVelocity);
     } else if (this.position.x > width - this.radius) {
       this.position.x = width - this.radius;
       const impactVelocity = Math.abs(this.velocity.x);
+      const tangentialVelocity = Math.abs(this.velocity.y);
       this.velocity.x = -Math.abs(this.velocity.x) * restitution;
       this.angularVelocity.y -= 0.8;
-      playImpact(impactVelocity);
+      playImpact(impactVelocity, tangentialVelocity);
     }
 
     if (this.position.y < this.radius) {
       this.position.y = this.radius;
       const impactVelocity = Math.abs(this.velocity.y);
+      const tangentialVelocity = Math.abs(this.velocity.x);
       this.velocity.y = Math.abs(this.velocity.y) * restitution;
       this.angularVelocity.x += 0.7;
-      playImpact(impactVelocity);
+      playImpact(impactVelocity, tangentialVelocity);
     } else if (this.position.y > height - this.radius) {
       this.position.y = height - this.radius;
       const impactVelocity = Math.abs(this.velocity.y);
+      const tangentialVelocity = Math.abs(this.velocity.x);
       this.velocity.y = -Math.abs(this.velocity.y) * restitution;
       this.angularVelocity.x -= 1.1;
-      playImpact(impactVelocity);
+      playImpact(impactVelocity, tangentialVelocity);
     }
 
     if (this.position.z < -0.38) {
@@ -2669,9 +2824,17 @@ class GravityBallRenderer {
         (this.velocity.x - point.vx) * normalX + (this.velocity.y - point.vy) * normalY;
       if (relativeVelocity < 0) {
         const impulse = -(1 + 0.98) * relativeVelocity;
+        const tangentX = -normalY;
+        const tangentY = normalX;
+        const tangentialVelocity = Math.abs(
+          (this.velocity.x - point.vx) * tangentX + (this.velocity.y - point.vy) * tangentY,
+        );
         this.velocity.x += normalX * impulse;
         this.velocity.y += normalY * impulse;
-        playImpact(Math.abs(relativeVelocity) + (Math.abs(point.vx) + Math.abs(point.vy)) * 0.18);
+        playImpact(
+          Math.abs(relativeVelocity) + (Math.abs(point.vx) + Math.abs(point.vy)) * 0.18,
+          tangentialVelocity,
+        );
       }
 
       this.velocity.x += point.vx * 0.12 + normalX * 80;
@@ -3084,6 +3247,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   const audioInputSelect = audioInputSelects[0] || null;
   const videoInputSelect = videoInputSelects[0] || null;
   const presentationSelect = root.querySelector('[data-presentation-select]');
+  const sessionSetupDetails = root.querySelector('[data-session-setup]');
   const previewZoomInput = root.querySelector('[data-preview-zoom-input]');
   const previewZoomOutput = root.querySelector('[data-preview-zoom-output]');
   const previewBlurInput = root.querySelector('[data-preview-blur-input]');
@@ -3114,6 +3278,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   const stageFrameNode = root.querySelector('.conference-stage-frame');
   const gravityBallCanvas = root.querySelector('[data-gravity-ball-canvas]');
   const recordingGuide = root.querySelector('[data-recording-guide]');
+  const reactionsLayer = root.querySelector('[data-reactions-layer]');
   const stageHandOverlay = root.querySelector('[data-stage-hand-overlay]');
   const participantTemplate = root.querySelector('[data-template="participant-card"]');
   const screenTemplate = root.querySelector('[data-template="screen-card"]');
@@ -3124,8 +3289,11 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   const sessionTimer = root.querySelector('[data-session-timer]');
   const recordButton = root.querySelector('[data-action="record"]');
   const fullscreenButton = root.querySelector('[data-action="fullscreen"]');
+  const shortcutsHelpButton = root.querySelector('[data-action="shortcuts-help"]');
   const sidebarToggleButton = root.querySelector('[data-action="sidebar-toggle"]');
   const instrumentsToggleButton = root.querySelector('[data-action="instruments-toggle"]');
+  const shortcutsModal = root.querySelector('[data-shortcuts-modal]');
+  const shortcutsCloseButton = root.querySelector('[data-shortcuts-close]');
   const chatList = root.querySelector('[data-chat-list]');
   const chatInput = root.querySelector('[data-chat-input]');
   const chatSendButton = root.querySelector('[data-action="chat-send"]');
@@ -3349,6 +3517,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     screenVideoMounts: new Map(),
   };
   const chatMessages: Extract<ConferenceMessage, { type: 'chat' }>[] = [];
+  const reactionBursts = new Map<string, number>();
 
   let destroyed = false;
   let localRole = normalizeRole(roleInput.value);
@@ -3420,9 +3589,13 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
   let handTrackEnabled = Boolean(persistedSetup.handTrackEnabled);
   let handRampMs = clampNumber(persistedSetup.handRampMs, 10, 4000, 500, 0);
   let gravityBallEnabled = Boolean(persistedSetup.gravityBallEnabled);
-  let gravityBallGravity = normalizeGravityBallGravity(persistedSetup.gravityBallGravity, 0.35);
+  let gravityBallGravity = normalizeGravityBallGravity(
+    persistedSetup.gravityBallGravity,
+    GRAVITY_BALL_EARTH_MS2,
+  );
   let sessionAllowsInstruments = true;
   let sidebarCollapsed = root.dataset.sidebarCollapsed === 'true';
+  let graphVisible = false;
   let handTrackingAnimationId = 0;
   let handTrackingGeneration = 0;
   let handTrackingLandmarker: VisionHandLandmarker | null = null;
@@ -3621,6 +3794,116 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     applyImmersiveFullscreenState(true);
   };
 
+  const setShortcutsModalOpen = (open: boolean) => {
+    if (!(shortcutsModal instanceof HTMLElement)) return;
+    shortcutsModal.hidden = !open;
+    shortcutsModal.dataset.open = open ? 'true' : 'false';
+  };
+
+  const openSessionSetup = () => {
+    if (sidebarCollapsed) {
+      sidebarCollapsed = false;
+      applySidebarCollapsedState();
+    }
+    if (sessionSetupDetails instanceof HTMLDetailsElement) {
+      sessionSetupDetails.open = true;
+    }
+  };
+
+  const focusChatComposer = () => {
+    if (sidebarCollapsed) {
+      sidebarCollapsed = false;
+      applySidebarCollapsedState();
+    }
+    chatInput.focus();
+    chatInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
+
+  const toggleCheckboxInput = (input: Element | null) => {
+    if (!(input instanceof HTMLInputElement)) return;
+    input.checked = !input.checked;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+
+  const cycleVideoInput = () => {
+    const select = videoInputSelects.find((entry) => entry.options.length > 0);
+    if (!(select instanceof HTMLSelectElement)) return;
+
+    const options = Array.from(select.options)
+      .map((option) => normalizeText(option.value))
+      .filter(Boolean);
+
+    if (options.length === 0) return;
+
+    const currentValue =
+      normalizeText(select.value) ||
+      normalizeText(room.getActiveDevice('videoinput')) ||
+      normalizeText(preferredVideoInputId);
+
+    const currentIndex = Math.max(0, options.indexOf(currentValue));
+    const nextValue = options[(currentIndex + 1) % options.length];
+    syncSelectGroupValue(videoInputSelects, nextValue);
+    select.value = nextValue;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+
+  const copyInviteLink = async () => {
+    if (!navigator.clipboard?.writeText) {
+      throw new Error('Clipboard API is not available in this browser.');
+    }
+
+    const inviteUrl = new URL(window.location.href);
+    ['identity', 'name', 'user', 'role'].forEach((key) => inviteUrl.searchParams.delete(key));
+    await navigator.clipboard.writeText(inviteUrl.toString());
+    setStatus('Invite link copied.');
+  };
+
+  const setGraphVisible = (open: boolean, source: 'local' | 'remote' = 'local') => {
+    graphVisible = open;
+    window.dispatchEvent(
+      new CustomEvent('graph:set', {
+        detail: {
+          open,
+          source,
+        },
+      }),
+    );
+  };
+
+  const triggerGraphToggle = () => {
+    setGraphVisible(!graphVisible, 'local');
+  };
+
+  const openGlobalSearch = () => {
+    const openSearch = (window as Window & { openSearch?: () => void }).openSearch;
+    if (typeof openSearch === 'function') {
+      openSearch();
+    }
+  };
+
+  const searchWindow = window as Window & {
+    handleSearchNavigation?: (payload: { href: string; title?: string }) => boolean | Promise<boolean>;
+  };
+  const previousSearchNavigationHandler = searchWindow.handleSearchNavigation;
+
+  const normalizeRoomSearchHref = (value: string) => {
+    const raw = normalizeText(value);
+    if (!raw) return null;
+
+    try {
+      const url = new URL(raw, window.location.origin);
+      if (url.origin !== window.location.origin) return null;
+
+      if (url.pathname.startsWith('/cursos/') && !url.pathname.startsWith('/cursos/slides/')) {
+        url.pathname = url.pathname.replace('/cursos/', '/cursos/slides/');
+      }
+
+      return `${url.pathname}${url.search}${url.hash}`;
+    } catch {
+      return null;
+    }
+  };
+
   const setStatus = (message: string) => {
     statusNode.textContent = message;
   };
@@ -3630,8 +3913,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     if (sidebarToggleButton instanceof HTMLButtonElement) {
       sidebarToggleButton.dataset.collapsed = sidebarCollapsed ? 'true' : 'false';
       sidebarToggleButton.title = sidebarCollapsed
-        ? 'Abrir sidebar (Cmd/Ctrl + Shift + /)'
-        : 'Plegar sidebar (Cmd/Ctrl + Shift + /)';
+        ? 'Abrir sidebar (Cmd/Ctrl + Shift + \\)'
+        : 'Plegar sidebar (Cmd/Ctrl + Shift + \\)';
       sidebarToggleButton.setAttribute(
         'aria-label',
         sidebarCollapsed ? 'Abrir sidebar' : 'Plegar sidebar',
@@ -3821,7 +4104,9 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     if (instrumentsToggleButton instanceof HTMLButtonElement) {
       instrumentsToggleButton.dataset.active = instrumentsOpen ? 'true' : 'false';
       instrumentsToggleButton.setAttribute('aria-pressed', instrumentsOpen ? 'true' : 'false');
-      instrumentsToggleButton.title = instrumentsOpen ? 'Hide Instruments' : 'Instruments';
+      instrumentsToggleButton.title = instrumentsOpen
+        ? 'Hide Instruments (Cmd/Ctrl + \\)'
+        : 'Instruments (Cmd/Ctrl + \\)';
     }
   };
 
@@ -5057,6 +5342,15 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     }
   };
 
+  const syncPublishedBallTrack = async () => {
+    if (room.state !== ConnectionState.Connected) return;
+    if (!gravityBallEnabled || !canUseInstruments()) {
+      await unpublishBallTrack().catch(() => undefined);
+      return;
+    }
+    await ensurePublishedBallTrack().catch(() => undefined);
+  };
+
   const unpublishSynthTrack = async () => {
     if (!publishedSynthTrack) return;
     try {
@@ -5531,6 +5825,21 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     }, 1000);
   };
 
+  const downloadStageImage = (blob: Blob) => {
+    const roomName = normalizeText(roomInput.value) || 'room';
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = href;
+    anchor.download = `${roomName}-${stamp}.png`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => {
+      URL.revokeObjectURL(href);
+    }, 1000);
+  };
+
   const stopRecording = () => {
     if (!mediaRecorder) {
       cleanupRecording();
@@ -5967,21 +6276,27 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     throw new Error('This browser could not initialize a supported recorder.');
   };
 
-  const drawRecordingFrame = () => {
-    if (!recordingCanvas || !recordingCanvasContext) return;
-
+  const renderRecordingComposite = ({
+    canvas,
+    context,
+    scheduleNext = false,
+  }: {
+    canvas: HTMLCanvasElement;
+    context: CanvasRenderingContext2D;
+    scheduleNext?: boolean;
+  }) => {
     const viewportRect = getRecordingViewportRect();
     const width = Math.max(2, Math.round(viewportRect.width));
     const height = Math.max(2, Math.round(viewportRect.height));
 
-    if (recordingCanvas.width !== width || recordingCanvas.height !== height) {
-      recordingCanvas.width = width;
-      recordingCanvas.height = height;
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
     }
 
-    recordingCanvasContext.clearRect(0, 0, width, height);
-    recordingCanvasContext.fillStyle = '#000';
-    recordingCanvasContext.fillRect(0, 0, width, height);
+    context.clearRect(0, 0, width, height);
+    context.fillStyle = '#000';
+    context.fillRect(0, 0, width, height);
 
     if (
       recordingDisplayVideo &&
@@ -5990,7 +6305,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       recordingDisplayVideo.videoHeight > 2
     ) {
       const { sx, sy, sw, sh } = getRecordingViewportSourceRect(recordingDisplayVideo);
-      recordingCanvasContext.drawImage(
+      context.drawImage(
         recordingDisplayVideo,
         sx,
         sy,
@@ -6001,7 +6316,9 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
         width,
         height,
       );
-      recordingAnimationId = window.requestAnimationFrame(drawRecordingFrame);
+      if (scheduleNext) {
+        recordingAnimationId = window.requestAnimationFrame(drawRecordingFrame);
+      }
       return;
     }
 
@@ -6026,7 +6343,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
           presentationRect.height,
         );
 
-        recordingCanvasContext.drawImage(
+        context.drawImage(
           recordingPresentationImage,
           localRect.x,
           localRect.y,
@@ -6045,23 +6362,23 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
         rect.height,
       );
 
-      recordingCanvasContext.save();
+      context.save();
 
       if (isPresentationCircleVideo(video)) {
         const radius = Math.min(localRect.width, localRect.height) / 2;
-        recordingCanvasContext.beginPath();
-        recordingCanvasContext.arc(
+        context.beginPath();
+        context.arc(
           localRect.x + localRect.width / 2,
           localRect.y + localRect.height / 2,
           radius,
           0,
           Math.PI * 2,
         );
-        recordingCanvasContext.clip();
+        context.clip();
       }
 
       drawVideoIntoRect({
-        context: recordingCanvasContext,
+        context,
         fit:
           video.closest('.conference-media-frame--screen') ||
           video.closest('.conference-stage-panel--screen')
@@ -6072,10 +6389,52 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
         video,
       });
 
-      recordingCanvasContext.restore();
+      context.restore();
     });
 
-    recordingAnimationId = window.requestAnimationFrame(drawRecordingFrame);
+    if (scheduleNext) {
+      recordingAnimationId = window.requestAnimationFrame(drawRecordingFrame);
+    }
+  };
+
+  const drawRecordingFrame = () => {
+    if (!recordingCanvas || !recordingCanvasContext) return;
+    renderRecordingComposite({
+      canvas: recordingCanvas,
+      context: recordingCanvasContext,
+      scheduleNext: true,
+    });
+  };
+
+  const captureStageScreenshot = async () => {
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d', { alpha: false });
+    if (!context) {
+      throw new Error('Could not initialize the screenshot canvas.');
+    }
+
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+
+    if (stage.dataset.layout === 'presentation' && !presentationFrame.hidden) {
+      await refreshRecordingPresentationSnapshot(true).catch(() => undefined);
+    }
+
+    renderRecordingComposite({
+      canvas,
+      context,
+      scheduleNext: false,
+    });
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob((value) => resolve(value), 'image/png');
+    });
+
+    if (!blob) {
+      throw new Error('Could not export the screenshot.');
+    }
+
+    downloadStageImage(blob);
   };
 
   const buildRecordingAudioTrack = async () => {
@@ -6696,6 +7055,21 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     if (!payload || typeof payload !== 'object') return;
 
     const type = normalizeText((payload as { type?: string }).type);
+    if (type === 'musiki:reveal-toggle-sidebar-left') {
+      toggleInstrumentsOpen();
+      return;
+    }
+
+    if (type === 'musiki:reveal-toggle-sidebar-right') {
+      toggleSidebarCollapsed();
+      return;
+    }
+
+    if (type === 'musiki:room-command') {
+      executeRoomShortcutCommand(normalizeText((payload as { command?: string }).command));
+      return;
+    }
+
     if (type === 'musiki:reveal-ready') {
       if (pendingRemoteSlideState) {
         applyRemoteSlideState(pendingRemoteSlideState);
@@ -6770,6 +7144,13 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
         };
       }
 
+      if (parsed.type === 'graph') {
+        return {
+          type: 'graph',
+          open: (parsed as { open?: boolean }).open !== false,
+        };
+      }
+
       if (parsed.type === 'session-setup') {
         return {
           type: 'session-setup',
@@ -6815,6 +7196,23 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
           sentAt:
             normalizeText((parsed as { sentAt?: string }).sentAt) || new Date().toISOString(),
           text,
+        };
+      }
+
+      if (parsed.type === 'reaction') {
+        const reaction = normalizeText((parsed as { reaction?: string }).reaction) as ReactionKind;
+        const id = normalizeText((parsed as { id?: string }).id);
+        if (!id || !(reaction in REACTION_EMOJIS)) return null;
+
+        return {
+          type: 'reaction',
+          id,
+          identity: normalizeText((parsed as { identity?: string }).identity),
+          name: normalizeText((parsed as { name?: string }).name) || 'Participant',
+          reaction,
+          role: normalizeRole((parsed as { role?: string }).role),
+          sentAt:
+            normalizeText((parsed as { sentAt?: string }).sentAt) || new Date().toISOString(),
         };
       }
 
@@ -6889,6 +7287,11 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     await publishMessage({
       type: 'presentation',
       href: presentation.getHref(),
+    });
+
+    await publishMessage({
+      type: 'graph',
+      open: graphVisible,
     });
 
     if (currentSlideState) {
@@ -7195,6 +7598,52 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       chatMessages.splice(0, chatMessages.length - 80);
     }
     renderChat();
+  };
+
+  const appendReactionBurst = (reaction: ReactionKind, name: string) => {
+    if (!(reactionsLayer instanceof HTMLElement)) return;
+
+    const burstId = crypto.randomUUID();
+    const burst = document.createElement('div');
+    burst.className = 'conference-reaction-burst';
+    burst.style.left = `calc(50% + ${Math.round((Math.random() - 0.5) * 220)}px)`;
+    burst.style.top = `calc(58% + ${Math.round((Math.random() - 0.5) * 56)}px)`;
+
+    const emoji = document.createElement('span');
+    emoji.textContent = REACTION_EMOJIS[reaction];
+    burst.appendChild(emoji);
+
+    const firstName = getFirstName(name);
+    if (firstName) {
+      const label = document.createElement('span');
+      label.className = 'conference-reaction-burst-name';
+      label.textContent = firstName;
+      burst.appendChild(label);
+    }
+
+    reactionsLayer.appendChild(burst);
+    const timeoutId = window.setTimeout(() => {
+      burst.remove();
+      reactionBursts.delete(burstId);
+    }, 1550);
+    reactionBursts.set(burstId, timeoutId);
+  };
+
+  const publishReaction = async (reaction: ReactionKind) => {
+    if (room.state !== ConnectionState.Connected || !room.localParticipant) return;
+
+    const message: Extract<ConferenceMessage, { type: 'reaction' }> = {
+      type: 'reaction',
+      id: crypto.randomUUID(),
+      identity: normalizeText(room.localParticipant.identity),
+      name: normalizeText(nameInput.value) || normalizeText(identityInput.value) || 'Participant',
+      reaction,
+      role: localRole,
+      sentAt: new Date().toISOString(),
+    };
+
+    appendReactionBurst(message.reaction, message.name);
+    await publishMessage(message);
   };
 
   const setControlState = () => {
@@ -7646,6 +8095,7 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       }
       void syncLocalParticipantMetadata().catch(() => undefined);
       void syncLocalBackgroundBlurProcessor().catch(() => undefined);
+      void syncPublishedBallTrack().catch(() => undefined);
       if (shouldRunHandTracking()) {
         void startHandTracking();
       }
@@ -7764,6 +8214,11 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
         return;
       }
 
+      if (message.type === 'reaction') {
+        appendReactionBurst(message.reaction, readParticipantName(participant));
+        return;
+      }
+
       if (message.type === 'session-leader') {
         if (readParticipantRole(room, participant, localRole) !== 'teacher') return;
         manualSessionLeaderIdentity = normalizeText(message.identity);
@@ -7777,6 +8232,11 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
 
       if (readParticipantRole(room, participant, localRole) !== 'teacher') return;
       if (!isSessionLeader(participant)) return;
+
+      if (message.type === 'graph') {
+        setGraphVisible(message.open, 'remote');
+        return;
+      }
 
       if (message.type === 'session-control') {
         sessionAllowsInstruments = message.allowInstruments !== false;
@@ -7972,6 +8432,26 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     });
   }
 
+  if (shortcutsHelpButton instanceof HTMLButtonElement) {
+    shortcutsHelpButton.addEventListener('click', () => {
+      setShortcutsModalOpen(true);
+    });
+  }
+
+  if (shortcutsCloseButton instanceof HTMLButtonElement) {
+    shortcutsCloseButton.addEventListener('click', () => {
+      setShortcutsModalOpen(false);
+    });
+  }
+
+  if (shortcutsModal instanceof HTMLElement) {
+    shortcutsModal.addEventListener('click', (event) => {
+      if (event.target === shortcutsModal) {
+        setShortcutsModalOpen(false);
+      }
+    });
+  }
+
   if (sidebarToggleButton instanceof HTMLButtonElement) {
     sidebarToggleButton.addEventListener('click', () => {
       toggleSidebarCollapsed();
@@ -8160,8 +8640,8 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
       applyGravityBallState();
       persistSetupState();
 
-      if (room.state === ConnectionState.Connected && !gravityBallEnabled) {
-        void unpublishBallTrack().catch(() => undefined);
+      if (room.state === ConnectionState.Connected) {
+        void syncPublishedBallTrack();
       }
 
       if (shouldRunHandTracking()) {
@@ -8804,32 +9284,329 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     void sendChatMessage();
   });
 
-  const handleRoomShortcutKeydown = (event: KeyboardEvent) => {
-    if (event.defaultPrevented || event.repeat) return;
-    const isSidebarShortcut =
-      (event.metaKey || event.ctrlKey) &&
-      event.shiftKey &&
-      !event.altKey &&
-      (event.key === '?' || event.key === '/');
+  const executeRoomShortcutCommand = (command: string) => {
+    const normalizedCommand = normalizeText(command);
+    if (!normalizedCommand) return;
 
-    if (isSidebarShortcut) {
-      event.preventDefault();
+    if (normalizedCommand.startsWith('reaction:')) {
+      const reaction = normalizeText(normalizedCommand.slice('reaction:'.length)) as ReactionKind;
+      if (reaction in REACTION_EMOJIS) {
+        void publishReaction(reaction).catch((error) => {
+          setStatus(safeErrorMessage(error));
+        });
+      }
+      return;
+    }
+
+    if (normalizedCommand === 'toggle-sidebar-left') {
+      toggleInstrumentsOpen();
+      return;
+    }
+
+    if (normalizedCommand === 'toggle-sidebar-right') {
       toggleSidebarCollapsed();
       return;
     }
 
+    if (normalizedCommand === 'layout-full') {
+      const button = layoutChoiceButtons.find(
+        (node) => normalizeLayoutMode(node.dataset.layoutChoice || '') === 'teacher',
+      );
+      (button instanceof HTMLButtonElement ? button : null)?.click();
+      return;
+    }
+
+    if (normalizedCommand === 'layout-share') {
+      const button = layoutChoiceButtons.find(
+        (node) => normalizeLayoutMode(node.dataset.layoutChoice || '') === 'screenshare',
+      );
+      (button instanceof HTMLButtonElement ? button : null)?.click();
+      return;
+    }
+
+    if (normalizedCommand === 'layout-presentation') {
+      const button = layoutChoiceButtons.find(
+        (node) => normalizeLayoutMode(node.dataset.layoutChoice || '') === 'presentation',
+      );
+      (button instanceof HTMLButtonElement ? button : null)?.click();
+      return;
+    }
+
+    if (normalizedCommand === 'layout-grid') {
+      const button = layoutChoiceButtons.find(
+        (node) => normalizeLayoutMode(node.dataset.layoutChoice || '') === 'grid',
+      );
+      (button instanceof HTMLButtonElement ? button : null)?.click();
+      return;
+    }
+
+    if (normalizedCommand === 'toggle-circle') {
+      toggleCheckboxInput(showCircleInput);
+      return;
+    }
+
+    if (normalizedCommand === 'toggle-invert-video') {
+      toggleCheckboxInput(previewInvertInput);
+      return;
+    }
+
+    if (normalizedCommand === 'open-delegate-session') {
+      openSessionSetup();
+      if (sessionLeaderSelect instanceof HTMLSelectElement) {
+        sessionLeaderSelect.focus();
+        (sessionLeaderSelect as HTMLSelectElement & { showPicker?: () => void }).showPicker?.();
+        sessionLeaderSelect.click();
+      }
+      return;
+    }
+
+    if (normalizedCommand === 'share-screen') {
+      if (shareScreenButton instanceof HTMLButtonElement) {
+        shareScreenButton.click();
+      }
+      return;
+    }
+
+    if (normalizedCommand === 'focus-chat') {
+      focusChatComposer();
+      return;
+    }
+
+    if (normalizedCommand === 'toggle-record') {
+      if (recordButton instanceof HTMLButtonElement) {
+        recordButton.click();
+      }
+      return;
+    }
+
+    if (normalizedCommand === 'toggle-camera') {
+      if (cameraButton instanceof HTMLButtonElement) {
+        cameraButton.click();
+      }
+      return;
+    }
+
+    if (normalizedCommand === 'cycle-camera') {
+      cycleVideoInput();
+      return;
+    }
+
+    if (normalizedCommand === 'toggle-connect') {
+      if (connectToggleButton instanceof HTMLButtonElement) {
+        connectToggleButton.click();
+      }
+      return;
+    }
+
+    if (normalizedCommand === 'mute-all') {
+      if (sessionMuteAllButton instanceof HTMLButtonElement && !sessionMuteAllButton.disabled) {
+        sessionMuteAllButton.click();
+      }
+      return;
+    }
+
+    if (normalizedCommand === 'toggle-hand') {
+      if (raiseHandButton instanceof HTMLButtonElement && !raiseHandButton.disabled) {
+        raiseHandButton.click();
+      }
+      return;
+    }
+
+    if (normalizedCommand === 'toggle-fullscreen') {
+      void toggleFullscreen().catch((error) => {
+        applyImmersiveFullscreenState(false);
+        syncFullscreenButton();
+        setStatus(safeErrorMessage(error));
+      });
+      return;
+    }
+
+    if (normalizedCommand === 'copy-invite-link') {
+      void copyInviteLink().catch((error) => {
+        setStatus(safeErrorMessage(error));
+      });
+      return;
+    }
+
+    if (normalizedCommand === 'stage-screenshot') {
+      void captureStageScreenshot().catch((error) => {
+        setStatus(safeErrorMessage(error));
+      });
+      return;
+    }
+
+    if (normalizedCommand === 'open-search') {
+      openGlobalSearch();
+      return;
+    }
+
+    if (normalizedCommand === 'toggle-graph') {
+      triggerGraphToggle();
+      return;
+    }
+
+    if (normalizedCommand === 'hold-mic-start') {
+      void beginReverseMicState();
+      return;
+    }
+
+    if (normalizedCommand === 'hold-mic-end') {
+      void endReverseMicState();
+      return;
+    }
+  };
+
+  searchWindow.handleSearchNavigation = async ({ href }) => {
+    const nextHref = normalizeRoomSearchHref(href);
+    if (!nextHref) return false;
+
+    schedulePresentationLoad({
+      broadcast: room.state === ConnectionState.Connected && canLeadSession(),
+      href: nextHref,
+      successMessage: 'Escena cargada desde busqueda.',
+    });
+
+    return true;
+  };
+
+  const handleRoomShortcutKeydown = (event: KeyboardEvent) => {
+    if (event.defaultPrevented || event.repeat) return;
+    const ignoreShortcutTarget = shouldIgnoreRoomShortcut(event.target);
+
+    if (shortcutsModal instanceof HTMLElement && !shortcutsModal.hidden && event.key === 'Escape') {
+      event.preventDefault();
+      setShortcutsModalOpen(false);
+      return;
+    }
+
+    const isRightSidebarShortcut =
+      (event.metaKey || event.ctrlKey) &&
+      event.shiftKey &&
+      !event.altKey &&
+      (event.code === 'Backslash' || event.key === '?' || event.key === '/');
+
+    if (isRightSidebarShortcut) {
+      event.preventDefault();
+      executeRoomShortcutCommand('toggle-sidebar-right');
+      return;
+    }
+
+    const isLeftSidebarShortcut =
+      (event.metaKey || event.ctrlKey) &&
+      !event.shiftKey &&
+      !event.altKey &&
+      event.code === 'Backslash';
+
+    if (isLeftSidebarShortcut) {
+      event.preventDefault();
+      executeRoomShortcutCommand('toggle-sidebar-left');
+      return;
+    }
+
+    if (ignoreShortcutTarget) return;
+
+    if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'j') {
+      event.preventDefault();
+      executeRoomShortcutCommand('toggle-connect');
+      return;
+    }
+
+    if ((event.metaKey || event.ctrlKey) && event.shiftKey && !event.altKey) {
+      const key = String(event.key || '').toLowerCase();
+      if (key === 'f') {
+        event.preventDefault();
+        executeRoomShortcutCommand('toggle-fullscreen');
+        return;
+      }
+      if (key === 'i') {
+        event.preventDefault();
+        executeRoomShortcutCommand('copy-invite-link');
+        return;
+      }
+      if (key === 'v') {
+        event.preventDefault();
+        executeRoomShortcutCommand('toggle-camera');
+        return;
+      }
+      if (key === 'n') {
+        event.preventDefault();
+        executeRoomShortcutCommand('cycle-camera');
+        return;
+      }
+    }
+
+    if ((event.metaKey || event.ctrlKey) && event.altKey && !event.shiftKey) {
+      const key = String(event.key || '').toLowerCase();
+      if (key === 'g') {
+        event.preventDefault();
+        postToPresentation({ type: 'musiki:reveal-toggle-jump-to-slide' });
+        return;
+      }
+      const altCommandMap: Record<string, string> = {
+        '1': 'layout-full',
+        '2': 'layout-share',
+        '3': 'layout-presentation',
+        '4': 'layout-grid',
+        '5': 'toggle-circle',
+        '6': 'toggle-invert-video',
+        '7': 'open-delegate-session',
+        c: 'focus-chat',
+        m: 'mute-all',
+        n: 'cycle-camera',
+        r: 'toggle-record',
+        s: 'share-screen',
+        t: 'stage-screenshot',
+        v: 'toggle-camera',
+        y: 'toggle-hand',
+      };
+      const command = altCommandMap[key];
+      if (command) {
+        event.preventDefault();
+        executeRoomShortcutCommand(command);
+        return;
+      }
+    }
+
+    if (event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey) {
+      const reaction = REACTION_SHORTCUTS_BY_CODE[event.code];
+      if (reaction) {
+        event.preventDefault();
+        executeRoomShortcutCommand(`reaction:${reaction}`);
+        return;
+      }
+    }
+
     if (event.metaKey || event.ctrlKey || event.altKey) return;
-    if (shouldIgnoreRoomShortcut(event.target)) return;
+
+    if (event.shiftKey && event.key === '?') {
+      event.preventDefault();
+      executeRoomShortcutCommand('open-search');
+      return;
+    }
+
+    const plainKey = String(event.key || '').toLowerCase();
+
+    if (plainKey === 'g') {
+      event.preventDefault();
+      executeRoomShortcutCommand('toggle-graph');
+      return;
+    }
+
+    if (plainKey === 'h') {
+      event.preventDefault();
+      executeRoomShortcutCommand('toggle-hand');
+      return;
+    }
 
     if (event.key === ' ' || event.code === 'Space') {
       event.preventDefault();
-      void beginReverseMicState();
+      executeRoomShortcutCommand('hold-mic-start');
       return;
     }
 
     if (event.key.toLowerCase() === 'm') {
       event.preventDefault();
-      void toggleRaisedHand();
+      executeRoomShortcutCommand('toggle-hand');
     }
   };
 
@@ -8839,15 +9616,29 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     if (event.key !== ' ' && event.code !== 'Space') return;
     if (shouldIgnoreRoomShortcut(event.target)) return;
     event.preventDefault();
-    void endReverseMicState();
+    executeRoomShortcutCommand('hold-mic-end');
   };
 
   const handleRoomWindowBlur = () => {
     void endReverseMicState();
   };
 
+  const handleGraphStateChange = (event: Event) => {
+    const detail = (event as CustomEvent<{ open?: boolean; source?: string }>).detail;
+    graphVisible = Boolean(detail?.open);
+    if (detail?.source === 'remote') return;
+    if (!canLeadSession()) return;
+    void publishMessage({
+      type: 'graph',
+      open: graphVisible,
+    }).catch((error) => {
+      setStatus(safeErrorMessage(error));
+    });
+  };
+
   document.addEventListener('keydown', handleRoomShortcutKeydown);
   document.addEventListener('keyup', handleRoomShortcutKeyup);
+  window.addEventListener('graph:statechange', handleGraphStateChange as EventListener);
 
   [roomInput, identityInput, nameInput].forEach((input) => {
     input.addEventListener('change', () => {
@@ -8951,11 +9742,18 @@ export const mountLiveKitRoom = (root: HTMLElement) => {
     window.removeEventListener('message', handlePresentationMessage);
     document.removeEventListener('keydown', handleRoomShortcutKeydown);
     document.removeEventListener('keyup', handleRoomShortcutKeyup);
+    window.removeEventListener('graph:statechange', handleGraphStateChange as EventListener);
     document.removeEventListener('fullscreenchange', syncFullscreenButton);
     document.removeEventListener('webkitfullscreenchange', syncFullscreenButton as EventListener);
     window.removeEventListener('blur', handleRoomWindowBlur);
+    searchWindow.handleSearchNavigation = previousSearchNavigationHandler;
     unsubscribeLiveActivity?.();
     unsubscribeLiveActivity = null;
+    reactionBursts.forEach((timeoutId) => window.clearTimeout(timeoutId));
+    reactionBursts.clear();
+    if (reactionsLayer instanceof HTMLElement) {
+      reactionsLayer.replaceChildren();
+    }
     if (liveActivityTickId) {
       window.clearInterval(liveActivityTickId);
       liveActivityTickId = 0;
