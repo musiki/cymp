@@ -2255,10 +2255,7 @@ const forumThreadPrompt = sessionFirstName
           return fallback;
         };
 
-        let leftOpen = coerceBoolean(
-          window.localStorage.getItem('musiki:course:left-open'),
-          root.dataset.leftOpen !== 'false',
-        );
+        let leftOpen = true;
         let rightOpen = hasRightSidebar && coerceBoolean(
           window.localStorage.getItem('musiki:course:right-open'),
           root.dataset.rightOpen !== 'false',
@@ -4929,7 +4926,7 @@ const forumThreadPrompt = sessionFirstName
           tocList.appendChild(createTocNodeElement(rootNode));
         });
 
-        tocDetails.open = false;
+        tocDetails.open = true;
         tocRoot.hidden = tocList.children.length === 0;
       }
 

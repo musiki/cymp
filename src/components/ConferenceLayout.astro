@@ -50,15 +50,22 @@ if (
   data-conference-root
   data-livekit-url={livekitUrl}
   data-course-id={courseId}
+  data-gravity-ball="false"
+  data-gravity-ball-stage-visible="true"
   data-instruments-open="false"
+  data-instruments-allowed="true"
+  data-recording-guide-suppressed="false"
+  data-recording-guide-visible="false"
+  data-role={defaultRole}
   data-sidebar-collapsed="false"
 >
   <aside class="conference-instruments-sidebar" data-instruments-sidebar>
-    <div class="conference-sidebar-scroll">
-      <section class="conference-sidebar-section conference-sidebar-section--instrument">
-        <div class="conference-sidebar-heading">FM SYNTH</div>
+    <div class="conference-instruments-layout">
+      <div class="conference-instruments-scroll">
+        <section class="conference-sidebar-section conference-sidebar-section--instrument">
+          <div class="conference-sidebar-heading">FM SYNTH</div>
 
-        <div class="conference-field conference-field--checkbox">
+        <div class="conference-field conference-field--checkbox conference-field--hand-controls">
           <label class="conference-checkbox-row" for="conference-hand-track-input">
             <input
               id="conference-hand-track-input"
@@ -68,39 +75,47 @@ if (
             />
             <span>Hand track</span>
           </label>
-        </div>
-
-        <div class="conference-field">
-          <label for="conference-synth-master-input">Master gain</label>
-          <div class="conference-range-row">
+          <label class="conference-ramp-row" for="conference-hand-ramp-input">
+            <span>Ramp</span>
             <input
-              id="conference-synth-master-input"
-              name="synth-master-gain"
-              type="range"
-              min="0"
-              max="1"
-              step="0.01"
-              value="0.35"
-              data-synth-master-input
+              id="conference-hand-ramp-input"
+              name="hand-ramp"
+              type="number"
+              min="10"
+              max="4000"
+              step="10"
+              value="500"
+              data-hand-ramp-input
             />
-            <output for="conference-synth-master-input" data-synth-master-output>0.35</output>
-          </div>
+            <span>ms</span>
+          </label>
+          <button
+            type="button"
+            class="conference-ramp-reset"
+            data-synth-mapping-reset
+            title="Reset mapping"
+            aria-label="Reset mapping"
+          >
+            R
+          </button>
         </div>
 
         <div class="conference-synth-meters">
           <div class="conference-synth-meter">
             <label for="conference-synth-carrier-input">Carrier</label>
             <div class="conference-synth-meter-row">
+              <button type="button" class="conference-synth-map-button" data-synth-map-capture="carrier:min" aria-label="Capture carrier minimum"></button>
               <input
                 id="conference-synth-carrier-input"
                 type="range"
-                min="80"
+                min="20"
                 max="1600"
                 step="1"
                 value="220"
                 data-synth-carrier-input
                 disabled
               />
+              <button type="button" class="conference-synth-map-button" data-synth-map-capture="carrier:max" aria-label="Capture carrier maximum"></button>
               <output for="conference-synth-carrier-input" data-synth-carrier-output>220 Hz</output>
             </div>
           </div>
@@ -108,23 +123,26 @@ if (
           <div class="conference-synth-meter">
             <label for="conference-synth-modulator-input">Modulator</label>
             <div class="conference-synth-meter-row">
+              <button type="button" class="conference-synth-map-button" data-synth-map-capture="modulator:min" aria-label="Capture modulator minimum"></button>
               <input
                 id="conference-synth-modulator-input"
                 type="range"
-                min="0.25"
-                max="8"
-                step="0.01"
-                value="1.2"
+                min="30"
+                max="1600"
+                step="1"
+                value="110"
                 data-synth-modulator-input
                 disabled
               />
-              <output for="conference-synth-modulator-input" data-synth-modulator-output>1.20x</output>
+              <button type="button" class="conference-synth-map-button" data-synth-map-capture="modulator:max" aria-label="Capture modulator maximum"></button>
+              <output for="conference-synth-modulator-input" data-synth-modulator-output>110 Hz</output>
             </div>
           </div>
 
           <div class="conference-synth-meter">
             <label for="conference-synth-gain-input">Thumb gain</label>
             <div class="conference-synth-meter-row">
+              <button type="button" class="conference-synth-map-button" data-synth-map-capture="gain:min" aria-label="Capture gain minimum"></button>
               <input
                 id="conference-synth-gain-input"
                 type="range"
@@ -135,6 +153,7 @@ if (
                 data-synth-gain-input
                 disabled
               />
+              <button type="button" class="conference-synth-map-button" data-synth-map-capture="gain:max" aria-label="Capture gain maximum"></button>
               <output for="conference-synth-gain-input" data-synth-gain-output>0.00</output>
             </div>
           </div>
@@ -142,6 +161,7 @@ if (
           <div class="conference-synth-meter">
             <label for="conference-synth-cutoff-input">Index cutoff</label>
             <div class="conference-synth-meter-row">
+              <button type="button" class="conference-synth-map-button" data-synth-map-capture="cutoff:min" aria-label="Capture cutoff minimum"></button>
               <input
                 id="conference-synth-cutoff-input"
                 type="range"
@@ -152,6 +172,7 @@ if (
                 data-synth-cutoff-input
                 disabled
               />
+              <button type="button" class="conference-synth-map-button" data-synth-map-capture="cutoff:max" aria-label="Capture cutoff maximum"></button>
               <output for="conference-synth-cutoff-input" data-synth-cutoff-output>800 Hz</output>
             </div>
           </div>
@@ -159,6 +180,7 @@ if (
           <div class="conference-synth-meter">
             <label for="conference-synth-resonance-input">Ring resonance</label>
             <div class="conference-synth-meter-row">
+              <button type="button" class="conference-synth-map-button" data-synth-map-capture="resonance:min" aria-label="Capture resonance minimum"></button>
               <input
                 id="conference-synth-resonance-input"
                 type="range"
@@ -169,6 +191,7 @@ if (
                 data-synth-resonance-input
                 disabled
               />
+              <button type="button" class="conference-synth-map-button" data-synth-map-capture="resonance:max" aria-label="Capture resonance maximum"></button>
               <output for="conference-synth-resonance-input" data-synth-resonance-output>1.0 Q</output>
             </div>
           </div>
@@ -176,6 +199,7 @@ if (
           <div class="conference-synth-meter">
             <label for="conference-synth-waveform-input">Middle wave</label>
             <div class="conference-synth-meter-row">
+              <button type="button" class="conference-synth-map-button" data-synth-map-capture="waveformMorph:min" aria-label="Capture waveform minimum"></button>
               <input
                 id="conference-synth-waveform-input"
                 type="range"
@@ -186,8 +210,568 @@ if (
                 data-synth-waveform-input
                 disabled
               />
+              <button type="button" class="conference-synth-map-button" data-synth-map-capture="waveformMorph:max" aria-label="Capture waveform maximum"></button>
               <output for="conference-synth-waveform-input" data-synth-waveform-output>SIN</output>
             </div>
+          </div>
+
+          <div class="conference-synth-meter">
+            <label for="conference-synth-distortion-input" class="conference-synth-meter-label">
+              <span>Pinky distortion</span>
+              <span class="conference-synth-formula-shell" tabindex="0" aria-label="Distortion formula">
+                ƒ
+                <span class="conference-synth-formula-tooltip" role="note">
+                  <math display="inline">
+                    <mfrac>
+                      <mrow>
+                        <mo>(</mo><mn>3</mn><mo>+</mo><mn>20</mn><mo>)</mo>
+                        <mo>&middot;</mo><mi>x</mi><mo>&middot;</mo><mn>57</mn>
+                        <mo>&middot;</mo>
+                        <mfrac><mn>3</mn><mn>180</mn></mfrac>
+                      </mrow>
+                      <mrow>
+                        <mn>3</mn><mo>+</mo><mn>20</mn><mo>&middot;</mo>
+                        <mo>|</mo><mi>x</mi><mo>|</mo>
+                      </mrow>
+                    </mfrac>
+                  </math>
+                </span>
+              </span>
+            </label>
+            <div class="conference-synth-meter-row">
+              <button type="button" class="conference-synth-map-button" data-synth-map-capture="distortion:min" aria-label="Capture distortion minimum"></button>
+              <input
+                id="conference-synth-distortion-input"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value="0"
+                data-synth-distortion-input
+                disabled
+              />
+              <button type="button" class="conference-synth-map-button" data-synth-map-capture="distortion:max" aria-label="Capture distortion maximum"></button>
+              <output for="conference-synth-distortion-input" data-synth-distortion-output>0%</output>
+            </div>
+          </div>
+        </div>
+        </section>
+
+        <section class="conference-sidebar-section conference-sidebar-section--instrument">
+          <div class="conference-sidebar-heading">GRAVITY BALL</div>
+
+          <div class="conference-field conference-field--checkbox conference-field--hand-controls">
+            <label class="conference-checkbox-row" for="conference-gravity-ball-input">
+              <input
+                id="conference-gravity-ball-input"
+                name="gravity-ball"
+                type="checkbox"
+                data-gravity-ball-input
+              />
+              <span>Gravity ball</span>
+            </label>
+
+            <label class="conference-ramp-row" for="conference-gravity-ball-gravity-input">
+              <span>Gravity</span>
+              <input
+                id="conference-gravity-ball-gravity-input"
+                name="gravity-ball-gravity"
+                type="number"
+                min="0"
+                max="1.5"
+                step="0.05"
+                value="0.35"
+                data-gravity-ball-gravity-input
+              />
+              <span>g</span>
+            </label>
+          </div>
+        </section>
+      </div>
+
+      <section class="conference-sidebar-section conference-sidebar-section--instrument conference-sidebar-section--mixer">
+        <div class="conference-sidebar-heading">MIXER</div>
+        <div class="conference-mixer">
+          <div class="conference-mixer-channel">
+            <div class="conference-mixer-channel-label" data-mixer-reset-scope="synth" title="Double click to reset CH1">
+              <strong>CH1</strong>
+            </div>
+            <div class="conference-mixer-knob-stack">
+              <div
+                class="conference-mixer-knob-control"
+                data-mixer-synth-pan-knob
+                role="slider"
+                tabindex="0"
+                aria-label="FM pan"
+                aria-valuemin="-1"
+                aria-valuemax="1"
+                aria-valuenow="0"
+              >
+                <span class="conference-mixer-knob-indicator" aria-hidden="true"></span>
+              </div>
+              <input
+                type="range"
+                min="-1"
+                max="1"
+                step="0.01"
+                value="0"
+                class="conference-mixer-pan-input"
+                data-mixer-synth-pan
+              />
+            </div>
+            <div class="conference-mixer-fader-shell">
+              <span class="conference-mixer-vumeter" data-mixer-meter="synth" aria-hidden="true"></span>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value="1"
+                class="conference-mixer-fader"
+                data-mixer-synth-gain
+              />
+            </div>
+            <button
+              type="button"
+              class="conference-mixer-channel-toggle"
+              data-mixer-synth-mute
+              aria-label="Mute FM channel"
+              title="Mute FM"
+            >
+              <span class="conference-mixer-led conference-mixer-led--mute" aria-hidden="true">M</span>
+            </button>
+          </div>
+
+          <div class="conference-mixer-channel">
+            <div class="conference-mixer-channel-label" data-mixer-reset-scope="ball" title="Double click to reset B">
+              <strong>CH2</strong>
+            </div>
+            <div class="conference-mixer-knob-stack">
+              <div
+                class="conference-mixer-knob-control"
+                data-mixer-ball-pan-knob
+                role="slider"
+                tabindex="0"
+                aria-label="Ball pan"
+                aria-valuemin="-1"
+                aria-valuemax="1"
+                aria-valuenow="0"
+              >
+                <span class="conference-mixer-knob-indicator" aria-hidden="true"></span>
+              </div>
+              <input
+                type="range"
+                min="-1"
+                max="1"
+                step="0.01"
+                value="0"
+                class="conference-mixer-pan-input"
+                data-mixer-ball-pan
+              />
+            </div>
+            <div class="conference-mixer-fader-shell">
+              <span class="conference-mixer-vumeter" data-mixer-meter="ball" aria-hidden="true"></span>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value="1"
+                class="conference-mixer-fader"
+                data-mixer-ball-gain
+              />
+            </div>
+            <button
+              type="button"
+              class="conference-mixer-channel-toggle"
+              data-mixer-ball-mute
+              aria-label="Mute ball channel"
+              title="Mute ball"
+            >
+              <span class="conference-mixer-led conference-mixer-led--mute" aria-hidden="true">M</span>
+            </button>
+          </div>
+
+          <div class="conference-mixer-channel">
+            <div class="conference-mixer-channel-label" data-mixer-reset-scope="incoming" title="Double click to reset IN">
+              <strong>IN</strong>
+            </div>
+            <div class="conference-mixer-knob-stack">
+              <div
+                class="conference-mixer-knob-control"
+                data-mixer-incoming-pan-knob
+                role="slider"
+                tabindex="0"
+                aria-label="Incoming pan"
+                aria-valuemin="-1"
+                aria-valuemax="1"
+                aria-valuenow="0"
+              >
+                <span class="conference-mixer-knob-indicator" aria-hidden="true"></span>
+              </div>
+              <input
+                type="range"
+                min="-1"
+                max="1"
+                step="0.01"
+                value="0"
+                class="conference-mixer-pan-input"
+                data-mixer-incoming-pan
+              />
+            </div>
+            <div class="conference-mixer-fader-shell">
+              <span class="conference-mixer-vumeter" data-mixer-meter="incoming" aria-hidden="true"></span>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value="1"
+                class="conference-mixer-fader"
+                data-mixer-incoming-gain
+              />
+            </div>
+            <button
+              type="button"
+              class="conference-mixer-channel-toggle"
+              data-mixer-incoming-mute
+              aria-label="Mute incoming channel"
+              title="Mute incoming"
+            >
+              <span class="conference-mixer-led conference-mixer-led--mute" aria-hidden="true">M</span>
+            </button>
+          </div>
+
+          <div class="conference-mixer-channel">
+            <div class="conference-mixer-channel-label" data-mixer-reset-scope="master" title="Double click to reset Master">
+              <strong>M</strong>
+            </div>
+            <div class="conference-mixer-knob-stack">
+              <div
+                class="conference-mixer-knob-control"
+                data-mixer-master-pan-knob
+                role="slider"
+                tabindex="0"
+                aria-label="Master pan"
+                aria-valuemin="-1"
+                aria-valuemax="1"
+                aria-valuenow="0"
+              >
+                <span class="conference-mixer-knob-indicator" aria-hidden="true"></span>
+              </div>
+              <input
+                type="range"
+                min="-1"
+                max="1"
+                step="0.01"
+                value="0"
+                class="conference-mixer-pan-input"
+                data-mixer-master-pan
+              />
+            </div>
+            <div class="conference-mixer-fader-shell">
+              <span class="conference-mixer-vumeter" data-mixer-meter="master" aria-hidden="true"></span>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value="1"
+                class="conference-mixer-fader"
+                data-mixer-master-gain
+              />
+            </div>
+            <button
+              type="button"
+              class="conference-mixer-channel-toggle"
+              data-mixer-master-mute
+              aria-label="Mute master channel"
+              title="Mute master"
+            >
+              <span class="conference-mixer-led conference-mixer-led--mute" aria-hidden="true">M</span>
+            </button>
+          </div>
+
+          <div class="conference-mixer-channel conference-mixer-channel--video">
+            <div class="conference-mixer-channel-label" data-mixer-reset-scope="video" title="Double click to reset Video">
+              <strong>V</strong>
+            </div>
+
+            <div class="conference-video-mixer-grid">
+              <div class="conference-video-mixer-control">
+                <div
+                  class="conference-mixer-knob-control conference-mixer-knob-control--plain conference-mixer-knob-control--video"
+                  data-mixer-video-luma-knob
+                  role="slider"
+                  tabindex="0"
+                  aria-label="Video luma"
+                  aria-valuemin="-1"
+                  aria-valuemax="1"
+                  aria-valuenow="0"
+                >
+                  <span class="conference-mixer-knob-indicator" aria-hidden="true"></span>
+                </div>
+                <input type="range" min="-1" max="1" step="0.01" value="0" class="conference-mixer-pan-input" data-mixer-video-luma />
+                <span class="conference-video-mixer-label" data-mixer-reset-control="video:luma" title="Double click to reset Luma">Luma</span>
+              </div>
+
+              <div class="conference-video-mixer-control">
+                <div
+                  class="conference-mixer-knob-control conference-mixer-knob-control--plain conference-mixer-knob-control--video"
+                  data-mixer-video-tint-knob
+                  role="slider"
+                  tabindex="0"
+                  aria-label="Video tint"
+                  aria-valuemin="-1"
+                  aria-valuemax="1"
+                  aria-valuenow="0"
+                >
+                  <span class="conference-mixer-knob-indicator" aria-hidden="true"></span>
+                </div>
+                <input type="range" min="-1" max="1" step="0.01" value="0" class="conference-mixer-pan-input" data-mixer-video-tint />
+                <span class="conference-video-mixer-label" data-mixer-reset-control="video:tint" title="Double click to reset Tint">Tint</span>
+              </div>
+
+              <div class="conference-video-mixer-control">
+                <div
+                  class="conference-mixer-knob-control conference-mixer-knob-control--plain conference-mixer-knob-control--video"
+                  data-mixer-video-saturation-knob
+                  role="slider"
+                  tabindex="0"
+                  aria-label="Video saturation"
+                  aria-valuemin="-1"
+                  aria-valuemax="1"
+                  aria-valuenow="0"
+                >
+                  <span class="conference-mixer-knob-indicator" aria-hidden="true"></span>
+                </div>
+                <input type="range" min="-1" max="1" step="0.01" value="0" class="conference-mixer-pan-input" data-mixer-video-saturation />
+                <span class="conference-video-mixer-label" data-mixer-reset-control="video:saturation" title="Double click to reset Saturation">Sat</span>
+              </div>
+
+              <div class="conference-video-mixer-control">
+                <div
+                  class="conference-mixer-knob-control conference-mixer-knob-control--plain conference-mixer-knob-control--video"
+                  data-mixer-video-contrast-knob
+                  role="slider"
+                  tabindex="0"
+                  aria-label="Video contrast"
+                  aria-valuemin="-1"
+                  aria-valuemax="1"
+                  aria-valuenow="0"
+                >
+                  <span class="conference-mixer-knob-indicator" aria-hidden="true"></span>
+                </div>
+                <input type="range" min="-1" max="1" step="0.01" value="0" class="conference-mixer-pan-input" data-mixer-video-contrast />
+                <span class="conference-video-mixer-label" data-mixer-reset-control="video:contrast" title="Double click to reset Contrast">Cont</span>
+              </div>
+
+              <div class="conference-video-mixer-control conference-video-mixer-control--wide">
+                <div
+                  class="conference-mixer-knob-control conference-mixer-knob-control--plain conference-mixer-knob-control--video"
+                  data-mixer-video-brightness-knob
+                  role="slider"
+                  tabindex="0"
+                  aria-label="Video brightness"
+                  aria-valuemin="-1"
+                  aria-valuemax="1"
+                  aria-valuenow="0"
+                >
+                  <span class="conference-mixer-knob-indicator" aria-hidden="true"></span>
+                </div>
+                <input type="range" min="-1" max="1" step="0.01" value="0" class="conference-mixer-pan-input" data-mixer-video-brightness />
+                <span class="conference-video-mixer-label" data-mixer-reset-control="video:brightness" title="Double click to reset Brightness">Bright</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="conference-mixer-fx">
+          <article class="conference-mixer-fx-card">
+            <div class="conference-mixer-fx-head">
+              <h4>REVERB</h4>
+              <span class="conference-mixer-fx-badge">FX</span>
+            </div>
+
+            <label class="conference-mixer-fx-control" for="conference-synth-reverb-time-input">
+              <span class="conference-mixer-fx-label-row">
+                <span>Time</span>
+                <output for="conference-synth-reverb-time-input" data-synth-reverb-time-output>3.0s</output>
+              </span>
+              <input
+                id="conference-synth-reverb-time-input"
+                type="range"
+                min="0.4"
+                max="8"
+                step="0.1"
+                value="3"
+                data-synth-reverb-time-input
+              />
+            </label>
+
+            <label class="conference-mixer-fx-control" for="conference-synth-reverb-mix-input">
+              <span class="conference-mixer-fx-label-row">
+                <span>Mix</span>
+                <output for="conference-synth-reverb-mix-input" data-synth-reverb-mix-output>50%</output>
+              </span>
+              <input
+                id="conference-synth-reverb-mix-input"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value="0.5"
+                data-synth-reverb-mix-input
+              />
+            </label>
+          </article>
+
+          <div class="conference-mixer-fx-pair">
+            <article class="conference-mixer-fx-card">
+              <div class="conference-mixer-fx-head">
+                <h4>COMP</h4>
+                <button
+                  type="button"
+                  class="conference-mixer-fx-led-toggle"
+                  data-synth-comp-toggle
+                  aria-label="Toggle compressor"
+                  title="Compressor"
+                >
+                  <span class="conference-mixer-led" aria-hidden="true"></span>
+                </button>
+              </div>
+
+              <div class="conference-mixer-fx-grid conference-mixer-fx-grid--stacked">
+                <label class="conference-mixer-fx-control" for="conference-synth-comp-threshold-input">
+                  <span class="conference-mixer-fx-label-row">
+                    <span>Thresh</span>
+                    <output for="conference-synth-comp-threshold-input" data-synth-comp-threshold-output>-18 dB</output>
+                  </span>
+                  <input
+                    id="conference-synth-comp-threshold-input"
+                    type="range"
+                    min="-48"
+                    max="0"
+                    step="1"
+                    value="-18"
+                    data-synth-comp-threshold-input
+                  />
+                </label>
+
+                <label class="conference-mixer-fx-control" for="conference-synth-comp-ratio-input">
+                  <span class="conference-mixer-fx-label-row">
+                    <span>Ratio</span>
+                    <output for="conference-synth-comp-ratio-input" data-synth-comp-ratio-output>3.0</output>
+                  </span>
+                  <input
+                    id="conference-synth-comp-ratio-input"
+                    type="range"
+                    min="1"
+                    max="20"
+                    step="0.1"
+                    value="3"
+                    data-synth-comp-ratio-input
+                  />
+                </label>
+
+                <label class="conference-mixer-fx-control" for="conference-synth-comp-attack-input">
+                  <span class="conference-mixer-fx-label-row">
+                    <span>Attack</span>
+                    <output for="conference-synth-comp-attack-input" data-synth-comp-attack-output>0.003s</output>
+                  </span>
+                  <input
+                    id="conference-synth-comp-attack-input"
+                    type="range"
+                    min="0.001"
+                    max="0.2"
+                    step="0.001"
+                    value="0.003"
+                    data-synth-comp-attack-input
+                  />
+                </label>
+
+                <label class="conference-mixer-fx-control" for="conference-synth-comp-release-input">
+                  <span class="conference-mixer-fx-label-row">
+                    <span>Release</span>
+                    <output for="conference-synth-comp-release-input" data-synth-comp-release-output>0.25s</output>
+                  </span>
+                  <input
+                    id="conference-synth-comp-release-input"
+                    type="range"
+                    min="0.02"
+                    max="1"
+                    step="0.01"
+                    value="0.25"
+                    data-synth-comp-release-input
+                  />
+                </label>
+
+                <label class="conference-mixer-fx-control conference-mixer-fx-control--wide" for="conference-synth-comp-knee-input">
+                  <span class="conference-mixer-fx-label-row">
+                    <span>Knee</span>
+                    <output for="conference-synth-comp-knee-input" data-synth-comp-knee-output>12 dB</output>
+                  </span>
+                  <input
+                    id="conference-synth-comp-knee-input"
+                    type="range"
+                    min="0"
+                    max="40"
+                    step="0.5"
+                    value="12"
+                    data-synth-comp-knee-input
+                  />
+                </label>
+              </div>
+            </article>
+
+            <article class="conference-mixer-fx-card">
+              <div class="conference-mixer-fx-head">
+                <h4>LIMITER</h4>
+                <button
+                  type="button"
+                  class="conference-mixer-fx-led-toggle"
+                  data-synth-limiter-toggle
+                  aria-label="Toggle limiter"
+                  title="Limiter"
+                >
+                  <span class="conference-mixer-led" aria-hidden="true"></span>
+                </button>
+              </div>
+
+              <div class="conference-mixer-fx-grid conference-mixer-fx-grid--stacked">
+                <label class="conference-mixer-fx-control" for="conference-synth-limiter-threshold-input">
+                  <span class="conference-mixer-fx-label-row">
+                    <span>Thresh</span>
+                    <output for="conference-synth-limiter-threshold-input" data-synth-limiter-threshold-output>-1 dB</output>
+                  </span>
+                  <input
+                    id="conference-synth-limiter-threshold-input"
+                    type="range"
+                    min="-12"
+                    max="0"
+                    step="0.5"
+                    value="-1"
+                    data-synth-limiter-threshold-input
+                  />
+                </label>
+
+                <label class="conference-mixer-fx-control" for="conference-synth-limiter-release-input">
+                  <span class="conference-mixer-fx-label-row">
+                    <span>Release</span>
+                    <output for="conference-synth-limiter-release-input" data-synth-limiter-release-output>0.05s</output>
+                  </span>
+                  <input
+                    id="conference-synth-limiter-release-input"
+                    type="range"
+                    min="0.01"
+                    max="0.5"
+                    step="0.01"
+                    value="0.05"
+                    data-synth-limiter-release-input
+                  />
+                </label>
+              </div>
+            </article>
           </div>
         </div>
       </section>
@@ -239,6 +823,9 @@ if (
         ></div>
       </section>
     </section>
+    <div class="conference-recording-guide" data-recording-guide aria-hidden="true"></div>
+    <canvas class="conference-gravity-ball-overlay" data-gravity-ball-canvas aria-hidden="true"></canvas>
+    <canvas class="conference-hand-overlay conference-hand-overlay--stage" data-stage-hand-overlay aria-hidden="true"></canvas>
   </section>
 
   <aside class="conference-sidebar">
@@ -343,6 +930,67 @@ if (
                     />
                     <span>Blur Background</span>
                   </label>
+                </div>
+
+                <div class="conference-field conference-field--checkbox">
+                  <label class="conference-checkbox-row" for="conference-invert-video-input">
+                    <input
+                      id="conference-invert-video-input"
+                      name="invert-video"
+                      type="checkbox"
+                      data-preview-invert-input
+                    />
+                    <span>Invert Video</span>
+                  </label>
+                </div>
+
+                <div class="conference-field">
+                  <label for="conference-recording-preset-select">Recording Preset</label>
+                  <select
+                    id="conference-recording-preset-select"
+                    name="recording-preset"
+                    data-recording-preset-select
+                  >
+                    <option value="landscape-1080">1080p</option>
+                    <option value="instagram-story">Instagram Story</option>
+                    <option value="tiktok">TikTok</option>
+                  </select>
+                </div>
+
+                <div class="conference-session-controls" data-session-controls-field hidden>
+                  <div class="conference-session-controls-heading">SESSION CONTROL</div>
+
+                  <div class="conference-field" data-session-leader-field>
+                    <label for="conference-session-leader-select">DELEGAR SESION</label>
+                    <select
+                      id="conference-session-leader-select"
+                      name="session-leader"
+                      data-session-leader-select
+                    >
+                      <option value="">Sin teachers conectados</option>
+                    </select>
+                  </div>
+
+                  <div class="conference-field conference-field--checkbox">
+                    <label class="conference-checkbox-row" for="conference-session-allow-instruments-input">
+                      <input
+                        id="conference-session-allow-instruments-input"
+                        name="session-allow-instruments"
+                        type="checkbox"
+                        checked
+                        data-session-allow-instruments-input
+                      />
+                      <span>Allow instruments</span>
+                    </label>
+                  </div>
+
+                  <button
+                    type="button"
+                    class="conference-session-action"
+                    data-session-mute-all-button
+                  >
+                    MUTE ALL
+                  </button>
                 </div>
               </div>
             </details>
@@ -718,6 +1366,7 @@ if (
     --conference-bar-height: 42px;
     --conference-sidebar-size: clamp(300px, 22vw, 420px);
     --conference-instruments-size: clamp(280px, 22vw, 360px);
+    --conference-local-video-flip: 1;
     --conference-self-preview-zoom: 1;
     --conference-circle-preview-zoom: 1;
     --conference-line: rgba(255, 255, 255, 0.12);
@@ -786,6 +1435,20 @@ if (
 
   .conference-shell[data-instruments-open='true'] .conference-instruments-sidebar {
     transform: translateX(0);
+  }
+
+  .conference-instruments-layout {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .conference-instruments-scroll {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: transparent;
   }
 
   .conference-stage {
@@ -1150,12 +1813,21 @@ if (
     border-right: 0;
     background: rgba(0, 0, 0, 0.92);
     color: var(--conference-muted);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.03);
     cursor: pointer;
-    transition: right 160ms ease, color 140ms ease, border-color 140ms ease;
+    transition: right 160ms ease, color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
   }
 
   .conference-shell[data-sidebar-collapsed='true'] .conference-sidebar-toggle {
-    right: 0;
+    right: 0.4rem;
+    width: 28px;
+    height: 72px;
+    border-right: 1px solid var(--conference-line);
+    background: rgba(0, 0, 0, 0.98);
+    color: var(--conference-fg);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.06),
+      0 8px 20px rgba(0, 0, 0, 0.32);
   }
 
   .conference-shell[data-sidebar-collapsed='true'] .conference-sidebar-toggle .conference-icon {
@@ -1178,6 +1850,18 @@ if (
 
   .conference-sidebar-section--instrument {
     gap: 0.9rem;
+  }
+
+  .conference-sidebar-section--mixer {
+    position: relative;
+    z-index: 2;
+    gap: 0.58rem;
+    min-height: 0;
+    max-height: none;
+    border-top: 1px solid var(--conference-line);
+    border-bottom: 0;
+    background: transparent;
+    box-shadow: none;
   }
 
   .conference-sidebar-section {
@@ -1294,7 +1978,30 @@ if (
   .conference-range-row input[type='range'] {
     width: 100%;
     margin: 0;
-    accent-color: var(--conference-accent);
+    appearance: none;
+    -webkit-appearance: none;
+    height: 3px;
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    background: transparent;
+  }
+
+  .conference-range-row input[type='range']::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.88);
+    background: #02050b;
+    box-shadow: none;
+  }
+
+  .conference-range-row input[type='range']::-moz-range-thumb {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.88);
+    background: #02050b;
+    box-shadow: none;
   }
 
   .conference-range-row output {
@@ -1314,6 +2021,9 @@ if (
   }
 
   .conference-synth-meter label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.34rem;
     color: var(--conference-muted);
     font-size: 0.64rem;
     line-height: 1;
@@ -1321,19 +2031,102 @@ if (
     text-transform: uppercase;
   }
 
+  .conference-synth-meter-label {
+    justify-content: space-between;
+  }
+
+  .conference-synth-formula-shell {
+    position: relative;
+    display: inline-grid;
+    place-items: center;
+    width: 1rem;
+    height: 1rem;
+    color: var(--conference-accent);
+    font-size: 0.58rem;
+    line-height: 1;
+    cursor: help;
+    outline: none;
+  }
+
+  .conference-synth-formula-tooltip {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 0.36rem);
+    min-width: 12rem;
+    padding: 0.38rem 0.48rem;
+    border: 1px solid rgba(143, 227, 255, 0.16);
+    background: rgba(0, 0, 0, 0.92);
+    color: var(--conference-fg);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(0.2rem);
+    transition: opacity 140ms ease, transform 140ms ease;
+    z-index: 6;
+  }
+
+  .conference-synth-formula-shell:hover .conference-synth-formula-tooltip,
+  .conference-synth-formula-shell:focus-visible .conference-synth-formula-tooltip {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .conference-synth-formula-tooltip math {
+    font-size: 0.76rem;
+  }
+
   .conference-synth-meter-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 0.7rem;
+    grid-template-columns: 0.7rem minmax(0, 1fr) 0.7rem auto;
+    gap: 0.38rem;
     align-items: center;
+  }
+
+  .conference-synth-map-button {
+    width: 0.58rem;
+    height: 0.58rem;
+    padding: 0;
+    border: 1px solid rgba(143, 227, 255, 0.18);
+    background: transparent;
+    cursor: pointer;
+    transition: border-color 140ms ease, background-color 140ms ease;
+  }
+
+  .conference-synth-map-button:hover,
+  .conference-synth-map-button:focus-visible {
+    border-color: rgba(143, 227, 255, 0.5);
+    background: rgba(143, 227, 255, 0.08);
+    outline: none;
   }
 
   .conference-synth-meter-row input[type='range'] {
     width: 100%;
     margin: 0;
-    accent-color: var(--conference-accent);
+    appearance: none;
+    -webkit-appearance: none;
+    height: 3px;
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    background: transparent;
     pointer-events: none;
     opacity: 0.88;
+  }
+
+  .conference-synth-meter-row input[type='range']::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.88);
+    background: #02050b;
+    box-shadow: none;
+  }
+
+  .conference-synth-meter-row input[type='range']::-moz-range-thumb {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.88);
+    background: #02050b;
+    box-shadow: none;
   }
 
   .conference-synth-meter-row output {
@@ -1343,8 +2136,410 @@ if (
     font-variant-numeric: tabular-nums;
   }
 
+  .conference-mixer {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(72px, 0.72fr);
+    gap: 0.45rem;
+    align-items: stretch;
+    min-height: 0;
+  }
+
+  .conference-mixer-channel {
+    display: grid;
+    justify-items: center;
+    grid-template-rows: auto auto 1fr auto;
+    gap: 0.28rem;
+    min-height: 0;
+    padding: 0.28rem 0.22rem 0.22rem;
+    border: 1px solid rgba(143, 227, 255, 0.12);
+    background: transparent;
+  }
+
+  .conference-mixer-channel--video {
+    align-items: stretch;
+    justify-items: stretch;
+    grid-template-rows: auto 1fr;
+    min-width: 0;
+  }
+
+  .conference-mixer-channel-label {
+    display: grid;
+    gap: 0.1rem;
+    justify-items: center;
+    color: var(--conference-muted);
+    font-size: 0.56rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    text-align: center;
+  }
+
+  .conference-mixer-channel-label strong {
+    color: var(--conference-fg);
+    font-size: 0.6rem;
+  }
+
+  .conference-mixer-fader {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    writing-mode: vertical-lr;
+    direction: rtl;
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
+    border: 0;
+  }
+
+  .conference-mixer-fader::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 6px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.92);
+    background: #02050b;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.24);
+  }
+
+  .conference-mixer-fader::-moz-range-thumb {
+    width: 16px;
+    height: 6px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.92);
+    background: #02050b;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.24);
+  }
+
+  .conference-mixer-fader-shell {
+    position: relative;
+    width: 18px;
+    height: 5.2rem;
+    display: grid;
+    place-items: center;
+  }
+
+  .conference-mixer-vumeter {
+    --conference-meter-level: 0;
+    position: absolute;
+    inset: 0.05rem 0.35rem;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background:
+      linear-gradient(
+        to top,
+        rgba(69, 211, 132, 0.04) 0%,
+        rgba(69, 211, 132, 0.04) 58%,
+        rgba(255, 216, 77, 0.04) 58%,
+        rgba(255, 216, 77, 0.04) 82%,
+        rgba(255, 92, 92, 0.04) 82%,
+        rgba(255, 92, 92, 0.04) 100%
+      );
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .conference-mixer-vumeter::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(
+        to top,
+        rgba(69, 211, 132, 0.96) 0%,
+        rgba(69, 211, 132, 0.96) 58%,
+        rgba(255, 216, 77, 0.96) 58%,
+        rgba(255, 216, 77, 0.96) 82%,
+        rgba(255, 92, 92, 0.96) 82%,
+        rgba(255, 92, 92, 0.96) 100%
+      );
+    transform: scaleY(var(--conference-meter-level));
+    transform-origin: bottom center;
+    box-shadow: 0 0 10px rgba(143, 227, 255, 0.18);
+  }
+
+  .conference-mixer-led {
+    display: block;
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: rgba(69, 211, 132, 0.96);
+    box-shadow: 0 0 8px rgba(69, 211, 132, 0.42);
+    transition: opacity 140ms ease, box-shadow 140ms ease;
+  }
+
+  .conference-mixer-led--mute {
+    display: grid;
+    place-items: center;
+    color: #05080d;
+    font-size: 0.3rem;
+    font-weight: 800;
+    line-height: 1;
+  }
+
+  .conference-mixer-channel-toggle,
+  .conference-mixer-fx-led-toggle {
+    border: 0;
+    background: transparent;
+    color: var(--conference-fg);
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+  }
+
+  .conference-mixer-fx-led-toggle {
+    width: 8px;
+    height: 8px;
+    display: inline-grid;
+    place-items: center;
+    justify-self: end;
+  }
+
+  .conference-mixer-channel-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 12px;
+  }
+
+  .conference-mixer-channel-toggle[data-active='false'] .conference-mixer-led,
+  .conference-mixer-fx-led-toggle[data-active='false'] .conference-mixer-led {
+    opacity: 0.2;
+    box-shadow: none;
+  }
+
+  .conference-mixer-knob-stack {
+    display: grid;
+    justify-items: center;
+    gap: 0.12rem;
+  }
+
+  .conference-mixer-pan-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    padding: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .conference-mixer-knob-control {
+    --angle: 0deg;
+    position: relative;
+    width: 30px;
+    height: 30px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.26);
+    background: transparent;
+    cursor: ns-resize;
+    touch-action: none;
+    padding: 0;
+    box-shadow: none;
+  }
+
+  .conference-mixer-knob-control::before {
+    content: 'L/R';
+    position: absolute;
+    left: 50%;
+    bottom: -0.62rem;
+    transform: translateX(-50%);
+    color: var(--conference-muted);
+    font-size: 0.42rem;
+    line-height: 1;
+    letter-spacing: 0.12em;
+  }
+
+  .conference-mixer-knob-control--plain::before {
+    content: none;
+  }
+
+  .conference-mixer-knob-control--video {
+    width: 22px;
+    height: 22px;
+    justify-self: center;
+  }
+
+  .conference-mixer-knob-control--video .conference-mixer-knob-indicator {
+    height: 6px;
+  }
+
+  .conference-video-mixer-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.34rem 0.28rem;
+    align-content: start;
+    min-height: 0;
+  }
+
+  .conference-video-mixer-control {
+    display: grid;
+    justify-items: center;
+    gap: 0.14rem;
+    min-width: 0;
+  }
+
+  .conference-video-mixer-control--wide {
+    grid-column: 1 / -1;
+  }
+
+  .conference-video-mixer-label {
+    color: var(--conference-muted);
+    font-size: 0.42rem;
+    line-height: 1;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  .conference-mixer-knob-control:hover,
+  .conference-mixer-knob-control:focus-visible {
+    border-color: rgba(143, 227, 255, 0.34);
+    outline: none;
+  }
+
+  .conference-mixer-knob-indicator {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 2px;
+    height: 9px;
+    border-radius: 999px;
+    background: var(--conference-accent);
+    transform: translate(-50%, -100%) rotate(var(--angle));
+    transform-origin: 50% 100%;
+    box-shadow: 0 0 8px rgba(143, 227, 255, 0.42);
+  }
+
+  .conference-mixer-fx {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .conference-mixer-fx-pair {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .conference-mixer-fx-card {
+    flex: 1 1 0;
+    padding: 10px;
+    border: 1px solid rgba(143, 227, 255, 0.12);
+    background: transparent;
+  }
+
+  .conference-mixer-fx-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 3px 0;
+  }
+
+  .conference-mixer-fx-head h4 {
+    margin: 0;
+    color: var(--conference-accent);
+    font-size: 0.58rem;
+    line-height: 1;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .conference-mixer-fx-badge {
+    color: rgba(255, 226, 107, 0.78);
+    font-size: 0.5rem;
+    line-height: 1;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .conference-mixer-fx-grid {
+    display: grid;
+    gap: 0.28rem;
+  }
+
+  .conference-mixer-fx-grid--two {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.34rem;
+  }
+
+  .conference-mixer-fx-grid--stacked {
+    grid-template-columns: 1fr;
+    gap: 0.34rem;
+  }
+
+  .conference-mixer-fx-control--wide {
+    grid-column: 1 / -1;
+  }
+
+  .conference-mixer-fx-control {
+    display: grid;
+    gap: 0.16rem;
+    margin-top: 0.34rem;
+  }
+
+  .conference-mixer-fx-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    color: var(--conference-muted);
+    font-size: 0.52rem;
+    line-height: 1;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .conference-mixer-fx-label-row output {
+    color: var(--conference-fg);
+    font-size: 0.5rem;
+    line-height: 1;
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap;
+  }
+
+  .conference-mixer-fx-control input[type='range'] {
+    width: 100%;
+    margin: 0;
+    appearance: none;
+    -webkit-appearance: none;
+    height: 3px;
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    background: transparent;
+  }
+
+  .conference-mixer-fx-control input[type='range']::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.88);
+    background: #02050b;
+    box-shadow: none;
+  }
+
+  .conference-mixer-fx-control input[type='range']::-moz-range-thumb {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.88);
+    background: #02050b;
+    box-shadow: none;
+  }
+
   .conference-field--checkbox {
-    gap: 0;
+    gap: 0.38rem;
+  }
+
+  .conference-field--hand-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.42rem;
+    flex-wrap: nowrap;
   }
 
   .conference-checkbox-row {
@@ -1361,6 +2556,104 @@ if (
   .conference-checkbox-row input[type='checkbox'] {
     margin: 0;
     accent-color: var(--conference-accent);
+  }
+
+  .conference-ramp-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.36rem;
+    color: var(--conference-muted);
+    font-size: 0.64rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .conference-ramp-row input[type='number'] {
+    width: 4rem;
+    min-height: 1.5rem;
+    padding: 0.1rem 0.28rem;
+    border: 1px solid var(--conference-line-soft);
+    background: transparent;
+    color: var(--conference-fg);
+    font: inherit;
+  }
+
+  .conference-ramp-reset {
+    width: 1.5rem;
+    height: 1.5rem;
+    min-height: 1.5rem;
+    padding: 0;
+    border: 1px solid var(--conference-line-soft);
+    background: transparent;
+    color: var(--conference-muted);
+    font: inherit;
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: uppercase;
+    cursor: pointer;
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
+
+  .conference-ramp-reset:hover,
+  .conference-ramp-reset:focus-visible {
+    border-color: rgba(143, 227, 255, 0.5);
+    color: var(--conference-fg);
+    outline: none;
+  }
+
+  .conference-session-controls {
+    display: grid;
+    gap: 0.72rem;
+    padding-top: 0.24rem;
+    border-top: 1px solid var(--conference-line-soft);
+  }
+
+  .conference-session-controls-heading {
+    color: var(--conference-muted);
+    font-size: 0.58rem;
+    line-height: 1;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+
+  .conference-session-action {
+    min-height: 1.85rem;
+    padding: 0.22rem 0.48rem;
+    border: 1px solid var(--conference-line-soft);
+    background: transparent;
+    color: var(--conference-fg);
+    font: inherit;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+
+  .conference-session-action:hover,
+  .conference-session-action:focus-visible {
+    border-color: rgba(143, 227, 255, 0.5);
+    color: var(--conference-fg);
+    outline: none;
+  }
+
+  .conference-session-action:disabled {
+    opacity: 0.38;
+    cursor: not-allowed;
+  }
+
+  .conference-shell[data-instruments-allowed='false'][data-role='student'] .conference-sidebar-section--instrument {
+    opacity: 0.52;
+  }
+
+  .conference-shell[data-instruments-allowed='false'][data-role='student'] .conference-sidebar-section--instrument .conference-checkbox-row,
+  .conference-shell[data-instruments-allowed='false'][data-role='student'] .conference-sidebar-section--instrument .conference-ramp-row,
+  .conference-shell[data-instruments-allowed='false'][data-role='student'] .conference-sidebar-section--instrument .conference-synth-meter label {
+    color: var(--conference-muted);
   }
 
   .conference-name-row {
@@ -1443,40 +2736,75 @@ if (
     align-items: baseline;
     gap: 0.28rem;
     margin-bottom: 0.2rem;
-    color: var(--conference-fg);
-    font-size: 0.61rem;
-    line-height: 1.1;
+    color: rgba(245, 247, 251, 0.62) !important;
+    font-size: 0.6rem !important;
+    line-height: 1 !important;
   }
 
-  .conference-chat-author {
+  .conference-chat-list .conference-chat-item .conference-chat-author {
     display: inline;
-    color: rgba(245, 247, 251, 0.6);
-    font-size: 0.61rem;
-    font-weight: 700;
-    font-style: normal;
+    color: rgba(245, 247, 251, 0.6) !important;
+    font-size: 0.58rem !important;
+    font-weight: 700 !important;
+    font-style: normal !important;
     letter-spacing: 0.01em;
   }
 
   .conference-chat-header-separator {
     display: inline;
-    color: inherit;
-    font-size: 0.61rem;
-    opacity: 0.55;
+    color: rgba(245, 247, 251, 0.46) !important;
+    font-size: 0.54rem !important;
+    opacity: 0.46 !important;
   }
 
-  .conference-chat-stamp {
+  .conference-chat-list .conference-chat-item .conference-chat-stamp {
     display: inline;
-    color: rgba(245, 247, 251, 0.4);
-    font-size: 0.61rem;
-    font-style: italic;
-    font-weight: 400;
+    color: rgba(245, 247, 251, 0.5) !important;
+    font-size: 0.47rem !important;
+    font-style: italic !important;
+    font-weight: 400 !important;
+    opacity: 0.5 !important;
   }
 
-  .conference-chat-text {
-    color: rgba(245, 247, 251, 0.78);
+  .conference-chat-list .conference-chat-item .conference-chat-text {
+    color: rgba(245, 247, 251, 0.78) !important;
     font-size: 0.76rem;
     line-height: 1.44;
     text-wrap: pretty;
+  }
+
+  .conference-chat-line + .conference-chat-line {
+    margin-top: 0.18rem;
+  }
+
+  .conference-chat-link {
+    color: var(--conference-accent);
+    text-decoration: none;
+    word-break: break-word;
+  }
+
+  .conference-chat-link:hover {
+    text-decoration: underline;
+  }
+
+  .conference-chat-link--media,
+  .conference-chat-media {
+    display: block;
+    max-width: min(100%, 18rem);
+    margin-top: 0.18rem;
+  }
+
+  .conference-chat-link--media img,
+  .conference-chat-media video {
+    display: block;
+    width: 100%;
+    max-height: 12rem;
+    object-fit: contain;
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .conference-chat-media--audio {
+    width: 100%;
   }
 
   .conference-chat-empty {
@@ -1630,7 +2958,7 @@ if (
   .conference-hand-overlay {
     position: absolute;
     inset: 0;
-    z-index: 3;
+    z-index: 8;
     width: 100%;
     height: 100%;
     background: transparent !important;
@@ -1642,6 +2970,55 @@ if (
 
   .conference-shell[data-hand-track='true'] .conference-hand-overlay {
     opacity: 1;
+  }
+
+  .conference-gravity-ball-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 7;
+    width: 100%;
+    height: 100%;
+    background: transparent !important;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 160ms ease;
+  }
+
+  .conference-shell[data-gravity-ball='true'][data-gravity-ball-stage-visible='true'] .conference-gravity-ball-overlay {
+    opacity: 1;
+  }
+
+  .conference-recording-guide {
+    position: absolute;
+    z-index: 8;
+    left: 0;
+    top: 0;
+    width: 0;
+    height: 0;
+    border: 1px dashed color-mix(in srgb, var(--conference-accent) 78%, transparent);
+    background: transparent;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.34);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 140ms ease;
+  }
+
+  .conference-shell[data-recording-guide-visible='true'][data-recording-guide-suppressed='false'] .conference-recording-guide {
+    opacity: 0.92;
+  }
+
+  .conference-stage-frame {
+    position: relative;
+  }
+
+  .conference-hand-overlay--stage {
+    inset: 0;
+  }
+
+  @media (max-width: 720px) {
+    .conference-mixer-fx-pair {
+      flex-direction: column;
+    }
   }
 
   .conference-media-frame--screen video {
@@ -1669,7 +3046,7 @@ if (
     object-fit: contain !important;
     object-position: 50% 62% !important;
     background: #000;
-    transform: scale(var(--conference-self-preview-zoom, 1)) !important;
+    transform: scaleX(var(--conference-local-video-flip, 1)) scale(var(--conference-self-preview-zoom, 1)) !important;
   }
 
   .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-media-frame > video {
@@ -1688,6 +3065,10 @@ if (
     transform: scale(var(--conference-participant-preview-zoom, var(--conference-circle-preview-zoom, 1))) !important;
   }
 
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-media-frame--local-camera > video {
+    transform: scaleX(var(--conference-local-video-flip, 1)) scale(var(--conference-participant-preview-zoom, var(--conference-circle-preview-zoom, 1))) !important;
+  }
+
   .conference-media-frame--local-camera > video,
   .conference-stage[data-layout='teacher'] .conference-media-frame--local-camera > video,
   .conference-slot--grid .conference-media-frame--local-camera > video {
@@ -1702,7 +3083,7 @@ if (
     max-height: none !important;
     object-fit: cover !important;
     object-position: 50% 58% !important;
-    transform: none !important;
+    transform: scaleX(var(--conference-local-video-flip, 1)) !important;
     background: #000;
   }
 
@@ -1738,9 +3119,9 @@ if (
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 1.55rem;
-    min-height: 1.55rem;
-    font-size: 1rem;
+    min-width: 3rem;
+    min-height: 3rem;
+    font-size: 2rem;
     line-height: 1;
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
@@ -1970,24 +3351,26 @@ if (
     padding: 0;
     list-style: none;
     display: grid;
-    gap: 0.4rem;
+    gap: 0.24rem;
   }
 
   .conference-roster-item,
   .conference-roster-empty {
     display: grid;
-    gap: 0.1rem;
-    padding: 0.28rem 0;
+    gap: 0.04rem;
+    padding: 0.18rem 0;
     border-bottom: 1px solid var(--conference-line-soft);
+    line-height: 1.12;
   }
 
   .conference-roster-item span:first-child {
     color: var(--conference-fg);
+    font-size: 0.76rem;
   }
 
   .conference-roster-item span:last-child {
     color: var(--conference-muted);
-    font-size: 0.72rem;
+    font-size: 0.58rem;
   }
 
   .conference-live-activity {
@@ -2463,7 +3846,7 @@ if (
   .conference-media-frame--local-camera > video {
     object-fit: cover !important;
     object-position: 50% 58% !important;
-    transform: none !important;
+    transform: scaleX(var(--conference-local-video-flip, 1)) !important;
   }
 
   .conference-media-frame--screen > video {
@@ -2487,7 +3870,7 @@ if (
     max-height: 100% !important;
     object-fit: contain !important;
     object-position: 50% 62% !important;
-    transform: scale(var(--conference-self-preview-zoom, 1)) !important;
+    transform: scaleX(var(--conference-local-video-flip, 1)) scale(var(--conference-self-preview-zoom, 1)) !important;
   }
 
   .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-media-frame > video {
@@ -2502,6 +3885,10 @@ if (
     transform: scale(var(--conference-participant-preview-zoom, var(--conference-circle-preview-zoom, 1))) !important;
   }
 
+  .conference-stage[data-layout='presentation'] .conference-stage-panel--focus .conference-media-frame--local-camera > video {
+    transform: scaleX(var(--conference-local-video-flip, 1)) scale(var(--conference-participant-preview-zoom, var(--conference-circle-preview-zoom, 1))) !important;
+  }
+
   .conference-media-backdrop {
     position: absolute !important;
     inset: -10% !important;
@@ -2513,7 +3900,7 @@ if (
     object-position: 50% 58% !important;
     filter: blur(18px) saturate(0.88);
     opacity: 0.78;
-    transform: scale(1.08) !important;
+    transform: scaleX(var(--conference-local-video-flip, 1)) scale(1.08) !important;
     transform-origin: center center;
     pointer-events: none;
     z-index: 0;

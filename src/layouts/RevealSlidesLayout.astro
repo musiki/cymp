@@ -572,6 +572,12 @@ const resolvedSlideTheme =
         const speakerBtn = document.getElementById('slides-speaker-btn');
         const fsBtn = document.getElementById('slides-fs-btn');
         const canManageLive = document.documentElement.dataset.canManageLive === 'true';
+        let roomSessionControl = {
+          enabled: false,
+          localIdentity: '',
+          localRole: '',
+          sessionLeaderIdentity: '',
+        };
 
         if (!source || !slidesRoot || !zoomShell) return;
 
@@ -613,6 +619,14 @@ const resolvedSlideTheme =
         };
 
         let emitDeckState = () => {};
+
+        const canManageRoomSession = () => {
+          if (!roomSessionControl.enabled) return true;
+          if (String(roomSessionControl.localRole || '').trim().toLowerCase() !== 'teacher') return true;
+          const localIdentity = String(roomSessionControl.localIdentity || '').trim();
+          const sessionLeaderIdentity = String(roomSessionControl.sessionLeaderIdentity || '').trim();
+          return Boolean(localIdentity) && localIdentity === sessionLeaderIdentity;
+        };
 
         const applySlidesZoom = () => {
           document.documentElement.style.setProperty('--slides-user-zoom', String(slidesZoom));
@@ -1680,6 +1694,7 @@ const resolvedSlideTheme =
             widget.statusNode.textContent = formatPollStatus(widget);
           }
 
+          const canManageWidget = widget.canManage && canManageRoomSession();
           const canRespond = widget.state.active;
           const submitted = Boolean(widget.state.hasSubmitted);
           const needsManualSubmit = widget.data.type === 'wordcloud' || Boolean(widget.data.allowMultiple);
@@ -1702,15 +1717,15 @@ const resolvedSlideTheme =
           }
 
           if (widget.startButton) {
-            widget.startButton.hidden = !widget.canManage;
-            widget.startButton.disabled = widget.state.active;
+            widget.startButton.hidden = !canManageWidget;
+            widget.startButton.disabled = !canManageWidget || widget.state.active;
           }
           if (widget.endButton) {
-            widget.endButton.hidden = !widget.canManage;
-            widget.endButton.disabled = !widget.state.active || !widget.state.sessionId;
+            widget.endButton.hidden = !canManageWidget;
+            widget.endButton.disabled = !canManageWidget || !widget.state.active || !widget.state.sessionId;
           }
           if (widget.openLink) {
-            if (widget.canManage && widget.state.active && widget.state.sessionId) {
+            if (canManageWidget && widget.state.active && widget.state.sessionId) {
               const url = new URL(`/live/${encodeURIComponent(widget.state.sessionId)}`, window.location.origin);
               if (widget.courseId) url.searchParams.set('courseId', widget.courseId);
               widget.openLink.href = `${url.pathname}${url.search}`;
@@ -2151,6 +2166,7 @@ const resolvedSlideTheme =
 
           if (widget.canManage) {
             startButton.addEventListener('click', async () => {
+              if (!canManageRoomSession()) return;
               startButton.disabled = true;
               setSlidePollFeedback(widget, 'Iniciando interacción...');
               try {
@@ -2187,6 +2203,7 @@ const resolvedSlideTheme =
             });
 
             endButton.addEventListener('click', async () => {
+              if (!canManageRoomSession()) return;
               if (!widget.state.sessionId) return;
               endButton.disabled = true;
               setSlidePollFeedback(widget, 'Cerrando interacción...');
@@ -2483,6 +2500,7 @@ const resolvedSlideTheme =
 
           if (widget.canManage) {
             startButton.addEventListener('click', async () => {
+              if (!canManageRoomSession()) return;
               startButton.disabled = true;
               setSlidePollFeedback(widget, 'Iniciando interacción...');
               try {
@@ -2519,6 +2537,7 @@ const resolvedSlideTheme =
             });
 
             endButton.addEventListener('click', async () => {
+              if (!canManageRoomSession()) return;
               if (!widget.state.sessionId) return;
               endButton.disabled = true;
               setSlidePollFeedback(widget, 'Cerrando interacción...');
@@ -2735,6 +2754,18 @@ const resolvedSlideTheme =
               ? payload.snapshot
               : { active: false };
             applyLivePayloadToSlidePolls(snapshot, snapshot?.active ? 'live.updated' : 'live.snapshot');
+            return;
+          }
+
+          if (type === 'musiki:reveal-session-control') {
+            const state = payload.state && typeof payload.state === 'object' ? payload.state : null;
+            roomSessionControl = {
+              enabled: Boolean(state),
+              localIdentity: String(state?.localIdentity || '').trim(),
+              localRole: String(state?.localRole || '').trim(),
+              sessionLeaderIdentity: String(state?.sessionLeaderIdentity || '').trim(),
+            };
+            pollWidgetsByEvalId.forEach((widget) => renderSlidePollState(widget));
             return;
           }
 
